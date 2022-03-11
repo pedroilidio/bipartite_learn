@@ -1,4 +1,3 @@
-import copy
 from pprint import pprint
 from sklearn.tree._criterion import MSE
 from sklearn.tree._splitter import BestSplitter

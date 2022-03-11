@@ -1,13 +1,13 @@
-import copy
+from itertools import product
 from pprint import pprint
 from sklearn.tree._criterion import MSE
 from sklearn.tree._splitter import BestSplitter
-from sklearn.tree import export_text, plot_tree
-import matplotlib.pyplot as plt
+import sklearn.tree
 
 from splitter_test import test_splitter, test_splitter2d
 from _nd_splitter import Splitter2D
 from _nd_criterion import MSE_Wrapper2D
+import matplotlib.pyplot as plt
 from _nd_classes import DecisionTreeRegressor2D
 
 
@@ -19,71 +19,69 @@ from pathlib import Path
 import sys
 from time import time
 
-path_pbct_test = Path('../../../scripts/predictors/PBCT/tests/')
+path_pbct_test = Path('../PBCT/tests/')
 sys.path.insert(0, str(path_pbct_test))
 from make_examples import gen_imatrix
 
 
 ##### TEST PARAMS #####
-SEED = 1
-SHAPE = (500, 600)
-NATTRS = (10, 7)
-NRULES = 10
-TRANSPOSE_TEST = 0
-NOISE = 0
-INSPECT = 0
+CONFIG = dict(
+    seed=437819,
+    shape=(510, 609),
+    nattrs=(10, 9),
+    nrules=10,
+    transpose_test=0,
+    noise=1,
+    inspect=0,
+    plot=1,
+)
 #######################
 
 
 ## Generate mock data
-np.random.seed(SEED)
-t0 = time()
-XX, Y = gen_imatrix(SHAPE, NATTRS, nrules=NRULES)
+print('Starting with settings:')
+pprint(CONFIG)
 
-if TRANSPOSE_TEST:
+np.random.seed(CONFIG['seed'])
+t0 = time()
+XX, Y = gen_imatrix(CONFIG['shape'], CONFIG['nattrs'], nrules=CONFIG['nrules'])
+
+if CONFIG['transpose_test']:
     print('Test transposing axis.')
     Y = np.copy(Y.T.astype(DOUBLE_t), order='C')
     XX = [np.ascontiguousarray(X, DTYPE_t) for X in XX[::-1]]
-    NATTRS = NATTRS[::-1]
-    SHAPE = SHAPE[::-1]
+    CONFIG['nattrs'] = CONFIG['nattrs'][::-1]
+    CONFIG['shape'] = CONFIG['shape'][::-1]
 else:
     Y = np.ascontiguousarray(Y, DOUBLE_t)
     XX = [np.ascontiguousarray(X, DTYPE_t) for X in XX]
 
-if NOISE:
-    Y += np.random.rand(*SHAPE)  # add some noise
+if CONFIG['noise']:
+    Y += np.random.rand(*CONFIG['shape'])  # add some noise
 
 print('Data generation time:', time()-t0)
-## Instantiate sklearn objects
+print('Data density (mean):', Y.mean())
+print('Data variance:', Y.var())
+print('=' * 50)
 
-# ## 2D Criteria:
-# criterion_rows = MSE_2D(n_outputs=2, n_samples=SHAPE[0])
-# criterion_cols = MSE_2D(n_outputs=2, n_samples=SHAPE[1])
-# # n_outputs=2 because ...
-# 
-# splitter_rows = BestSplitter(
-#     criterion=criterion_rows,
-#     max_features=NATTRS[0],
-#     min_samples_leaf=1,
-#     min_weight_leaf=0,
-#     random_state=np.random.RandomState(SEED),
-# )
-# splitter_cols = BestSplitter(
-#     criterion=criterion_cols,
-#     max_features=NATTRS[1],
-#     min_samples_leaf=1,
-#     min_weight_leaf=0,
-#     random_state=np.random.RandomState(SEED),
-# )
-# 
-# 
-# splitter = Splitter2D(splitter_rows, splitter_cols)
-
+########## Instantiate sklearn objects
+print('Data generation time:', time()-t0)
 tree = DecisionTreeRegressor2D()
 print(vars(tree))
 print('Fitting tree...')
 tree.fit(XX, Y)
+x_gen = (np.hstack(x).reshape(1, -1) for x in product(*XX))
 print('Done.')
-print(export_text(tree))
-plot_tree(tree)
-plt.show()
+
+# pred = np.fromiter((tree.predict(x) for x in x_gen), dtype=float, like=Y)
+# print(pred)
+
+##############################
+print(sklearn.tree.export_text(tree))
+
+if CONFIG['plot']:
+    sklearn.tree.plot_tree(tree)
+    plt.show()
+
+if CONFIG['inspect']:
+    breakpoint()

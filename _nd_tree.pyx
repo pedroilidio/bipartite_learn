@@ -136,8 +136,14 @@ cdef struct StackRecord2D:
     SIZE_t n_constant_col_features
 
 cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
-    """Build a decision tree in depth-first fashion."""
+    """Build a 2D decision tree in depth-first fashion.
 
+    It adds minor changes to sklearn's DepthfirstTreeBuilder, essentially
+    in storing two-values start/end positions and managing getting the new ones.
+    """
+
+    # TODO: define separate methods for split -> node data conversion and
+    # evaluating stopping criteria.
     # TODO: define axis-specific min_samples_leaf, min_samples_split and
     # min_weight_leaf, turning them into arrays. A complication is that
     # __cinit__ does not take arrays (pointers) as arguments, only python
@@ -303,16 +309,16 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                     end_left[split.axis] = split.pos
 
                     ##### debug
-                    with gil:
-                        pprint({
-                            "right_start": start_right,
-                            "right_end": end_right,
-                            "left_start": start_left,
-                            "left_end": end_left,
-                        })
-                        pprint(split)
-                        pprint(stack_record)
-                        print('===================')
+                    # with gil:
+                    #     pprint({
+                    #         "right_start": start_right,
+                    #         "right_end": end_right,
+                    #         "left_start": start_left,
+                    #         "left_end": end_left,
+                    #     })
+                    #     pprint(split)
+                    #     pprint(stack_record)
+                    #     print('===================')
 
                         #DEBUG_TREE_MAP[
                         #    start_right[0]:end_right[0],
@@ -370,9 +376,5 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
 
 # Best first builder ----------------------------------------------------------
 
-cdef inline int _add_to_frontier(PriorityHeapRecord* rec,
-                                 PriorityHeap frontier) nogil except -1:
-    pass
-
 cdef class BestFirstTreeBuilderND(TreeBuilderND):
-    pass
+    pass # TODO

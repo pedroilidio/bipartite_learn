@@ -38,7 +38,7 @@ from sklearn.tree import _tree, _splitter, _criterion
 # ND new:
 from sklearn.tree._classes import BaseDecisionTree
 from _nd_tree import DepthFirstTreeBuilder2D
-from _nd_criterion import MSE_Wrapper2D, MSE2D
+from _nd_criterion import MSE_Wrapper2D
 from _nd_splitter import Splitter2D
 
 
@@ -56,7 +56,7 @@ DOUBLE = _tree.DOUBLE
 
 CRITERIA_CLF = {}
 CRITERIA_REG = {
-    "squared_error": MSE2D,
+    "squared_error": _criterion.MSE,
 }
 
 DENSE_SPLITTERS = {
@@ -229,11 +229,6 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
                     n_outputs=self.n_outputs_,
                     n_samples=y.shape[1],
                 )
-                print(criterion_rows)
-                print(criterion_cols)
-                print(y.shape)
-                print(self.criterion)
-                print(self.n_outputs_)
         else:
             # Make a deepcopy in case the criterion has mutable attributes that
             # might be shared and modified concurrently during parallel fitting
@@ -265,15 +260,6 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
                 splitter_cols.criterion,
             ]
             criterion_wrapper = MSE_Wrapper2D(criteria_list)
-            print("id(criteria_list[0])")
-            print("id(criteria_list[1])")
-            print("id(splitter_rows.criterion))")
-            print("id(splitter_cols.criterion))")
-
-            print(id(criteria_list[0]))
-            print(id(criteria_list[1]))
-            print(id(splitter_rows.criterion))
-            print(id(splitter_cols.criterion))
 
             splitter = Splitter2D(
                 splitter_rows,
@@ -815,9 +801,9 @@ class DecisionTreeRegressor2D(RegressorMixin, BaseDecisionTree2D):
         )
         return averaged_predictions
 
-
-class ExtraTreeClassifier2D(DecisionTreeClassifier2D):
-    pass
-
-class ExtraTreeRegressor2D(DecisionTreeRegressor2D):
-    pass
+# TODO
+# class ExtraTreeClassifier2D(DecisionTreeClassifier2D):
+#     pass
+# 
+# class ExtraTreeRegressor2D(DecisionTreeRegressor2D):
+#     pass
