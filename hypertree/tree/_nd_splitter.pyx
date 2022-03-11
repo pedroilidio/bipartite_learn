@@ -1,7 +1,8 @@
-from pprint import pprint  # TODO
+import copy
+import warnings
 from sklearn.tree._splitter cimport Splitter
-from sklearn.tree._criterion cimport RegressionCriterion
-from _nd_criterion cimport RegressionCriterionWrapper2D, MSE_Wrapper2D
+from sklearn.tree._criterion cimport RegressionCriterion, Criterion
+from ._nd_criterion cimport RegressionCriterionWrapper2D, MSE_Wrapper2D
 
 import numpy as np
 cimport numpy as np
@@ -34,7 +35,7 @@ cdef class Splitter2D:
     cdef int init(self,
                   object X,
                   const DOUBLE_t[:, ::1] y,
-                  (DOUBLE_t*)[2] sample_weight,
+                  DOUBLE_t* sample_weight,
     ) except -1:
         """Initialize the axes' splitters.
         Take in the input data X, the target Y, and optional sample weights.
@@ -67,8 +68,10 @@ cdef class Splitter2D:
             self.row_sample_weight = NULL
             self.col_sample_weight = NULL
         else:
-            self.row_sample_weight = sample_weight[0]
-            self.col_sample_weight = sample_weight[1]
+            # First self.shape[0] sample weights are rows' the others
+            # are columns'.
+            self.row_sample_weight = sample_weight
+            self.col_sample_weight = sample_weight + self.shape[0]
 
         self.splitter_rows.init(X[0], y, self.row_sample_weight)
         self.splitter_cols.init(X[1], yT, self.col_sample_weight)
@@ -190,54 +193,88 @@ cdef class Splitter2D:
         return self.criterion_wrapper.node_impurity()
 
 
-cpdef Splitter2D gen_splitter_2d(
-       type splitter_class,
-       type criterion_class,
-       object shape,
-       object n_attrs,
+cpdef Splitter2D make_2d_splitter(
+       splitter_class,
+       criterion_class,
+       shape,
+       n_attrs,
        SIZE_t n_outputs=1,
-       object min_samples_leaf=None,
-       object min_weight_leaf=None,
-       object random_state=None,
-       type criteria_wrapper_class=MSE_Wrapper2D,
+       min_samples_leaf=None,
+       min_weight_leaf=None,
+       random_state=None,
+       criteria_wrapper_class=MSE_Wrapper2D,
     ):
+    """Factory function of Splitter2D instances.
+
+    Since the building of a Splitter2D is somewhat counterintuitive, this func-
+    tion is provided to simplificate the process. With exception of shape and
+    n_attrs, the remaining parameters may be set to a single value or a 2-valued
+    tuple or list, to specify them for each axis.
+    """
     if type(min_samples_leaf) not in {list, tuple}:
         min_samples_leaf = [min_samples_leaf, min_samples_leaf]
     if type(min_weight_leaf) not in {list, tuple}:
         min_weight_leaf = [min_weight_leaf, min_weight_leaf]
+    if type(splitter_class) not in {list, tuple}:
+        splitter_class = [splitter_class, splitter_class]
+    if type(criterion_class) not in {list, tuple}:
+        criterion_class = [criterion_class, criterion_class]
 
     if not isinstance(random_state, np.random.RandomState):
         random_state = np.random.RandomState(random_state)
 
     # Criteria.
-    criterion_rows = criterion_class(
-        n_outputs=n_outputs,
-        n_samples=shape[0])
-    criterion_cols = criterion_class(
-        n_outputs=n_outputs,
-        n_samples=shape[1])
+    if isinstance(criterion_class[0], Criterion):
+        criterion_rows = copy.deepcopy(criterion_class[0])
+    else:
+        criterion_rows = criterion_class[0](
+            n_outputs=n_outputs,
+            n_samples=shape[0])
+
+    if isinstance(criterion_class[1], Criterion):
+        criterion_cols = copy.deepcopy(criterion_class[1])
+    else:
+        criterion_cols = criterion_class[1](
+            n_outputs=n_outputs,
+            n_samples=shape[1])
 
     # Splitters.
-    cdef Splitter splitter_rows = splitter_class(
-        criterion=criterion_rows,
-        max_features=n_attrs[0],
-        min_samples_leaf=min_samples_leaf[0],
-        min_weight_leaf=min_weight_leaf[0],
-        random_state=random_state,
-    )
-    cdef Splitter splitter_cols = splitter_class(
-        criterion=criterion_cols,
-        max_features=n_attrs[1],
-        min_samples_leaf=min_samples_leaf[1],
-        min_weight_leaf=min_weight_leaf[1],
-        random_state=random_state,
-    )
+    cdef Splitter splitter_rows
+    cdef Splitter splitter_cols
+
+    if isinstance(splitter_class[0], Splitter):
+        if criterion_class[0] is not None:
+            warnings.warn("Since splitter_class[0] is not a class, the provided"
+                          " criterion_class[0] is being ignored.")
+        splitter_rows = copy.deepcopy(splitter_class[0])
+    else:
+        splitter_rows = splitter_class[0](
+            criterion=criterion_rows,
+            max_features=n_attrs[0],
+            min_samples_leaf=min_samples_leaf[0],
+            min_weight_leaf=min_weight_leaf[0],
+            random_state=random_state,
+        )
+    if isinstance(splitter_class[1], Splitter):
+        if criterion_class[1] is not None:
+            warnings.warn("Since splitter_class[1] is not a class, the provided"
+                          " criterion_class[1] is being ignored.")
+        splitter_cols = copy.deepcopy(splitter_class[1])
+    else:
+        splitter_cols = splitter_class[1](
+            criterion=criterion_cols,
+            max_features=n_attrs[1],
+            min_samples_leaf=min_samples_leaf[1],
+            min_weight_leaf=min_weight_leaf[1],
+            random_state=random_state,
+        )
 
     # Wrap criteria.
-    cdef RegressionCriterionWrapper2D criteria_wrapper = criteria_wrapper_class(
-        splitter_rows.criterion,
-        splitter_cols.criterion,
-    )
+    cdef RegressionCriterionWrapper2D criteria_wrapper = \
+        criteria_wrapper_class([
+            splitter_rows.criterion,
+            splitter_cols.criterion,
+    ])
 
     # Wrap splitters.
     return Splitter2D(

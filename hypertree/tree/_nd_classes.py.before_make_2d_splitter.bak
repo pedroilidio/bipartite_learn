@@ -1,7 +1,19 @@
 """
 This module gathers tree-based methods, including decision, regression and
-randomized trees. Single and multi-output problems are both handled.
+randomized trees, adapted from sklearn for 2D training data.
 """
+# Authors: Gilles Louppe <g.louppe@gmail.com>
+#          Peter Prettenhofer <peter.prettenhofer@gmail.com>
+#          Brian Holt <bdholt1@gmail.com>
+#          Noel Dawe <noel@dawe.me>
+#          Satrajit Gosh <satrajit.ghosh@gmail.com>
+#          Joly Arnaud <arnaud.v.joly@gmail.com>
+#          Fares Hedayati <fares.hedayati@gmail.com>
+#          Nelson Liu <nelson@nelsonliu.me>
+#
+# 2D adaptation: Pedro Ilidio <pedrilidio@gmail.com>
+#
+# License: BSD 3 clause
 
 import numbers
 import warnings
@@ -44,6 +56,7 @@ from _nd_splitter import Splitter2D
 
 __all__ = [
     "DecisionTreeRegressor2D",
+    "PBCT",  # Alias to DecisionTreeRegressor2D.
 ]
 
 
@@ -66,21 +79,13 @@ DENSE_SPLITTERS = {
 
 SPARSE_SPLITTERS = {}
 
-
-def duplicate_if_needed(something):
-    if type(something) not in {list, tuple}:
-        return [something, something]
-    else:
-        return something
-
-
 # =============================================================================
 # Base ND decision tree
 # =============================================================================
 
 
 class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
-    """Base class for ND trees.
+    """Base class for ND trees, 2D adapted.
 
     Warning: This class should not be used directly.
     Use derived classes instead.
@@ -130,22 +135,23 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         )
 
         if check_input:
-            raise NotImplementedError("We do not check inputs here.")
-            # Need to validate separately here.
+            warnings.warn("2D input checking not tested")
             # We can't pass multi_ouput=True because that would allow y to be
             # csr.
             check_X_params = dict(dtype=DTYPE, accept_sparse="csc")
             check_y_params = dict(ensure_2d=False, dtype=None)
-            X, y = self._validate_data(
-                X, y, validate_separately=(check_X_params, check_y_params)
-            )
-            if issparse(X):
-                X.sort_indices()
+            y = self._validate_data(y, **check_y_params)
 
-                if X.indices.dtype != np.intc or X.indptr.dtype != np.intc:
-                    raise ValueError(
-                        "No support for np.int64 index based sparse matrices"
-                    )
+            for ax in range(len(X)):
+                X[ax] = self._validate_data(X[ax], **check_X_params)
+                if issparse(X[ax]):
+                    X[ax].sort_indices()
+
+                    if (X[ax].indices.dtype != np.intc
+                            or X[ax].indptr.dtype != np.intc):
+                        raise ValueError(
+                            "No support for np.int64 index based sparse matrices"
+                        )
 
             if self.criterion == "poisson":
                 if np.any(y < 0):
@@ -266,6 +272,7 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
                 splitter_cols,
                 criterion_wrapper,
             )
+
 
 
         if is_classifier(self):
@@ -442,7 +449,6 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
                 )
 
         if sample_weight is not None:
-            raise NotImplementedError("sample_weight not implemented.")
             sample_weight = _check_sample_weight(sample_weight, X, DOUBLE)
 
         if expanded_class_weight is not None:

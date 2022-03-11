@@ -26,12 +26,12 @@ from make_examples import gen_imatrix
 
 ##### TEST PARAMS #####
 CONFIG = dict(
-    seed=437819,
+    seed=439,
     shape=(510, 609),
     nattrs=(10, 9),
     nrules=10,
     transpose_test=0,
-    noise=1,
+    noise=0,
     inspect=0,
     plot=1,
 )
@@ -66,7 +66,9 @@ print('=' * 50)
 
 ########## Instantiate sklearn objects
 print('Data generation time:', time()-t0)
-tree = DecisionTreeRegressor2D()
+tree = DecisionTreeRegressor2D(
+    min_samples_leaf=(100 if CONFIG['noise'] else 1),
+)
 print(vars(tree))
 print('Fitting tree...')
 tree.fit(XX, Y)

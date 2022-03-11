@@ -1,10 +1,5 @@
 # distutils: language = c++
 from cpython cimport Py_INCREF, PyObject, PyTypeObject
-
-from libc.stdlib cimport free
-from libc.math cimport fabs
-from libc.string cimport memcpy
-from libc.string cimport memset
 from libc.stdint cimport SIZE_MAX
 
 import struct
@@ -14,12 +9,6 @@ cimport numpy as np
 np.import_array()
 
 from scipy.sparse import issparse
-from scipy.sparse import csr_matrix
-
-from sklearn.tree._utils cimport PriorityHeap
-from sklearn.tree._utils cimport PriorityHeapRecord
-from sklearn.tree._utils cimport safe_realloc
-from sklearn.tree._utils cimport sizet_ptr_to_ndarray
 
 cdef extern from "numpy/arrayobject.h":
     object PyArray_NewFromDescr(PyTypeObject* subtype, np.dtype descr,
@@ -36,10 +25,6 @@ cdef extern from "<stack>" namespace "std" nogil:
         void pop()
         void push(T&) except +  # Raise c++ exception for bad_alloc -> MemoryError
         T& top()
-
-##################### debug
-from pprint import pprint
-import matplotlib.pyplot as plt
 
 # =============================================================================
 # Types and constants
@@ -63,35 +48,26 @@ cdef SIZE_t _TREE_LEAF = TREE_LEAF
 cdef SIZE_t _TREE_UNDEFINED = TREE_UNDEFINED
 cdef SIZE_t INITIAL_STACK_SIZE = 10
 
-# # Build the corresponding numpy dtype for Node.
-# # This works by casting `dummy` to an array of Node of length 1, which numpy
-# # can construct a `dtype`-object for. See https://stackoverflow.com/q/62448946
-# # for a more detailed explanation.
-# cdef Node dummy;
-# NODE_DTYPE = np.asarray(<Node[:1]>(&dummy)).dtype
-
-# from sklearn.tree._tree import (
-#     DTYPE, DOUBLE, INFINITY, EPSILON, IS_FIRST, IS_NOT_FIRST, IS_LEFT,
-#     IS_NOT_LEFT, TREE_LEAF, TREE_UNDEFINED, _TREE_LEAF, _TREE_UNDEFINED,
-#     INITIAL_STACK_SIZE, NODE_DTYPE,
-# )
-from _nd_splitter cimport SplitRecord, Splitter2D
-
 # =============================================================================
-# TreeBuilder
+# TreeBuilderND
 # =============================================================================
 
-cdef class TreeBuilderND:
+cdef class TreeBuilderND:  # (TreeBuilder):
     """Interface for different tree building strategies."""
 
     cpdef build(self, Tree tree, object X, np.ndarray y,
                 np.ndarray sample_weight=None):
         """Build a decision tree from the training set (X, y)."""
+        # TODO: should be inherited.
         pass
 
     cdef inline _check_input(self, object X, np.ndarray y,
                              np.ndarray sample_weight):
-        """Check input dtype, layout and format"""
+        """Check input dtype, layout and format.
+
+        Applies the same processing as sklearn's TreeBuilder for each X[ax]
+        feature matrix in X.
+        """
         for ax in range(len(X)):
             if issparse(X[ax]):
                 X[ax] = X[ax].tocsc()
@@ -109,17 +85,18 @@ cdef class TreeBuilderND:
                 # since we have to copy we will make it fortran for efficiency
                 X[ax] = np.asfortranarray(X[ax], dtype=DTYPE)
 
-            if (sample_weight is not None and
-                (sample_weight[ax].dtype != DOUBLE or
-                not sample_weight[ax].flags.contiguous)):
-                    sample_weight[ax] = np.asarray(sample_weight[ax],
-                                                   dtype=DOUBLE,
-                                                   order="C")
+        if (sample_weight is not None and
+           (sample_weight.dtype != DOUBLE or
+           not sample_weight.flags.contiguous)):
+                sample_weight = np.asarray(sample_weight,
+                                           dtype=DOUBLE,
+                                           order="C")
 
         if y.dtype != DOUBLE or not y.flags.contiguous:
             y = np.ascontiguousarray(y, dtype=DOUBLE)
 
         return X, y, sample_weight
+
 
 # Depth first builder ---------------------------------------------------------
 # A record on the stack for depth-first tree growing
@@ -136,12 +113,17 @@ cdef struct StackRecord2D:
     SIZE_t n_constant_col_features
 
 cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
-    """Build a 2D decision tree in depth-first fashion.
+    """Build a decision tree in depth-first fashion, from 2D training data.
 
     It adds minor changes to sklearn's DepthfirstTreeBuilder, essentially
-    in storing two-values start/end positions and managing getting the new ones.
-    """
+    in storing two-values start/end node positions and managing getting the
+    new ones after each split.
 
+    `X` is now a list with 2 matrices, for the feature table of row and column
+    instances respectively. `y` is a 2 dimensional ndarray representing labels
+    of interaction of each row with each column. Mulit-output is not yet imp-
+    lemented.
+    """
     # TODO: define separate methods for split -> node data conversion and
     # evaluating stopping criteria.
     # TODO: define axis-specific min_samples_leaf, min_samples_split and
@@ -162,15 +144,12 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                 np.ndarray sample_weight=None,
     ):
         """Build a decision tree from the training set (X, y)."""
-        DEBUG_TREE_MAP = np.zeros(y.astype(int).shape, dtype=float)
-
         # check input
         X, y, sample_weight = self._check_input(X, y, sample_weight)
 
-        cdef (DOUBLE_t*)[2] sample_weight_ptr = [NULL, NULL]
-        # TODO
-        # if sample_weight is not None:
-        #     sample_weight_ptr = <(DOUBLE_t*)[2]> sample_weight.data
+        cdef DOUBLE_t* sample_weight_ptr = NULL
+        if sample_weight is not None:
+             sample_weight_ptr = <DOUBLE_t*> sample_weight.data
 
         # Initial capacity
         cdef int init_capacity
@@ -200,7 +179,6 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
         cdef SIZE_t parent
         cdef bint is_left
         cdef SIZE_t n_node_samples = splitter.n_samples
-        cdef double weighted_n_samples = splitter.weighted_n_samples
         cdef double weighted_n_node_samples
         cdef SplitRecord split
         cdef SIZE_t node_id
@@ -214,9 +192,9 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
 
         cdef stack[StackRecord2D] builder_stack
         cdef StackRecord2D stack_record
-        cdef SIZE_t ax
 
-        # FIXME: stack doesn't receive array elements without GIL.
+        # FIXME: stack doesn't receive array elements without GIL. Would be nice
+        # to have a DOUBLE_t[2] start or end, for instance.
         with nogil:
             # push root node onto stack
             builder_stack.push({
@@ -247,8 +225,6 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                 n_constant_features[0] = stack_record.n_constant_row_features
                 n_constant_features[1] = stack_record.n_constant_col_features
 
-                # n_node_samples[0] = end[0] - start[0]
-                # n_node_samples[1] = end[1] - start[1]
                 n_node_samples = (end[0]-start[0]) * (end[1]-start[1])
                 splitter.node_reset(start, end, &weighted_n_node_samples)
 
@@ -277,7 +253,6 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                 node_id = tree._add_node(parent, is_left, is_leaf,
                                          split.feature,
                                          split.threshold, impurity,
-                                         # TODO: for each axis:
                                          n_node_samples,
                                          weighted_n_node_samples)
 
@@ -305,35 +280,12 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                     end_left[0], end_right[0] = end[0], end[0]
                     end_left[1], end_right[1] = end[1], end[1]
 
+                    # Setting new nodes coordinates.
+                    # These lines are why we had to rewrite this whole method
+                    # to develop the 2-dimensional version.
                     start_right[split.axis] = split.pos
                     end_left[split.axis] = split.pos
 
-                    ##### debug
-                    # with gil:
-                    #     pprint({
-                    #         "right_start": start_right,
-                    #         "right_end": end_right,
-                    #         "left_start": start_left,
-                    #         "left_end": end_left,
-                    #     })
-                    #     pprint(split)
-                    #     pprint(stack_record)
-                    #     print('===================')
-
-                        #DEBUG_TREE_MAP[
-                        #    start_right[0]:end_right[0],
-                        #    start_right[1]:end_right[1]
-                        #    ] += 1./(depth+1)
-                        #plt.cla()
-                        #plt.pcolormesh(DEBUG_TREE_MAP)
-                        ## Remember i is y, j is x
-                        #plt.plot(start_right[1], start_right[0], 'ro', mec='k')
-                        #plt.plot(end_right[1], end_right[0], 'rD', mec='k')
-                        #plt.plot(start_left[1], start_left[0], 'go', mec='k')
-                        #plt.plot(end_left[1], end_left[0], 'gD', mec='k')
-                        #plt.show()
-
-                    ######################
                     # Push right child on stack
                     builder_stack.push({
                         "start_row": start_right[0],

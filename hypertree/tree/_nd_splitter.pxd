@@ -4,7 +4,7 @@ from sklearn.tree._tree cimport DTYPE_t          # Type of X
 from sklearn.tree._tree cimport DOUBLE_t         # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t           # Type for indices and counters
 
-from _nd_criterion cimport RegressionCriterionWrapper2D
+from ._nd_criterion cimport RegressionCriterionWrapper2D
 
 
 cdef struct SplitRecord:
@@ -47,7 +47,7 @@ cdef class Splitter2D:
     cdef int init(self,
                   object X,
                   const DOUBLE_t[:, ::1] y,
-                  (DOUBLE_t*)[2] sample_weight,
+                  DOUBLE_t* sample_weight,
     ) except -1
 
     cdef int node_reset(self, SIZE_t[2] start, SIZE_t[2] end,
@@ -59,3 +59,16 @@ cdef class Splitter2D:
     cdef void node_value(self, double* dest) nogil
 
     cdef double node_impurity(self) nogil
+
+
+cpdef Splitter2D make_2d_splitter(
+       splitter_class,
+       criterion_class,
+       shape,
+       n_attrs,
+       SIZE_t n_outputs=*,
+       min_samples_leaf=*,
+       min_weight_leaf=*,
+       random_state=*,
+       criteria_wrapper_class=*,
+    )
