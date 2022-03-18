@@ -3,6 +3,7 @@ Adapts `sklearn.pipeline.Pipeline` to transformers that yield new y instead of
 new X (TargetPipeline) and to transformers that return both new X and new y
 (XYPipeline). In both cases, the transformers may receive X and y in their fit
 methods, which is not possible with `sklearn.compose.TransformedTargetRegressor`.
+Changes are marked with `###`.
 """
 # Author: Pedro Ilídio
 # License: BSD
@@ -69,6 +70,7 @@ class TargetPipeline(Pipeline):
     def fit_transform(self, X, y=None, **fit_params):
         fit_params_steps = self._check_fit_params(**fit_params)
         yt = self._fit(X, y, **fit_params_steps)
+        ### Xt = self._fit(X, y, **fit_params_steps)
 
         last_step = self._final_estimator
         with _print_elapsed_time("TargetPipeline", self._log_message(len(self.steps) - 1)):  ###
