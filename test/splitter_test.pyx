@@ -2,7 +2,7 @@ from sklearn.tree._criterion cimport Criterion
 from sklearn.tree._splitter cimport Splitter#, SplitRecord
 from sklearn.tree._tree cimport SIZE_t
 
-from _nd_splitter cimport SplitRecord, Splitter2D
+from hypertree.tree._nd_splitter cimport SplitRecord, Splitter2D
 
 import numpy as np
 cimport numpy as np

@@ -42,6 +42,7 @@ from sklearn.tree._tree import Tree
 from sklearn.tree import _tree, _splitter, _criterion, DecisionTreeRegressor
 
 # ND new:
+from itertools import product
 from sklearn.tree._classes import BaseDecisionTree
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import MSE_Wrapper2D
@@ -129,7 +130,7 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         )
 
         if check_input:
-            warnings.warn("2D input checking not tested")
+            #warnings.warn("2D input checking not tested")
             # We can't pass multi_ouput=True because that would allow y to be
             # csr.
             check_X_params = dict(dtype=DTYPE, accept_sparse="csc")
@@ -445,6 +446,31 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
             sample_weight,
             min_weight_leaf,
         )
+
+    def _validate_X_predict(self, X, check_input):
+        """Validate the training data on predict (probabilities)."""
+        # FIXME: storing a whole matrix unnecessarily.
+        if type(X) in (tuple, list) and len(X) == 2:  # FIXME: better criteria.
+            X = np.array([np.hstack(x) for x in product(*X)])
+        return super()._validate_X_predict(X, check_input)
+
+#     # FIXME: reshape after?
+#     def predict(self, X, check_input=True):
+#         # Identify if each axis instances are provided separately.
+#         # FIXME: better criteria.
+#         axes_format = type(X) in (tuple, list) and len(X) == 2
+# 
+#         if axes_format:
+#             X = np.fromiter(
+#                 (np.hstack(x) for x in itertools.product(*X)),
+#                 dtype=X[0].dtype)
+#             original_shape = (len(Xax) for Xax in X)
+# 
+#         pred = super().predict(X, check_input)
+# 
+#         if axes_format:
+#             pred = pred.reshape(*original_shape)
+#         return pred
 
 
 # =============================================================================

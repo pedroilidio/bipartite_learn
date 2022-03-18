@@ -5,10 +5,11 @@ from sklearn.tree._splitter import BestSplitter
 import sklearn.tree
 
 from splitter_test import test_splitter, test_splitter2d
-from _nd_splitter import Splitter2D
-from _nd_criterion import MSE_Wrapper2D
+from hypertree.tree._nd_splitter import Splitter2D
+from hypertree.tree._nd_criterion import MSE_Wrapper2D
+from hypertree.tree._nd_classes import DecisionTreeRegressor2D
+
 import matplotlib.pyplot as plt
-from _nd_classes import DecisionTreeRegressor2D
 
 
 import numpy as np
@@ -19,8 +20,6 @@ from pathlib import Path
 import sys
 from time import time
 
-path_pbct_test = Path('../PBCT/tests/')
-sys.path.insert(0, str(path_pbct_test))
 from make_examples import gen_imatrix
 
 

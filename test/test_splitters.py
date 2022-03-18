@@ -3,7 +3,7 @@ from sklearn.tree._criterion import MSE
 from sklearn.tree._splitter import BestSplitter
 
 from sklearn_splitter_test import test_splitter
-from _nd_splitter import MSE_2D
+from hypertree._nd_splitter import MSE_2D
 
 
 import numpy as np
