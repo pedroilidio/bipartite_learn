@@ -246,7 +246,7 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                     # If EPSILON=0 in the below comparison, float precision
                     # issues stop splitting, producing trees that are
                     # dissimilar to v0.18
-                    is_leaf = (is_leaf or split.pos >= end[split.axis] or
+                    is_leaf = (split.pos >= end[split.axis] or
                                (split.improvement + EPSILON <
                                 min_impurity_decrease))
 

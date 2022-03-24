@@ -97,6 +97,10 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         min_samples_leaf,
         min_weight_fraction_leaf,
         max_features,
+        # TODO: ax_min_samples_split,
+        ax_min_samples_leaf=1,  # New!
+        ax_min_weight_fraction_leaf=None,  # New!
+        ax_max_features=None,  # New!
         max_leaf_nodes,
         random_state,
         min_impurity_decrease,
@@ -111,6 +115,11 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         self.min_samples_leaf = min_samples_leaf
         self.min_weight_fraction_leaf = min_weight_fraction_leaf
         self.max_features = max_features
+
+        self.ax_min_samples_leaf = ax_min_samples_leaf
+        self.ax_min_weight_fraction_leaf = ax_min_weight_fraction_leaf
+        self.ax_max_features = ax_max_features
+
         self.max_leaf_nodes = max_leaf_nodes
 
         self.random_state = random_state
@@ -129,8 +138,10 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
             min_val=0.0,
         )
 
-        if check_input:
-            #warnings.warn("2D input checking not tested")
+
+        # FIXME: enable check_input.
+        # It currently tests the number of outputs and fail.
+        if False and check_input:
             # We can't pass multi_ouput=True because that would allow y to be
             # csr.
             check_X_params = dict(dtype=DTYPE, accept_sparse="csc")
@@ -138,6 +149,7 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
             y = self._validate_data(y, **check_y_params)
 
             for ax in range(len(X)):
+                # FIXME: it will test the # of outputs and fail.
                 X[ax] = self._validate_data(X[ax], **check_X_params)
                 if issparse(X[ax]):
                     X[ax].sort_indices()
@@ -215,6 +227,33 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         min_weight_leaf) = self._check_parameters(
             X, y, sample_weight, expanded_class_weight)
 
+        # TODO: move to _check_parameters.
+        if self.ax_max_features is None:
+            ax_max_features = n_attrs
+        else:
+            ax_max_features = self.ax_max_features
+
+        ax_min_samples_leaf = self.ax_min_samples_leaf  # Defaults to 1.
+
+        # TODO: move to _check_parameters.
+        if self.ax_min_weight_fraction_leaf is None:
+            # ax_min_weight_fraction_leaf = 0.0
+            ax_min_weight_leaf = (0.0, 0.0)
+        elif sample_weight is None:
+            ax_min_weight_leaf = [
+                mw * d for mw, d in
+                zip(self.ax_min_weight_fraction_leaf, y.shape)
+            ]
+        else:
+            split_indices = np.cumsum(y.shape)
+            ax_sample_weight = np.split(sample_weight, split_indices)[:-1]
+            weighted_n_samples = np.prod([
+                np.sum(sw) for sw in _ax_sample_weight])
+            ax_min_weight_leaf = [
+                mw * weighted_n_samples for mw in
+                self.ax_min_weight_fraction_leaf
+            ]
+
         # Build tree
         criterion = self.criterion
         if isinstance(criterion, str):
@@ -238,11 +277,14 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
             splitter = make_2d_splitter(
                 splitter_class=splitter,
                 criterion_class=criterion,
-                shape=y.shape,
-                n_attrs=n_attrs,
+                n_samples=y.shape,
                 n_outputs=self.n_outputs_,
+                # TODO: check ax_* parameters.
+                max_features=ax_max_features,
                 min_samples_leaf=min_samples_leaf,
                 min_weight_leaf=min_weight_leaf,
+                ax_min_samples_leaf=ax_min_samples_leaf,
+                ax_min_weight_leaf=ax_min_weight_leaf,
                 random_state=random_state,
             )
 
@@ -452,7 +494,8 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         # FIXME: storing a whole matrix unnecessarily.
         if type(X) in (tuple, list) and len(X) == 2:  # FIXME: better criteria.
             X = np.array([np.hstack(x) for x in product(*X)])
-        return super()._validate_X_predict(X, check_input)
+        # return super()._validate_X_predict(X, check_input)  # FIXMEJ
+        return X
 
 #     # FIXME: reshape after?
 #     def predict(self, X, check_input=True):
@@ -692,6 +735,9 @@ class DecisionTreeRegressor2D(RegressorMixin, BaseDecisionTree2D):
         min_samples_leaf=1,
         min_weight_fraction_leaf=0.0,
         max_features=None,
+        ax_min_samples_leaf=1,  # New!
+        ax_min_weight_fraction_leaf=None,  # New!
+        ax_max_features=None,  # New!
         random_state=None,
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,
@@ -706,12 +752,16 @@ class DecisionTreeRegressor2D(RegressorMixin, BaseDecisionTree2D):
             min_weight_fraction_leaf=min_weight_fraction_leaf,
             max_features=max_features,
             max_leaf_nodes=max_leaf_nodes,
+            ax_min_samples_leaf=ax_min_samples_leaf,
+            ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf,
+            ax_max_features=ax_max_features,
             random_state=random_state,
             min_impurity_decrease=min_impurity_decrease,
             ccp_alpha=ccp_alpha,
         )
 
-    def fit(self, X, y, sample_weight=None, check_input=True):
+    # FIXME: fix check_input to set default to True.
+    def fit(self, X, y, sample_weight=None, check_input=False):
         """Build a decision tree regressor from the training set (X, y).
 
         Parameters

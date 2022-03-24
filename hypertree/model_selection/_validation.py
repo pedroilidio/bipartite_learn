@@ -26,6 +26,7 @@ from sklearn.utils.validation import (
     _make_indexable,
     _num_samples,
 )
+from sklearn.utils._tags import _safe_tags
 
 import warnings
 import numbers
@@ -527,26 +528,18 @@ def _fit_and_score_nd(
 
     ####################### MODFIED SECTION ##########################
 
-    # TODO: Really check that here? 
-    if train_test_combinations is None:
-        train_test_combinations, train_test_names = \
-            _check_train_test_combinations(
-                train_test_combinations,
-                len(X),
-                return_train_score,
-            )
-
     test_splits = {}
 
+    # NOTE: ttc stands for train-test combinations
     for is_test_tuple, ttc_name in zip(train_test_combinations, train_test_names):
         # is_test_tuple ~= (0, 1, 1, 0)
         test_indices = [ax_train_test[is_test] for is_test, ax_train_test in
                         zip(is_test_tuple, train_test)]
-        test_splits[ttc_name] = _safe_split_nd(X, y, test_indices, estimator)
+        test_splits[ttc_name] = _safe_split_nd(estimator, X, y, test_indices)
 
 
     train_indices = [i[0] for i in train_test]
-    X_train, y_train = _safe_split_nd(X, y, train_indices, estimator)
+    X_train, y_train = _safe_split_nd(estimator, X, y, train_indices)
 
     result = {}
     try:
@@ -701,7 +694,7 @@ def _check_train_test_combinations(
     return ret_ttc, names
 
 # NOTE: Originally in sklearn.utils.metaestimators
-def _safe_split_nd(X, y, indices, estimator=None):
+def _safe_split_nd(estimator, X, y, indices, train_indices=None):
     """Create subset of n-dimensional dataset.
 
     Slice X, y according to indices for n-dimensional cross-validation.
@@ -729,13 +722,31 @@ def _safe_split_nd(X, y, indices, estimator=None):
         Indexed targets.
 
     """
+    n_dim = y.ndim
     # TODO: further checking in another function may be adeuqate.
     # X_subset = _safe_indexing(X, indices)
-    if not (len(X) == len(indices) == y.ndim):
+    if not (len(X) == len(indices) == n_dim):
         raise ValueError("Incompatible dimensions. One must ensure "
                          "len(X) == len(indices) == y.ndim")
 
-    X_subset = [Xax[i] for Xax, i in zip(X, indices)]
+    if _safe_tags(estimator, key="pairwise"):
+        X_subset = []
+        for i in range(n_dim):
+            Xi, ind = X[i], indices[i]
+            if not hasattr(Xi, "shape"):
+                raise ValueError(
+                    "Precomputed kernels or affinity matrices have "
+                    "to be passed as arrays or sparse matrices."
+                )
+            # Xi is a precomputed square kernel matrix
+            if Xi.shape[0] != Xi.shape[1]:
+                raise ValueError("Xi should be a square kernel matrix")
+            if train_indices is None:
+                X_subset.append(Xi[np.ix_(ind, ind)])
+            else:
+                X_subset.append(Xi[np.ix_(ind, train_indices[i])])
+    else:
+        X_subset = [Xax[i] for Xax, i in zip(X, indices)]
 
     if y is not None:
         y_subset = y[np.ix_(*indices)]

@@ -38,6 +38,12 @@ cdef class Splitter2D:
 
     cdef SIZE_t n_samples
     cdef double weighted_n_samples
+
+    cdef SIZE_t min_samples_leaf
+    cdef SIZE_t min_rows_leaf
+    cdef SIZE_t min_cols_leaf
+    cdef double min_weight_leaf
+
     cdef DOUBLE_t* row_sample_weight
     cdef DOUBLE_t* col_sample_weight
     cdef SIZE_t[2] start
@@ -61,14 +67,14 @@ cdef class Splitter2D:
     cdef double node_impurity(self) nogil
 
 
-cpdef Splitter2D make_2d_splitter(
-       splitter_class,
-       criterion_class,
-       shape,
-       n_attrs,
-       SIZE_t n_outputs=*,
-       min_samples_leaf=*,
-       min_weight_leaf=*,
-       random_state=*,
-       criteria_wrapper_class=*,
-    )
+# cpdef Splitter2D make_2d_splitter(
+#        splitter_class,
+#        criterion_class,
+#        shape,
+#        n_attrs,
+#        SIZE_t n_outputs=*,
+#        min_samples_leaf=*,
+#        min_weight_leaf=*,
+#        random_state=*,
+#        criteria_wrapper_class=*,
+#     )

@@ -1,10 +1,17 @@
-from setuptools import setup, Extension
+#! /usr/bin/env python
+# Copyright (C) 2022 Pedro Ilídio <ilidio@alumni.usp.br>
+# License: 3-clause BSD
+
+from setuptools import setup, Extension, find_packages
 from pathlib import Path
 from Cython.Build import cythonize
 import numpy
 
-PATH_HERE = Path(__file__).parent
-README = (PATH_HERE/"README.md").read_text()
+PATH_ROOT = Path(__file__).parent
+README = (PATH_ROOT/"README.md").read_text()
+# Get __version__ from _version.py
+exec((PATH_ROOT/"hypertree/_version.py").read_text())
+VERSION = __version__
 
 extensions = [
     Extension(
@@ -17,7 +24,7 @@ extensions = [
 
 setup(
     name='hypertree',
-    version='0.0.1b1',
+    version=VERSION,
     description='HyperTrees in Python.',
     include_dirs=[numpy.get_include()],
     long_description=README,
@@ -25,12 +32,17 @@ setup(
     url='http://github.com/pedroilidio/hypertree',
     author='Pedro Ilídio',
     author_email='pedrilidio@gmail.com',
-    license='GPLv3',
-    packages=['hypertree'],
+    license='new BSD',
+    packages=find_packages(),
     # scripts=['bin/hypertree'],
     zip_safe=False,
-    install_requires=['sklearn', 'numpy', 'cython'],
 
+    install_requires=[
+        'cython>=0.29.27',
+        'sklearn>=1.0.2',
+        'numpy>=1.22.2',
+        'imbalanced-learn>=0.7.0',
+    ],
     ext_modules=cythonize(
         extensions,
         language_level="3",

@@ -182,9 +182,6 @@ cdef class RegressionCriterionWrapper2D:
             i = row_samples[p]
 
             if self.row_sample_weight != NULL:
-                # NOTE: divide to multiply after in Criterion.update().
-                # Not the most efficient, but it was the only way I saw to keep
-                # the sklearn class unmodified.
                 self.total_row_sample_weight[i] = \
                     self.row_sample_weight[i] * self.weighted_n_col_samples
             else:
@@ -203,6 +200,10 @@ cdef class RegressionCriterionWrapper2D:
             else:
                 self.total_col_sample_weight[j] = self.weighted_n_row_samples
 
+            # NOTE: divide to multiply after in Criterion.update().
+            # Not the most efficient, but it was the only way I saw to keep
+            # the sklearn class unmodified.
+            # FIXME: the name should be y_col_means.
             # TODO: Multioutput
             self.y_col_sums[j, 0] = \
                 self.y_col_sums[j, 0] / self.weighted_n_row_samples
@@ -330,9 +331,6 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
                 criterion = self.criterion_rows
 
         pos = criterion.pos
-        # FIXME: same pos? shouldn't need that, the splitter will init them.
-        criterion.reset()
-        criterion.update(pos)
 
         sum_left = criterion.sum_left
         sum_right = criterion.sum_right
@@ -341,8 +339,6 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
 
         end[0], end[1] = self.end[0], self.end[1]
         end[axis] = pos
-
-        # FIXME: shouldn't need that, the splitter will init them.
 
         for p in range(self.start[0], end[0]):
             i = self.row_samples[p]

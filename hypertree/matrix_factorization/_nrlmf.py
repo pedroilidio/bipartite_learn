@@ -8,9 +8,14 @@ from sklearn.utils.multiclass import unique_labels
 from sklearn.metrics import euclidean_distances
 
 
-class NRLMF(TransformerMixin, BaseEstimator):
-    """ A "target transformer", since self.transform() returns new y, not X.
+class NRLMF(BaseEstimator):
+    """Neighborhood Regularized Logistic Matrix Factorization.
+
+    See [Liu _et al._, 2016](https://doi.org/10.1371/journal.pcbi.1004760).
     """
+    def _more_tags(self):
+        return dict(pairwise=True)
+
     def __init__(
             self,
             cfix=5,
@@ -23,6 +28,7 @@ class NRLMF(TransformerMixin, BaseEstimator):
             alpha=0.1,
             beta=0.1,
             max_iter=100,
+            change_positives=False,
     ):
         self.cfix = int(cfix)  # importance level for positive observations
         self.K1 = int(K1)
@@ -34,25 +40,13 @@ class NRLMF(TransformerMixin, BaseEstimator):
         self.alpha = float(alpha)
         self.beta = float(beta)
         self.max_iter = int(max_iter)
+        self.change_positives = change_positives
 
-    def fit(self, X, y, W=1, seed=None):
-        """A reference implementation of a fitting function for a transformer.
+    def fit_resample(self, X, y, W=1, seed=None):
+        # FIXME: we are bypassing input checking.
+        return self._fit_resample(X, y, W)
 
-        Parameters
-        ----------
-        X : {array-like, sparse matrix}, shape (n_samples, n_features)
-            The training input samples.
-        y : None
-            There is no need of a target in a transformer, yet the pipeline API
-            requires this parameter.
-
-        Returns
-        -------
-        self : object
-            Returns self.
-        """
-        #X = check_array(X, accept_sparse=True)
-
+    def _fit_resample(self, X, y, W=1, seed=None):
         self.n_features_ = X[0].shape[1] + X[1].shape[1]
         intMat = y
         drugMat, targetMat = X
@@ -63,38 +57,19 @@ class NRLMF(TransformerMixin, BaseEstimator):
         self.intMat1 = (self.cfix-1)*intMat*W + self.ones
         x, y = np.where(self.intMat > 0)
         self.train_drugs, self.train_targets = set(x.tolist()), set(y.tolist())
-        self.construct_neighborhood(drugMat, targetMat)
-        self.AGD_optimization(seed)
-
-        return self
-
-    def transform(self, X=None):
-        """ A reference implementation of a transform function.
-
-        Parameters
-        ----------
-        X : {array-like, sparse-matrix}, shape (n_samples, n_features)
-            The input samples.
-
-        Returns
-        -------
-        X_transformed : array, shape (n_samples, n_features)
-            The array containing the element-wise square roots of the values
-            in ``X``.
-        """
-        # NOTE: ignore input data completely!
-
-        # Check is fit had been called
-        check_is_fitted(self, 'n_features_')
-
-        # Input validation
-        # X = check_array(X, accept_sparse=True)
+        self._construct_neighborhood(drugMat, targetMat)
+        self._AGD_optimization(seed)
 
         new_y = 1 / (1 + 1/(np.exp(self.U @ self.V.T)))
-        new_y[self.intMat.astype(bool)] = 1  # Enforce positive data.
-        return new_y
 
-    def AGD_optimization(self, seed=None):
+        if not self.change_positives:
+            # Change input only where it was zero.
+            mask = self.intMat.astype(bool)
+            new_y[mask] = self.intMat[mask]
+
+        return X, new_y
+
+    def _AGD_optimization(self, seed=None):
         if seed is None:
             self.U = np.sqrt(1/float(self.num_factors))*np.random.normal(size=(self.num_drugs, self.num_factors))
             self.V = np.sqrt(1/float(self.num_factors))*np.random.normal(size=(self.num_targets, self.num_factors))
@@ -104,23 +79,23 @@ class NRLMF(TransformerMixin, BaseEstimator):
             self.V = np.sqrt(1/float(self.num_factors))*prng.normal(size=(self.num_targets, self.num_factors))
         dg_sum = np.zeros((self.num_drugs, self.U.shape[1]))
         tg_sum = np.zeros((self.num_targets, self.V.shape[1]))
-        last_log = self.log_likelihood()
+        last_log = self._log_likelihood()
         for t in range(self.max_iter):
-            dg = self.deriv(True)
+            dg = self._deriv(True)
             dg_sum += np.square(dg)
             vec_step_size = self.theta / np.sqrt(dg_sum)
             self.U += vec_step_size * dg
-            tg = self.deriv(False)
+            tg = self._deriv(False)
             tg_sum += np.square(tg)
             vec_step_size = self.theta / np.sqrt(tg_sum)
             self.V += vec_step_size * tg
-            curr_log = self.log_likelihood()
+            curr_log = self._log_likelihood()
             delta_log = (curr_log-last_log)/abs(last_log)
             if abs(delta_log) < 1e-5:
                 break
             last_log = curr_log
 
-    def deriv(self, drug):
+    def _deriv(self, drug):
         if drug:
             vec_deriv = np.dot(self.intMat, self.V)
         else:
@@ -137,7 +112,7 @@ class NRLMF(TransformerMixin, BaseEstimator):
             vec_deriv -= self.lambda_t*self.V+self.beta*np.dot(self.TL, self.V)
         return vec_deriv
 
-    def log_likelihood(self):
+    def _log_likelihood(self):
         loglik = 0
         A = np.dot(self.U, self.V.T)
         B = A * self.intMat
@@ -152,25 +127,25 @@ class NRLMF(TransformerMixin, BaseEstimator):
         loglik -= 0.5 * self.beta * np.sum(np.diag((np.dot(self.V.T, self.TL)).dot(self.V)))
         return loglik
 
-    def construct_neighborhood(self, drugMat, targetMat):
+    def _construct_neighborhood(self, drugMat, targetMat):
         self.dsMat = drugMat - np.diag(np.diag(drugMat))
         self.tsMat = targetMat - np.diag(np.diag(targetMat))
         if self.K1 > 0:
-            S1 = self.get_nearest_neighbors(self.dsMat, self.K1)
-            self.DL = self.laplacian_matrix(S1)
-            S2 = self.get_nearest_neighbors(self.tsMat, self.K1)
-            self.TL = self.laplacian_matrix(S2)
+            S1 = self._get_nearest_neighbors(self.dsMat, self.K1)
+            self.DL = self._laplacian_matrix(S1)
+            S2 = self._get_nearest_neighbors(self.tsMat, self.K1)
+            self.TL = self._laplacian_matrix(S2)
         else:
-            self.DL = self.laplacian_matrix(self.dsMat)
-            self.TL = self.laplacian_matrix(self.tsMat)
+            self.DL = self._laplacian_matrix(self.dsMat)
+            self.TL = self._laplacian_matrix(self.tsMat)
 
-    def laplacian_matrix(self, S):
+    def _laplacian_matrix(self, S):
         x = np.sum(S, axis=0)
         y = np.sum(S, axis=1)
         L = 0.5*(np.diag(x+y) - (S+S.T))  # neighborhood regularization matrix
         return L
 
-    def get_nearest_neighbors(self, S, size=5):
+    def _get_nearest_neighbors(self, S, size=5):
         m, n = S.shape
         X = np.zeros((m, n))
         for i in range(m):
