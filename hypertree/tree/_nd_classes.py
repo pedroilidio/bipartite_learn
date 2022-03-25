@@ -42,6 +42,7 @@ from sklearn.tree._classes import BaseDecisionTree
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import MSE_Wrapper2D
 from ._nd_splitter import Splitter2D, make_2d_splitter
+from ..melter import row_cartesian_product
 
 
 __all__ = [
@@ -487,8 +488,8 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
     def _validate_X_predict(self, X, check_input):
         """Validate the training data on predict (probabilities)."""
         # FIXME: storing a whole matrix unnecessarily.
-        if type(X) in (tuple, list) and len(X) == 2:  # FIXME: better criteria.
-            X = np.array([np.hstack(x) for x in product(*X)])
+        if isinstance(X, (tuple, list)):  # FIXME: better criteria.
+            X = row_cartesian_product(X)
         # return super()._validate_X_predict(X, check_input)  # FIXMEJ
         return X
 

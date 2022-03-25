@@ -26,6 +26,7 @@ from sklearn.utils.validation import (
     _num_samples,
 )
 from sklearn.utils._tags import _safe_tags
+from ._split import check_cv_nd
 
 import warnings
 import numbers
@@ -275,11 +276,9 @@ def cross_validate_nd(
 
     ndim = y.ndim
 
-     # CrossValidatorNDWrapper charge of this.
-     # if groups is None:
-     #     groups = [None] * ndim
-     # TODO: but not this:
-     # groups = [_make_indexable(a) for a in groups]
+    if groups is None:
+        groups = [None] * ndim
+    groups = [_make_indexable(a) for a in groups]
 
     # Check dimension consistency
     if not (ndim == len(X) == len(groups)):

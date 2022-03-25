@@ -73,6 +73,7 @@ from sklearn.ensemble._forest import _get_n_samples_bootstrap
 from sklearn.ensemble._forest import _generate_sample_indices
 from sklearn.ensemble._forest import BaseForest, ForestRegressor
 
+from ..melter import row_cartesian_product
 from ..tree import (
     DecisionTreeRegressor2D,
     ExtraTreeRegressor2D,
@@ -467,6 +468,8 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
         # FIXME: fails to understand nd X format because self.n_outputs
         # FIXME: TypeError: super(type, obj): obj must be an instance or subtype of type
         # X = [super()._validate_data(Xi) for Xi in X]
+        if isinstance(X, (tuple, list)):  # FIXME: better criteria.
+            X = row_cartesian_product(X)
         return X
 
 
