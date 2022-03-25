@@ -2,7 +2,6 @@
 The :mod:`sklearn.model_selection._validation` module includes classes and
 functions to validate the model.
 """
-
 # Author: Alexandre Gramfort <alexandre.gramfort@inria.fr>
 #         Gael Varoquaux <gael.varoquaux@normalesup.org>
 #         Olivier Grisel <olivier.grisel@ensta.org>
@@ -70,6 +69,7 @@ def cross_validate_nd(
     return_train_score=False,
     return_estimator=False,
     error_score=np.nan,
+    # ND specific:
     diagonal=False,
     train_test_combinations=None,
 ):
@@ -275,9 +275,11 @@ def cross_validate_nd(
 
     ndim = y.ndim
 
-    if groups is None:
-        groups = [None] * ndim
-    groups = [_make_indexable(a) for a in groups]
+     # CrossValidatorNDWrapper charge of this.
+     # if groups is None:
+     #     groups = [None] * ndim
+     # TODO: but not this:
+     # groups = [_make_indexable(a) for a in groups]
 
     # Check dimension consistency
     if not (ndim == len(X) == len(groups)):
@@ -285,23 +287,8 @@ def cross_validate_nd(
         raise ValueError("Incompatible dimensions. One must ensure "
                          "y.ndim == len(X) == len(groups)")
 
-    if type(cv) not in (tuple, list):
-        cv = [copy.deepcopy(cv) for _ in range(ndim)]
-
-    cv = [check_cv(cv_i, y, classifier=is_classifier(estimator))
-          for cv_i in cv]
-
-    if diagonal:
-        # Ensure all cross validators report the same number of splits.
-        n_splits = (cv[ax].get_n_splits(X[ax], y.moveaxis(ax, 0), groups[ax])
-                    for ax in range(ndim))
-        g = itertools.groupby(n_splits)
-        next(g, None)
-
-        # if not all elements in n_splits are equal:
-        if next(g, False):
-            raise ValueError("Cross-validators must generate the same number"
-                             " of splits if diagonal=True")
+    cv = check_cv_nd(
+        cv, y, classifier=is_classifier(estimator), diagonal=diagonal)
 
     train_test_combinations, train_test_names = _check_train_test_combinations(
         train_test_combinations,
@@ -316,14 +303,7 @@ def cross_validate_nd(
     else:
         scorers = _check_multimetric_scoring(estimator, scoring)
 
-    combine_func = zip if diagonal else itertools.product
-
-    splits_iter = combine_func(*(
-        # FIXME: is np.moveaxis well suited here?
-        cv[ax].split(X[ax], np.moveaxis(y, ax, 0), groups[ax])
-        for ax in range(ndim)
-    ))
-
+    splits_iter = cv.split(X, y, groups)
     # next(splits_iter) == train_test ==
     #   ((train_ax0, test_ax0), (train_ax1, test_ax1), ...)
 
@@ -609,62 +589,12 @@ def _fit_and_score_nd(
     return result
 
 
-# def _score(estimator, X_test, y_test, scorer, error_score="raise"):
-#     """Compute the score(s) of an estimator on a given test set.
-# 
-#     Will return a dict of floats if `scorer` is a dict, otherwise a single
-#     float is returned.
-#     """
-#     if isinstance(scorer, dict):
-#         # will cache method calls if needed. scorer() returns a dict
-#         scorer = _MultimetricScorer(**scorer)
-# 
-#     try:
-#         if y_test is None:
-#             scores = scorer(estimator, X_test)
-#         else:
-#             scores = scorer(estimator, X_test, y_test)
-#     except Exception:
-#         if error_score == "raise":
-#             raise
-#         else:
-#             if isinstance(scorer, _MultimetricScorer):
-#                 scores = {name: error_score for name in scorer._scorers}
-#             else:
-#                 scores = error_score
-#             warnings.warn(
-#                 "Scoring failed. The score on this train-test partition for "
-#                 f"these parameters will be set to {error_score}. Details: \n"
-#                 f"{format_exc()}",
-#                 UserWarning,
-#             )
-# 
-#     error_msg = "scoring must return a number, got %s (%s) instead. (scorer=%s)"
-#     if isinstance(scores, dict):
-#         for name, score in scores.items():
-#             if hasattr(score, "item"):
-#                 with suppress(ValueError):
-#                     # e.g. unwrap memmapped scalars
-#                     score = score.item()
-#             if not isinstance(score, numbers.Number):
-#                 raise ValueError(error_msg % (score, type(score), name))
-#             scores[name] = score
-#     else:  # scalar
-#         if hasattr(scores, "item"):
-#             with suppress(ValueError):
-#                 # e.g. unwrap memmapped scalars
-#                 scores = scores.item()
-#         if not isinstance(scores, numbers.Number):
-#             raise ValueError(error_msg % (scores, type(scores), scorer))
-#     return scores
-
-
 def _check_train_test_combinations(
         ttc, ndim, return_train_scores, symbols='LT', sep=''):
     """Check train_test_combinations parameter.
     """
     # ttc = train_test_combinations
-    names_provided = ttc is not None and (
+    names_provided = (ttc is not None) and (
         isinstance(ttc[0], str) or isinstance(ttc[0][0], str))
 
     if ttc is None:

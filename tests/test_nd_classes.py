@@ -21,14 +21,14 @@ from pathlib import Path
 import sys
 from time import time
 
-from make_examples import gen_imatrix
+from make_examples import make_interaction_data
 
 import logging
 logging.basicConfig(level=logging.DEBUG)
 logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 
 # Default test params
-DEF_CONFIG = dict(
+DEF_PARAMS = dict(
     # seed=439,
     seed=7,
     shape=(50, 60),
@@ -67,7 +67,7 @@ def print_n_samples_in_leaves(tree):
     return n_samples_per_leaf
 
 
-def parse_args(**DEF_CONFIG):
+def parse_args(**DEF_PARAMS):
     argparser = ArgumentParser(fromfile_prefix_chars='@')
     argparser.add_argument('--seed', type=int)
     argparser.add_argument('--shape', nargs='+', type=int)
@@ -80,13 +80,13 @@ def parse_args(**DEF_CONFIG):
     argparser.add_argument('--inspect', action='store_true')
     argparser.add_argument('--plot', action='store_true')
     argparser.add_argument('--save_trees', action='store_true')
-    argparser.set_defaults(**DEF_CONFIG)
+    argparser.set_defaults(**DEF_PARAMS)
 
     return argparser.parse_args()
 
 
 # TODO: parameter description.
-def main(**CONFIG):
+def main(**PARAMS):
     """Test hypertree.DecisionTreeRegressor2D
 
     Fit hypertree.DecisionTreeRegressor2D on mock data and assert the grown tree
@@ -107,26 +107,23 @@ def main(**CONFIG):
     """
     ## Generate mock data
     print('Starting with settings:')
-    pprint(CONFIG)
-
-    np.random.seed(CONFIG['seed'])
-    # rng = np.random.default_rng(CONFIG['seed)  # should use.
+    pprint(PARAMS)
 
     t0 = time()
-    XX, Y = gen_imatrix(CONFIG['shape'], CONFIG['nattrs'], nrules=CONFIG['nrules'])
+    XX, Y, strfunc = make_interaction_data(
+        PARAMS['shape'], PARAMS['nattrs'], nrules=PARAMS['nrules'],
+        noise=PARAMS['noise'], random_state=PARAMS['seed']
+    )
 
-    if CONFIG['transpose_test']:
+    if PARAMS['transpose_test']:
         print('Test transposing axis.')
         Y = np.copy(Y.T.astype(DOUBLE_t), order='C')
         XX = [np.ascontiguousarray(X, DTYPE_t) for X in XX[::-1]]
-        CONFIG['nattrs'] = CONFIG['nattrs'][::-1]
-        CONFIG['shape'] = CONFIG['shape'][::-1]
+        PARAMS['nattrs'] = PARAMS['nattrs'][::-1]
+        PARAMS['shape'] = PARAMS['shape'][::-1]
     else:
         Y = np.ascontiguousarray(Y, DOUBLE_t)
         XX = [np.ascontiguousarray(X, DTYPE_t) for X in XX]
-
-    if CONFIG['noise']:
-        Y += np.random.rand(*CONFIG['shape']) * CONFIG['noise'] # add some noise
 
     print('Data generation time:', time()-t0)
     print('Data density (mean):', Y.mean())
@@ -135,11 +132,19 @@ def main(**CONFIG):
 
     ########## Instantiate trees
     tree2d = DecisionTreeRegressor2D(
-        min_samples_leaf=CONFIG['min_samples_leaf'],
+        min_samples_leaf=PARAMS['min_samples_leaf'],
+        # splitter='random',  
+        random_state=PARAMS['seed'],
     )
     tree1d = DecisionTreeRegressor(
-        min_samples_leaf=CONFIG['min_samples_leaf'],
+        min_samples_leaf=PARAMS['min_samples_leaf'],
+        # splitter='random',
+        random_state=PARAMS['seed'],
     )
+    # NOTE on ExtraTrees:
+    # Even with the same random_state, the way 2d splitter uses this random
+    # state will be different (same random state for each axis), thus yielding
+    # an ExtraTree2d different from sklearn's ExtraTree.
 
     t0 = time()
     print('Fitting sklearn.DecisionTreeRegressor...')
@@ -154,7 +159,7 @@ def main(**CONFIG):
     tree2d_n_samples_in_leaves = print_n_samples_in_leaves(tree2d)
     tree1d_n_samples_in_leaves = print_n_samples_in_leaves(tree1d)
 
-    if not CONFIG['inspect']:
+    if not PARAMS['inspect']:
         assert np.all(
             tree1d_n_samples_in_leaves == tree2d_n_samples_in_leaves
         )
@@ -174,19 +179,19 @@ def main(**CONFIG):
     with open('tree2d.txt', 'w') as f:
         f.write(sklearn.tree.export_text(tree2d))
 
-    if CONFIG['plot']:
+    if PARAMS['plot']:
         import matplotlib.pyplot as plt
         sklearn.tree.plot_tree(tree2d)
         plt.show()
 
-    if CONFIG['inspect']:
+    if PARAMS['inspect']:
         breakpoint()
 
 
 def test_main():
-    main(**DEF_CONFIG)
+    main(**DEF_PARAMS)
 
 
 if __name__ == "__main__":
-    args = parse_args(**DEF_CONFIG)
+    args = parse_args(**DEF_PARAMS)
     main(**vars(args))

@@ -16,15 +16,21 @@ def parse_args(args=None):
     return argparser.parse_args(args)
 
 
-def gen_imatrix(shape, nattrs, func=None, nrules=5, quiet=False):
+def make_interaction_data(
+         shape, nattrs, func=None, nrules=5, quiet=False, noise=0.,
+         random_state=None,
+ ):
+    if not isinstance(random_state, np.random.Generator):
+        random_state = np.random.default_rng(random_state)
     if func is None:
-        func, strfunc = gen_interaction_func(nattrs, nrules)
+        func, strfunc = make_interaction_func(nattrs, nrules)
         if not quiet:
             print('Generated interaction function \n\t', strfunc)
     # shape contains the number of instances in each axis database, i.e.
     # its number of rows. nattrs contains their numbers of columns, i.e.
     # how many attributes per axis.
-    XX = [np.random.rand(ni, nj) for ni, nj in zip(shape, nattrs)]
+    XX = [random_state.random((ni, nj), dtype=np.float32)
+          for ni, nj in zip(shape, nattrs)]
     # Create index tuples such as (np.newaxis, np.newaxis, :, np.newaxis).
     # That's because Y will be made usin numpy's broadcasting to explore
     # all combinations of x.
@@ -36,25 +42,34 @@ def gen_imatrix(shape, nattrs, func=None, nrules=5, quiet=False):
     # (a0),(a1),...,(a{ndim-1})->()
     sig = ','.join(f'(a{i})' for i in range(ndim)) + '->()'
     vfunc = np.vectorize(func, signature=sig)
-    return XX, vfunc(*XXnewax).astype(int)
+    y = vfunc(*XXnewax).astype(int)
+    if noise:
+        y = y.astype(float)
+        y += noise * random_state.random(y.shape)
+    return XX, y, strfunc
 
 
-def gen_interaction_func(nattrs, nrules=10, popen=.5, pclose=.2, pand=.5):
-    axes = np.random.choice(len(nattrs), nrules)
-    attrs = [np.random.randint(nattrs[ax]) for ax in axes]
-    cutoffs = np.random.rand(nrules)
+def make_interaction_func(
+        nattrs, nrules=10, popen=.5, pclose=.2, pand=.5,
+        random_state=None,
+):
+    if not isinstance(random_state, np.random.Generator):
+        random_state = np.random.default_rng(random_state)
+    axes = random_state.choice(len(nattrs), nrules)
+    attrs = [random_state.integers(nattrs[ax]) for ax in axes]
+    cutoffs = random_state.random(nrules)
     orands = ['and ' if i else 'or '
-              for i in np.random.rand(nrules-1) < pand]
+              for i in random_state.random(nrules-1) < pand]
     orands.append('')
 
     strf = ''
     nopen = 0
     for ax, attr, cutoff, orand in zip(axes, attrs, cutoffs, orands):
-       if np.random.rand() < popen: 
+       if random_state.random() < popen:
            strf += '( '
            nopen += 1
        strf += f'xx[{ax}][{attr}] < {cutoff} '
-       if nopen and (np.random.rand() < pclose):
+       if nopen and (random_state.random() < pclose):
            strf += ') '
            nopen -= 1
        strf += orand
@@ -64,15 +79,15 @@ def gen_interaction_func(nattrs, nrules=10, popen=.5, pclose=.2, pand=.5):
 
 
 def main(shape, nattrs, nrules, outdir, seed):
-    np.random.seed(seed)
     outdir.mkdir(exist_ok=True, parents=True)
 
-    func, strfunc = gen_interaction_func(nattrs, nrules)
-    print('Generated interaction function:\n\t', strfunc)
+    XX, Y, strfunc = make_interaction_data(
+        shape, nattrs, func=func, random_state=seed
+    )
+    X1, X2 = XX
+
     with (outdir/'interaction_function.txt').open('w') as f:
         f.write(strfunc)
-    XX, Y = gen_imatrix(shape, nattrs, func=func)
-    X1, X2 = XX
 
     print(f'Saving to {outdir.resolve()}...')
     np.savetxt(outdir/'X1.csv', X1, delimiter=',')

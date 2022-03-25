@@ -2,18 +2,12 @@
 This module gathers tree-based methods, including decision, regression and
 randomized trees, adapted from sklearn for 2D training data.
 """
-# Authors: Gilles Louppe <g.louppe@gmail.com>
-#          Peter Prettenhofer <peter.prettenhofer@gmail.com>
-#          Brian Holt <bdholt1@gmail.com>
-#          Noel Dawe <noel@dawe.me>
-#          Satrajit Gosh <satrajit.ghosh@gmail.com>
-#          Joly Arnaud <arnaud.v.joly@gmail.com>
-#          Fares Hedayati <fares.hedayati@gmail.com>
-#          Nelson Liu <nelson@nelsonliu.me>
-#
-# 2D adaptation: Pedro Ilidio <pedrilidio@gmail.com>
+
+# Author: Pedro Ilidio <pedrilidio@gmail.com>
+# Adapted from scikit-learn.
 #
 # License: BSD 3 clause
+
 
 import numbers
 import warnings
@@ -43,6 +37,7 @@ from sklearn.tree import _tree, _splitter, _criterion, DecisionTreeRegressor
 
 # ND new:
 from itertools import product
+from typing import Iterable
 from sklearn.tree._classes import BaseDecisionTree
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import MSE_Wrapper2D
@@ -52,6 +47,7 @@ from ._nd_splitter import Splitter2D, make_2d_splitter
 __all__ = [
     "DecisionTreeRegressor2D",
     "PBCT",  # Alias to DecisionTreeRegressor2D.
+    "ExtraTreeRegressor2D",
 ]
 
 
@@ -391,50 +387,48 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
 
         axes_n_features = [Xax.shape[1] for Xax in X]
 
-        if isinstance(self.max_features, str):
-            if self.max_features == "auto":
-                if is_classification:
-                    max_features = [max(1, int(np.sqrt(n)))
-                                    for n in axes_n_features]
+        if not isinstance(self.max_features, (tuple, list)):
+            max_features = [self.max_features, self.max_features]
+        for i in range(2):
+            if isinstance(max_features[i], str):
+                if max_features[i] == "auto":
+                    if is_classification:
+                        max_features[i] = max(1, int(np.sqrt(axes_n_features[i])))
+                    else:
+                        max_features[i] = self.n_features_in_[i]
+                elif max_features[i] == "sqrt":
+                    max_features[i] = max(1, int(np.sqrt(axes_n_features[i])))
+                elif max_features[i] == "log2":
+                    max_features[i] = max(1, int(np.log2(axes_n_features[i])))
                 else:
-                    max_features = self.n_features_in_
-            elif self.max_features == "sqrt":
-                max_features = [max(1, int(np.sqrt(n))) for n in axes_n_features]
-            elif self.max_features == "log2":
-                max_features = [max(1, int(np.log2(n))) for n in axes_n_features]
-            else:
-                raise ValueError(
-                    "Invalid value for max_features. "
-                    "Allowed string values are 'auto', "
-                    "'sqrt' or 'log2'."
-                )
-        elif self.max_features is None:
-            max_features = axes_n_features
-        elif isinstance(self.max_features, numbers.Integral):
-            for ax in range(2):
+                    raise ValueError(
+                        "Invalid value for max_features. "
+                        "Allowed string values are 'auto', "
+                        "'sqrt' or 'log2'."
+                    )
+            elif max_features[i] is None:
+                max_features[i] = axes_n_features[i]
+            elif isinstance(max_features[i], numbers.Integral):
                 check_scalar(
-                    self.max_features[ax],
+                    max_features[i],
                     name="max_features",
                     target_type=numbers.Integral,
                     min_val=1,
                     include_boundaries="left",
                 )
-            max_features = [self.max_features, self.max_features]
-        elif isinstance(self.max_features[0], float):
-            for ax in range(2):
+            elif isinstance(max_features[i], float):
                 check_scalar(
-                    self.max_features[ax],
+                    max_features[i],
                     name="max_features",
                     target_type=numbers.Real,
                     min_val=0.0,
                     max_val=1.0,
                     include_boundaries="right",
                 )
-            if self.max_features[0] > 0.0 or self.max_features[1] > 0.0:
-                max_features = [max(1, int(self.max_features * n))
-                                for n in axes_n_features]
-            else:
-                max_features = [0, 0]
+                if max_features[i] > 0.0:
+                    max_features[i] = max(1, int(self.max_features * axes_n_features[i]))
+                else:
+                    max_features = 0.
 
         self.max_features_ = max_features
 
@@ -463,7 +457,8 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
                 )
 
         if sample_weight is not None:
-            sample_weight = _check_sample_weight(sample_weight, X, DOUBLE)
+            pass  # FIXME
+            #sample_weight = _check_sample_weight(sample_weight, X, DOUBLE)
 
         if expanded_class_weight is not None:
             raise NotImplementedError
@@ -519,10 +514,6 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
 # =============================================================================
 # Public estimators
 # =============================================================================
-
-# TODO
-# class DecisionTreeClassifier2D(ClassifierMixin, BaseDecisionTree2D):
-#     pass
 
 class DecisionTreeRegressor2D(RegressorMixin, BaseDecisionTree2D):
     """Adaptarion of sklearn's decision tree regressor to 2D input data.
@@ -735,9 +726,12 @@ class DecisionTreeRegressor2D(RegressorMixin, BaseDecisionTree2D):
         min_samples_leaf=1,
         min_weight_fraction_leaf=0.0,
         max_features=None,
-        ax_min_samples_leaf=1,  # New!
-        ax_min_weight_fraction_leaf=None,  # New!
-        ax_max_features=None,  # New!
+
+        # New:
+        ax_min_samples_leaf=1,
+        ax_min_weight_fraction_leaf=None,
+        ax_max_features=None,
+
         random_state=None,
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,
@@ -752,9 +746,12 @@ class DecisionTreeRegressor2D(RegressorMixin, BaseDecisionTree2D):
             min_weight_fraction_leaf=min_weight_fraction_leaf,
             max_features=max_features,
             max_leaf_nodes=max_leaf_nodes,
+
+            # New:
             ax_min_samples_leaf=ax_min_samples_leaf,
             ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf,
             ax_max_features=ax_max_features,
+
             random_state=random_state,
             min_impurity_decrease=min_impurity_decrease,
             ccp_alpha=ccp_alpha,
@@ -825,9 +822,209 @@ class DecisionTreeRegressor2D(RegressorMixin, BaseDecisionTree2D):
 
 PBCT = DecisionTreeRegressor2D  # Alias.
 
-# TODO
-# class ExtraTreeClassifier2D(DecisionTreeClassifier2D):
-#     pass
-# 
-# class ExtraTreeRegressor2D(DecisionTreeRegressor2D):
-#     pass
+
+class ExtraTreeRegressor2D(DecisionTreeRegressor2D):
+    """An extremely randomized tree regressor.
+    Extra-trees differ from classic decision trees in the way they are built.
+    When looking for the best split to separate the samples of a node into two
+    groups, random splits are drawn for each of the `max_features` randomly
+    selected features and the best split among those is chosen. When
+    `max_features` is set 1, this amounts to building a totally random
+    decision tree.
+    Warning: Extra-trees should only be used within ensemble methods.
+    Read more in the :ref:`User Guide <tree>`.
+    Parameters
+    ----------
+    criterion : {"squared_error", "friedman_mse"}, default="squared_error"
+        The function to measure the quality of a split. Supported criteria
+        are "squared_error" for the mean squared error, which is equal to
+        variance reduction as feature selection criterion and "mae" for the
+        mean absolute error.
+        .. versionadded:: 0.18
+           Mean Absolute Error (MAE) criterion.
+        .. versionadded:: 0.24
+            Poisson deviance criterion.
+        .. deprecated:: 1.0
+            Criterion "mse" was deprecated in v1.0 and will be removed in
+            version 1.2. Use `criterion="squared_error"` which is equivalent.
+        .. deprecated:: 1.0
+            Criterion "mae" was deprecated in v1.0 and will be removed in
+            version 1.2. Use `criterion="absolute_error"` which is equivalent.
+    splitter : {"random", "best"}, default="random"
+        The strategy used to choose the split at each node. Supported
+        strategies are "best" to choose the best split and "random" to choose
+        the best random split.
+    max_depth : int, default=None
+        The maximum depth of the tree. If None, then nodes are expanded until
+        all leaves are pure or until all leaves contain less than
+        min_samples_split samples.
+    min_samples_split : int or float, default=2
+        The minimum number of samples required to split an internal node:
+        - If int, then consider `min_samples_split` as the minimum number.
+        - If float, then `min_samples_split` is a fraction and
+          `ceil(min_samples_split * n_samples)` are the minimum
+          number of samples for each split.
+        .. versionchanged:: 0.18
+           Added float values for fractions.
+    min_samples_leaf : int or float, default=1
+        The minimum number of samples required to be at a leaf node.
+        A split point at any depth will only be considered if it leaves at
+        least ``min_samples_leaf`` training samples in each of the left and
+        right branches.  This may have the effect of smoothing the model,
+        especially in regression.
+        - If int, then consider `min_samples_leaf` as the minimum number.
+        - If float, then `min_samples_leaf` is a fraction and
+          `ceil(min_samples_leaf * n_samples)` are the minimum
+          number of samples for each node.
+        .. versionchanged:: 0.18
+           Added float values for fractions.
+    min_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of weights (of all
+        the input samples) required to be at a leaf node. Samples have
+        equal weight when sample_weight is not provided.
+    max_features : int, float, {"auto", "sqrt", "log2"} or None, default=1.0
+        The number of features to consider when looking for the best split:
+        - If int, then consider `max_features` features at each split.
+        - If float, then `max_features` is a fraction and
+          `int(max_features * n_features)` features are considered at each
+          split.
+        - If "auto", then `max_features=n_features`.
+        - If "sqrt", then `max_features=sqrt(n_features)`.
+        - If "log2", then `max_features=log2(n_features)`.
+        - If None, then `max_features=n_features`.
+        .. versionchanged:: 1.1
+            The default of `max_features` changed from `"auto"` to `1.0`.
+        .. deprecated:: 1.1
+            The `"auto"` option was deprecated in 1.1 and will be removed
+            in 1.3.
+        Note: the search for a split does not stop until at least one
+        valid partition of the node samples is found, even if it requires to
+        effectively inspect more than ``max_features`` features.
+    random_state : int, RandomState instance or None, default=None
+        Used to pick randomly the `max_features` used at each split.
+        See :term:`Glossary <random_state>` for details.
+    min_impurity_decrease : float, default=0.0
+        A node will be split if this split induces a decrease of the impurity
+        greater than or equal to this value.
+        The weighted impurity decrease equation is the following::
+            N_t / N * (impurity - N_t_R / N_t * right_impurity
+                                - N_t_L / N_t * left_impurity)
+        where ``N`` is the total number of samples, ``N_t`` is the number of
+        samples at the current node, ``N_t_L`` is the number of samples in the
+        left child, and ``N_t_R`` is the number of samples in the right child.
+        ``N``, ``N_t``, ``N_t_R`` and ``N_t_L`` all refer to the weighted sum,
+        if ``sample_weight`` is passed.
+        .. versionadded:: 0.19
+    max_leaf_nodes : int, default=None
+        Grow a tree with ``max_leaf_nodes`` in best-first fashion.
+        Best nodes are defined as relative reduction in impurity.
+        If None then unlimited number of leaf nodes.
+    ccp_alpha : non-negative float, default=0.0
+        Complexity parameter used for Minimal Cost-Complexity Pruning. The
+        subtree with the largest cost complexity that is smaller than
+        ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
+        :ref:`minimal_cost_complexity_pruning` for details.
+        .. versionadded:: 0.22
+    Attributes
+    ----------
+    max_features_ : int
+        The inferred value of max_features.
+    n_features_ : int
+        The number of features when ``fit`` is performed.
+        .. deprecated:: 1.0
+           `n_features_` is deprecated in 1.0 and will be removed in
+           1.2. Use `n_features_in_` instead.
+    n_features_in_ : int
+        Number of features seen during :term:`fit`.
+        .. versionadded:: 0.24
+    feature_names_in_ : ndarray of shape (`n_features_in_`,)
+        Names of features seen during :term:`fit`. Defined only when `X`
+        has feature names that are all strings.
+        .. versionadded:: 1.0
+    feature_importances_ : ndarray of shape (n_features,)
+        Return impurity-based feature importances (the higher, the more
+        important the feature).
+        Warning: impurity-based feature importances can be misleading for
+        high cardinality features (many unique values). See
+        :func:`sklearn.inspection.permutation_importance` as an alternative.
+    n_outputs_ : int
+        The number of outputs when ``fit`` is performed.
+    tree_ : Tree instance
+        The underlying Tree object. Please refer to
+        ``help(sklearn.tree._tree.Tree)`` for attributes of Tree object and
+        :ref:`sphx_glr_auto_examples_tree_plot_unveil_tree_structure.py`
+        for basic usage of these attributes.
+    See Also
+    --------
+    ExtraTreeClassifier : An extremely randomized tree classifier.
+    sklearn.ensemble.ExtraTreesClassifier : An extra-trees classifier.
+    sklearn.ensemble.ExtraTreesRegressor : An extra-trees regressor.
+    Notes
+    -----
+    The default values for the parameters controlling the size of the trees
+    (e.g. ``max_depth``, ``min_samples_leaf``, etc.) lead to fully grown and
+    unpruned trees which can potentially be very large on some data sets. To
+    reduce memory consumption, the complexity and size of the trees should be
+    controlled by setting those parameter values.
+    References
+    ----------
+    .. [1] P. Geurts, D. Ernst., and L. Wehenkel, "Extremely randomized trees",
+           Machine Learning, 63(1), 3-42, 2006.
+    Examples
+    --------
+    >>> from sklearn.datasets import load_diabetes
+    >>> from sklearn.model_selection import train_test_split
+    >>> from sklearn.ensemble import BaggingRegressor
+    >>> from sklearn.tree import ExtraTreeRegressor
+    >>> X, y = load_diabetes(return_X_y=True)
+    >>> X_train, X_test, y_train, y_test = train_test_split(
+    ...     X, y, random_state=0)
+    >>> extra_tree = ExtraTreeRegressor(random_state=0)
+    >>> reg = BaggingRegressor(extra_tree, random_state=0).fit(
+    ...     X_train, y_train)
+    >>> reg.score(X_test, y_test)
+    0.33...
+    """
+    def __init__(
+        self,
+        *,
+        criterion="squared_error",
+
+        # Only difference from DecisionTreeRegressor2D:
+        splitter="random",
+
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=None,
+
+        # New:
+        ax_min_samples_leaf=1,
+        ax_min_weight_fraction_leaf=None,
+        ax_max_features=None,
+
+        random_state=None,
+        max_leaf_nodes=None,
+        min_impurity_decrease=0.0,
+        ccp_alpha=0.0,
+    ):
+        super().__init__(
+            criterion=criterion,
+            splitter=splitter,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+
+            # New:
+            ax_min_samples_leaf=ax_min_samples_leaf,
+            ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf,
+            ax_max_features=ax_max_features,
+
+            random_state=random_state,
+            min_impurity_decrease=min_impurity_decrease,
+            ccp_alpha=ccp_alpha,
+        )
