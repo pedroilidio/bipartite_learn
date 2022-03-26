@@ -39,7 +39,7 @@ setup(
 
     install_requires=[
         'cython>=0.29.27',
-        'sklearn>=1.0.2',
+        'scikit-learn>=1.0.2',
         'numpy>=1.22.2',
         'imbalanced-learn>=0.7.0',
     ],
