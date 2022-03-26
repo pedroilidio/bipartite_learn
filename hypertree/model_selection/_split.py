@@ -26,8 +26,8 @@ class CrossValidatorNDWrapper(BaseCrossValidator):
         return self._check_n_splits(X, y, groups)
 
     def _check_n_splits(self, X=None, y=None, groups=None):
-        ax_n_splits = self._get_from_children_cv(
-            'get_n_splits', X, y, groups)
+        ax_n_splits = list(self._get_from_children_cv(
+            'get_n_splits', X, y, groups))
 
         if self.diagonal:
             # Ensure all cross validators report the same number of splits.
@@ -38,9 +38,9 @@ class CrossValidatorNDWrapper(BaseCrossValidator):
             if next(g, False):
                 raise ValueError("Cross-validators must generate the same number"
                                  " of splits if diagonal=True")
-            return next(ax_n_splits)
+            return ax_n_splits[0]
 
-        return np.prod(list(ax_n_splits))
+        return np.prod(ax_n_splits)
 
     def split(self, X, y=None, groups=None):
         train_test = self._get_from_children_cv('split', X, y=None, groups=None)
