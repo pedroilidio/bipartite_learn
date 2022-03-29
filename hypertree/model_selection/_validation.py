@@ -26,7 +26,7 @@ from sklearn.utils.validation import (
     _num_samples,
 )
 from sklearn.utils._tags import _safe_tags
-from ._split import check_cv_nd
+from ._split import check_cv_nd, _check_train_test_combinations
 
 import warnings
 import numbers
@@ -290,9 +290,9 @@ def cross_validate_nd(
         cv, y, classifier=is_classifier(estimator), diagonal=diagonal)
 
     train_test_combinations, train_test_names = _check_train_test_combinations(
-        train_test_combinations,
-        len(X),
-        return_train_score,
+        ttc=train_test_combinations,
+        n_dim=len(X),
+        include_train=return_train_score,
     )
 
     if callable(scoring):
@@ -587,40 +587,6 @@ def _fit_and_score_nd(
         result["estimator"] = estimator
     return result
 
-
-def _check_train_test_combinations(
-        ttc, ndim, return_train_scores, symbols='LT', sep=''):
-    """Check train_test_combinations parameter.
-    """
-    # ttc = train_test_combinations
-    names_provided = (ttc is not None) and (
-        isinstance(ttc[0], str) or isinstance(ttc[0][0], str))
-
-    if ttc is None:
-        ret_ttc = itertools.product((0, 1), repeat=ndim)
-        if not return_train_scores:
-            next(ret_ttc)  # Skip (0, 0, ...), only training data.
-        ret_ttc = list(ret_ttc)
-
-    elif any(len(c) != 2 for c in ttc):
-        raise ValueError("train_test_combinations must contain only 2-lengthed"
-                         "sequences.")
-
-    # If ttc contains string or list-like of strings, translate.
-    elif names_provided:
-        names = ttc
-        ret_ttc = [
-            [symbols.index(s) for s in train_test]
-            for train_test in names
-        ]
-
-    if not names_provided:
-        names = [[symbols[is_test]
-                     for is_test in train_test]
-                 for train_test in ret_ttc]
-
-    names = [n[0]+sep+n[1] for n in names]
-    return ret_ttc, names
 
 # NOTE: Originally in sklearn.utils.metaestimators
 def _safe_split_nd(estimator, X, y, indices, train_indices=None):

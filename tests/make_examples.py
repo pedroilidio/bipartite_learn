@@ -23,7 +23,8 @@ def make_interaction_data(
     if not isinstance(random_state, np.random.Generator):
         random_state = np.random.default_rng(random_state)
     if func is None:
-        func, strfunc = make_interaction_func(nattrs, nrules)
+        func, strfunc = make_interaction_func(
+            nattrs, nrules, random_state=random_state)
         if not quiet:
             print('Generated interaction function \n\t', strfunc)
     # shape contains the number of instances in each axis database, i.e.
