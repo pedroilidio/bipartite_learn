@@ -39,6 +39,7 @@ from sklearn.tree import _tree, _splitter, _criterion, DecisionTreeRegressor
 from itertools import product
 from typing import Iterable
 from sklearn.tree._classes import BaseDecisionTree
+from ..base import RegressorMixinND
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import MSE_Wrapper2D
 from ._nd_splitter import Splitter2D, make_2d_splitter
@@ -516,7 +517,9 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
 # Public estimators
 # =============================================================================
 
-class DecisionTreeRegressor2D(RegressorMixin, BaseDecisionTree2D):
+class DecisionTreeRegressor2D(
+     RegressorMixinND, BaseDecisionTree2D, DecisionTreeRegressor
+ ):
     """Adaptarion of sklearn's decision tree regressor to 2D input data.
 
     Read more in the :ref:`User Guide <tree>`.
@@ -799,26 +802,6 @@ class DecisionTreeRegressor2D(RegressorMixin, BaseDecisionTree2D):
             check_input=check_input,
         )
         return self
-
-    def _compute_partial_dependence_recursion(self, grid, target_features):
-        """Fast partial dependence computation.
-
-        Parameters
-        ----------
-        grid : ndarray of shape (n_samples, n_target_features)
-            The grid points on which the partial dependence should be
-            evaluated.
-        target_features : ndarray of shape (n_target_features)
-            The set of target features for which the partial dependence
-            should be evaluated.
-
-        Returns
-        -------
-        averaged_predictions : ndarray of shape (n_samples,)
-            The value of the partial dependence function on each grid point.
-        """
-        return DecisionTreeRegressor._compute_partial_dependence_recursion(
-            self, grid, target_features)
 
 
 PBCT = DecisionTreeRegressor2D  # Alias.

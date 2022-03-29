@@ -383,6 +383,12 @@ class BaseSearchCVND(BaseSearchCV, metaclass=ABCMeta):
 
         return results
 
+    def score(self, X, y=None):
+        # TODO: multi-output.
+        if y is not None:
+            y = y.reshape(-1)
+        return super().score(X, y)
+
 
 class GridSearchCVND(BaseSearchCVND, GridSearchCV):
     """Exhaustive search over specified parameter values for an estimator.

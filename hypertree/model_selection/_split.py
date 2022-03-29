@@ -106,7 +106,7 @@ class CrossValidatorNDWrapper(BaseCrossValidator):
 
 
 class SimpleHoldOut(BaseCrossValidator):
-    def __init__(test_size=None, train_size=None):
+    def __init__(self, test_size=None, train_size=None):
         self.test_size = test_size
         self.train_size = train_size
         self._default_test_size = .25
@@ -122,7 +122,7 @@ class SimpleHoldOut(BaseCrossValidator):
             self.train_size,
             default_test_size=self._default_test_size,
         )
-        yield np.arange(n_train, num_samples)
+        yield np.arange(n_train, n_samples)
 
 
 def _check_train_test_combinations(
@@ -280,7 +280,7 @@ def make_train_test_splitter_nd(
                 test_size=test_size[ax],
                 train_size=train_size[ax],
             )
-        cv_list.append(cv)
+        cv_list.append(copy.deepcopy(cv))
 
     return check_cv_nd(cv_list, n_dim=n_dim)
      
