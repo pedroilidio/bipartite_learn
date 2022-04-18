@@ -135,14 +135,3 @@ def all_estimators(type_filter=None):
     # itemgetter is used to ensure the sort does not extend to the 2nd item of
     # the tuple
     return sorted(set(estimators), key=itemgetter(0))
-
-
-def patch_sklearn_all_estimators():
-    """Make sklearn report hypertree estimators among its own ones.
-
-    Call this before mlflow.sklearn.autolog to autolog hypertree estimators
-    as well as sklearn's.
-    """
-    sklearn_all_estimators = sklearn.utils.all_estimators
-    new_all_estimators = lambda: sklearn_all_estimators() + all_estimators()
-    sklearn.utils.all_estimators = new_all_estimators

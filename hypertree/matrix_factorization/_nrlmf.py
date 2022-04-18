@@ -6,9 +6,10 @@ from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
 from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import unique_labels
 from sklearn.metrics import euclidean_distances
+from ..base import RegressorMixinND
 
 
-class NRLMF(BaseEstimator):
+class NRLMF(RegressorMixinND, BaseEstimator):
     """Neighborhood Regularized Logistic Matrix Factorization.
 
     See [Liu _et al._, 2016](https://doi.org/10.1371/journal.pcbi.1004760).
@@ -30,16 +31,16 @@ class NRLMF(BaseEstimator):
             max_iter=100,
             change_positives=False,
     ):
-        self.cfix = int(cfix)  # importance level for positive observations
-        self.K1 = int(K1)
-        self.K2 = int(K2)
-        self.num_factors = int(num_factors)
-        self.theta = float(theta)
-        self.lambda_d = float(lambda_d)
-        self.lambda_t = float(lambda_t)
-        self.alpha = float(alpha)
-        self.beta = float(beta)
-        self.max_iter = int(max_iter)
+        self.cfix = cfix  # importance level for positive observations
+        self.K1 = K1
+        self.K2 = K2
+        self.num_factors = num_factors
+        self.theta = theta
+        self.lambda_d = lambda_d
+        self.lambda_t = lambda_t
+        self.alpha = alpha
+        self.beta = beta
+        self.max_iter = max_iter
         self.change_positives = change_positives
 
     def fit_resample(self, X, y, W=1, seed=None):

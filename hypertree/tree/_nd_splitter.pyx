@@ -119,9 +119,6 @@ cdef class Splitter2D:
         weighted_n_node_samples[2] : ndarray, dtype=double pointer
             The total weight of those samples
         """
-        self.splitter_rows.start = start[0]
-        self.splitter_rows.end = end[0]
-
         cdef SIZE_t n_node_rows, n_node_cols
         cdef SIZE_t eff_min_rows_leaf
         cdef SIZE_t eff_min_cols_leaf
@@ -142,9 +139,10 @@ cdef class Splitter2D:
         else:
             self.splitter_cols.min_samples_leaf = eff_min_cols_leaf
 
+        self.splitter_rows.start = start[0]
+        self.splitter_rows.end = end[0]
         self.splitter_cols.start = start[1]
         self.splitter_cols.end = end[1]
-        self.splitter_rows.end = end[0]
 
         self.criterion_wrapper.init(
             self.y,

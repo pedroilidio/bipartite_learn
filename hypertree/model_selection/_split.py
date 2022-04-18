@@ -4,6 +4,8 @@ import numpy as np
 from sklearn.model_selection._split import (
     check_cv,
     BaseCrossValidator,
+    KFold,
+    StratifiedKFold,
     ShuffleSplit,
     StratifiedShuffleSplit,
     PredefinedSplit,
@@ -195,6 +197,82 @@ def combine_train_test_indices(
         train_test_index_combinations[ttc_name] = test_indices
     
     return train_test_index_combinations
+
+
+def make_kfold_nd(
+        cv=None, shuffle=False,
+        stratified=False, random_state=None,
+        diagonal=False,
+        n_dim=None,
+):
+    """Build a n_dim-dimensional KFold cross-validator.
+    
+    Wraps n_dim KFold or StratifiedKFold cross-validators with a
+    CrossValidatorNDWrapper, that provides train-test indices for splitting
+    InputDataND objects. The returned wrapper object is compatible with paramet-
+    er search objects in hypertree.model_selection, such as GridSearchCVND and
+    RandomizedSearchCVND.
+
+    The parameters 'cv', 'shuffle' and 'stratified' can be
+    optionally passed as a tuple or list of values intended for each respective
+    axis of the ND data. Otherwise, the single value is equally considered for
+    all axes.
+
+    Parameters
+    ----------
+    cv : int or CrossValidator or list-like of these, default=None
+        TODO
+        One can optionally pass values for each axis in a list or tuple. If a
+        single value is provided, it will be considered for all axes.
+    random_state : int, RandomState instance or None, default=None
+        Controls the shuffling applied to the data before applying the split.
+        Pass an int for reproducible output across multiple function calls.
+        See :term:`Glossary <random_state>`.
+    shuffle : bool or list-like of bool, default=True
+        Whether or not to shuffle the data before splitting. If shuffle=False
+        then stratify must be None.
+        One can optionally pass values for each axis in a list or tuple. If a
+        single value is provided, it will be considered for all axes.
+    stratified : bool or list-like of array-like, default=None
+        whether or not to generate a stratified splitter.
+        Read more in the :ref:`User Guide <stratification>`.
+        One can optionally pass arrays for each axis in a list or tuple. If a
+        single array is provided, it will be considered for all axes.
+    n_dim : int
+        If none of the other parameters is a list or a sequence, you must indi-
+        cate the number of dimensions.
+
+    Returns
+    -------
+    cross-validation splitter : CrossValidatorNDWrapper
+    """
+    if n_dim is None:
+        if isinstance(cv, (list, tuple)):
+            n_dim = len(cv)
+        elif isinstance(shuffle, (list, tuple)):
+            n_dim = len(shuffle)
+        elif isinstance(stratidfied, (list, tuple)):
+            n_dim = len(stratidfied)
+        else:
+            raise ValueError("If none of cv, shuffle or stratified is tuple"
+                             " or list, n_dim must be provided.")
+
+    cv, shuffle, stratified, = \
+        _repeat_if_single(n_dim, cv, shuffle, stratified)
+
+    cv_list = []
+
+    for ax in range(n_dim):
+        if not isinstance(cv[ax], BaseCrossValidator):
+            CVClass = StratifiedKFold if stratified[ax] else KFold
+            cv[ax] = CVClass(
+                n_splits=cv[ax],
+                random_state=random_state,
+                shuffle=shuffle[ax],
+            )
+        cv_list.append(copy.deepcopy(cv[ax]))
+
+    return check_cv_nd(cv_list, n_dim=n_dim, diagonal=diagonal)
 
 
 def make_train_test_splitter_nd(
