@@ -102,6 +102,10 @@ cdef class Splitter2D:
         self.weighted_n_samples = self.splitter_rows.weighted_n_samples * \
                                   self.splitter_cols.weighted_n_samples
 
+        ## Done in criterion_wrapper.init() # FIXME: it shouldn't be!
+        #self.splitter_rows.weighted_n_samples = self.weighted_n_samples
+        #self.splitter_cols.weighted_n_samples = self.weighted_n_samples
+
         return 0
 
     cdef int node_reset(self, SIZE_t[2] start, SIZE_t[2] end,
@@ -193,8 +197,9 @@ cdef class Splitter2D:
                 # Correct impurities.
                 self.criterion_wrapper.children_impurity(
                     &imp_left, &imp_right, 0)
-                imp_improve = self.criterion_wrapper.impurity_improvement(
-                    impurity, imp_left, imp_right, 0)
+                imp_improve = self.splitter_rows.criterion.impurity_improvement(
+                    impurity, imp_left, imp_right)
+
 
                 # if imp_improve > best_split.improvement:  # Always.
                 best_split = current_split
@@ -214,8 +219,8 @@ cdef class Splitter2D:
                 # Correct impurities.
                 self.criterion_wrapper.children_impurity(
                     &imp_left, &imp_right, 1)
-                imp_improve = self.criterion_wrapper.impurity_improvement(
-                    impurity, imp_left, imp_right, 1)
+                imp_improve = self.splitter_cols.criterion.impurity_improvement(
+                    impurity, imp_left, imp_right)
 
                 if imp_improve > best_split.improvement:
                     best_split = current_split
@@ -314,10 +319,10 @@ def make_2d_splitter(
 
     # Wrap criteria.
     criterion_wrapper = \
-        criterion_wrapper_class([
-            splitter_rows.criterion,
-            splitter_cols.criterion,
-    ])
+        criterion_wrapper_class(
+            splitter_rows,
+            splitter_cols,
+    )
 
     # Wrap splitters.
     return Splitter2D(

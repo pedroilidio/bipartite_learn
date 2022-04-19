@@ -13,13 +13,10 @@ from copy import deepcopy
 
 
 cdef class RegressionCriterionWrapper2D:
-    def __cinit__(self, list children_criteria):
-        # cdef RegressionCriterion2D criterion
-        self.children_criteria = children_criteria
-        # Should be same as children_criteria[1].n_outputs
-        self.criterion_rows = self.children_criteria[0]
-        self.criterion_cols = self.children_criteria[1]
-        self.n_outputs = self.criterion_rows.n_outputs
+    def __cinit__(self, Splitter splitter_rows, Splitter splitter_cols):
+        self.splitter_rows = splitter_rows
+        self.splitter_cols = splitter_cols
+        self.n_outputs = self.splitter_rows.criterion.n_outputs
 
         # Default values
         self.row_sample_weight = NULL
@@ -43,14 +40,6 @@ cdef class RegressionCriterionWrapper2D:
 
         if self.sum_total == NULL:
             raise MemoryError()
-
-    def __init__(self, list children_criteria):
-        cdef RegressionCriterion criterion
-        for criterion in children_criteria:
-            if criterion.n_outputs > 1:
-                raise NotImplementedError(
-                    "Multi-output not implemented. Set n_outputs=1 for all"
-                    "Criterion objects.")
 
     def __dealloc__(self):
         free(self.sum_total)
@@ -148,14 +137,8 @@ cdef class RegressionCriterionWrapper2D:
                 w = wi * wj
                 w_y_ij = w * y_ij
 
-                # self.y_row_sums[i, 0] = self.y_row_sums[i, 0] + y_ij
-                # self.y_col_sums[j, 0] = self.y_col_sums[j, 0] + y_ij
                 self.y_row_sums[i, 0] += wj * y_ij
                 self.y_col_sums[j, 0] += wi * y_ij
-
-                # NOTE: we apparently save operations looping after instead.
-                # self.total_row_sample_weight[i] += w
-                # self.total_col_sample_weight[j] += w
 
                 self.sum_total[0] += w_y_ij
                 self.sq_sum_total += w_y_ij * y_ij
@@ -208,25 +191,57 @@ cdef class RegressionCriterionWrapper2D:
             self.y_col_sums[j, 0] = \
                 self.y_col_sums[j, 0] / self.weighted_n_row_samples
 
-        rc = self._init_child_criterion(
-            self.criterion_rows,
-            self.y_row_sums,
-            self.total_row_sample_weight,
-            self.row_samples,
-            self.start[0], self.end[0],
-        )
-        rc += self._init_child_criterion(
-            self.criterion_cols,
-            self.y_col_sums,
-            self.total_col_sample_weight,
-            self.col_samples,
-            self.start[1], self.end[1],
-        )
+        #with gil:
+        #    rc = self._init_child_criterion(
+        #        self.splitter_rows.criterion,
+        #        self.y_row_sums,
+        #        self.total_row_sample_weight,
+        #        self.row_samples,
+        #        self.start[0], self.end[0],
+        #    )
+        #    rc += self._init_child_criterion(
+        #        self.splitter_cols.criterion,
+        #        self.y_col_sums,
+        #        self.total_col_sample_weight,
+        #        self.col_samples,
+        #        self.start[1], self.end[1],
+        #    )
+
+        self.splitter_rows.y = self.y_row_sums
+        self.splitter_rows.sample_weight = self.total_row_sample_weight
+        # FIXME: do bellow only once in Splitter2D.init()
+        self.splitter_rows.weighted_n_samples = self.weighted_n_samples
+
+        self.splitter_cols.y = self.y_col_sums
+        self.splitter_cols.sample_weight = self.total_col_sample_weight
+        # FIXME: do bellow only once in Splitter2D.init()
+        self.splitter_cols.weighted_n_samples = self.weighted_n_samples
+
+        # FIXME what to do with this? Get self.weighted_n_samples from it?
+        cdef double[2] wnns  # will be discarded
+
+        rc = self.splitter_rows.node_reset(
+            start[0], end[0], wnns)
+        rc |= self.splitter_cols.node_reset(
+            start[1], end[1], wnns+1)
+        
+        cdef RegressionCriterion criterion
+
+        with gil:  # FIXME: high coupling to criterion.init()!
+            # assert wnns[0] == wnns[1] == self.weighted_n_node_samples
+            criterion = self.splitter_rows.criterion
+            criterion.sq_sum_total = self.sq_sum_total
+            criterion = self.splitter_cols.criterion
+            criterion.sq_sum_total = self.sq_sum_total
+
 
         if rc:
             rc = -1
         return rc
 
+    # TODO: Currently unused. Simplifies the end of self.init and eliminates re-
+    # dundancy with Criterion.split, but strongly depends on the specific
+    # Criterion.init implementation.
     cdef int _init_child_criterion(
             self,
             RegressionCriterion child_criterion,
@@ -240,18 +255,20 @@ cdef class RegressionCriterionWrapper2D:
         This initializes the children criteria at node samples[start:end] and children
         samples[start:start] and samples[start:end].
         """
-        # Initialize fields
+        # Replicate Splitter.node_reset, which only calls Criterion.init
         child_criterion.y = y
         child_criterion.sample_weight = sample_weight
         child_criterion.samples = samples
         child_criterion.start = start
         child_criterion.end = end
         child_criterion.n_node_samples = end - start
-
-        # Copy some from self
-        child_criterion.sum_total[0] = self.sum_total[0]
         child_criterion.weighted_n_samples = self.weighted_n_samples
+
+
+        # Copy some more from self, which would be calculated in Criterion.init
+        child_criterion.sum_total[0] = self.sum_total[0]
         child_criterion.weighted_n_node_samples = self.weighted_n_node_samples
+        # sq_sum_total is the only one that would really be messed up
         child_criterion.sq_sum_total = self.sq_sum_total
 
         # Reset to pos=start
@@ -261,13 +278,13 @@ cdef class RegressionCriterionWrapper2D:
 
     cdef void node_value(self, double* dest) nogil:
         """Copy the value (prototype) of node samples into dest."""
-        # It should be the same as criterion_cols.node_values().
-        self.criterion_rows.node_value(dest)
+        # It should be the same as splitter_cols.node_values().
+        self.splitter_rows.node_value(dest)
 
     cdef double node_impurity(self) nogil:
         """Return the impurity of the current node."""
-        # It should be the same as criterion_cols.node_impurity().
-        return self.criterion_rows.node_impurity()
+        # It should be the same as splitter_cols.node_impurity().
+        return self.splitter_rows.node_impurity()
 
     cdef void children_impurity(
             self,
@@ -276,26 +293,9 @@ cdef class RegressionCriterionWrapper2D:
             SIZE_t axis,
     ) nogil:
         if axis:
-            self.criterion_cols.children_impurity(impurity_left, impurity_right)
+            self.splitter_cols.criterion.children_impurity(impurity_left, impurity_right)
         else:
-            self.criterion_rows.children_impurity(impurity_left, impurity_right)
-
-    cdef double impurity_improvement(self, double impurity_parent,
-                                     double impurity_left,
-                                     double impurity_right,
-                                     SIZE_t axis) nogil:
-        if axis:
-            return self.criterion_cols.impurity_improvement(
-                impurity_parent,
-                impurity_left,
-                impurity_right,
-            )
-        else:
-            return self.criterion_rows.impurity_improvement(
-                impurity_parent,
-                impurity_left,
-                impurity_right,
-            )
+            self.splitter_rows.criterion.children_impurity(impurity_left, impurity_right)
 
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
@@ -326,9 +326,9 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
 
         with gil:
             if axis:
-                criterion = self.criterion_cols
+                criterion = self.splitter_cols.criterion
             else:
-                criterion = self.criterion_rows
+                criterion = self.splitter_rows.criterion
 
         pos = criterion.pos
 

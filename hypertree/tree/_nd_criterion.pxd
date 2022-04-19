@@ -5,11 +5,11 @@ from sklearn.tree._tree cimport DTYPE_t          # Type of X
 from sklearn.tree._tree cimport DOUBLE_t         # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t           # Type for indices and counters
 
+from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport RegressionCriterion
 
 
 cdef class RegressionCriterionWrapper2D:
-    cdef public list children_criteria  # TODO: const?
     cdef const DOUBLE_t[:, ::1] y_2D
     cdef DOUBLE_t[:, ::1] y_row_sums
     cdef DOUBLE_t[:, ::1] y_col_sums
@@ -32,8 +32,8 @@ cdef class RegressionCriterionWrapper2D:
     cdef DOUBLE_t weighted_n_row_samples
     cdef DOUBLE_t weighted_n_col_samples
 
-    cdef RegressionCriterion criterion_rows
-    cdef RegressionCriterion criterion_cols
+    cdef Splitter splitter_rows
+    cdef Splitter splitter_cols
 
     cdef int init(
             self, const DOUBLE_t[:, ::1] y_2D,
@@ -45,6 +45,14 @@ cdef class RegressionCriterionWrapper2D:
             SIZE_t[2] y_shape,
         ) nogil except -1
 
+    cdef void node_value(self, double* dest) nogil
+    cdef double node_impurity(self) nogil
+    cdef void children_impurity(
+            self,
+            double* impurity_left,
+            double* impurity_right,
+            SIZE_t axis,
+    ) nogil
     cdef int _init_child_criterion(
             self,
             RegressionCriterion child_criterion,
@@ -54,18 +62,6 @@ cdef class RegressionCriterionWrapper2D:
             SIZE_t end,
     ) nogil except -1
 
-    cdef void node_value(self, double* dest) nogil
-    cdef double node_impurity(self) nogil
-    cdef void children_impurity(
-            self,
-            double* impurity_left,
-            double* impurity_right,
-            SIZE_t axis,
-    ) nogil
-    cdef double impurity_improvement(self, double impurity_parent,
-                                     double impurity_left,
-                                     double impurity_right,
-                                     SIZE_t axis) nogil
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
     pass

@@ -44,6 +44,7 @@ DEF_PARAMS = dict(
 # FIXME: Some leafs do not coincide whith the parameters below:
 # --seed 23 --noise .1 --nrules 20 --shape 500 600 --nattrs 10 9 --msl 100
 
+
 def print_eval_model(tree, XX, Y):
     x_gen = (np.hstack(x).reshape(1, -1) for x in product(*XX))
     pred = np.fromiter((tree.predict(x) for x in x_gen), dtype=float, like=Y)
@@ -147,12 +148,12 @@ def main(**PARAMS):
     # an ExtraTree2d different from sklearn's ExtraTree.
 
     t0 = time()
-    print('Fitting sklearn.DecisionTreeRegressor...')
+    print(f'Fitting {tree1d.__class__.__name__}...')
     tree2d.fit(XX, Y)
     print(f'Done in {time()-t0} s.')
 
     t0 = time()
-    print('Fitting 1D tree...')
+    print(f'Fitting {tree2d.__class__.__name__}...')
     tree1d.fit(row_cartesian_product(XX), Y.reshape(-1))
     print(f'Done in {time()-t0} s.')
 
@@ -160,9 +161,18 @@ def main(**PARAMS):
     tree1d_n_samples_in_leaves = print_n_samples_in_leaves(tree1d)
 
     if not PARAMS['inspect']:
-        assert np.all(
-            tree1d_n_samples_in_leaves == tree2d_n_samples_in_leaves
-        )
+        assert tree1d_n_samples_in_leaves.shape[0] == \
+               tree2d_n_samples_in_leaves.shape[0]
+
+        leaves_comparison = tree1d_n_samples_in_leaves == tree2d_n_samples_in_leaves
+        comparison_test = np.all(leaves_comparison)
+        if not comparison_test:
+            print("diff positions:", np.nonzero(~leaves_comparison)[0])
+            print("diff: ", tree1d_n_samples_in_leaves[~leaves_comparison], '!=',
+                  tree2d_n_samples_in_leaves[~leaves_comparison],
+            )
+
+        assert comparison_test
         assert (
             sklearn.tree.export_text(tree2d) == sklearn.tree.export_text(tree1d)
         )
