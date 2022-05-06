@@ -30,17 +30,21 @@ cpdef test_splitter(
     cdef SIZE_t ncf = 0  # n_constant_features
     cdef double wnns  # weighted_n_node_samples
 
+    print('splitter.init(X, y, NULL)')
     splitter.init(X, y, NULL)
+    print('splitter.node_reset(0, end, &wnns)')
     splitter.node_reset(0, end, &wnns)
 
+    print('node_impurity')
     impurity = splitter.node_impurity()
     # impurity = criterion.node_impurity()  # Same. Above wraps this.
+    print('node_split')
     splitter.node_split(impurity, &split, &ncf)
     return split
 
 
 def test_splitter2d(Splitter2D splitter,
-                     object X, np.ndarray y):
+                    object X, np.ndarray y):
     cdef SplitRecord split
     _init_split(&split, 0)
 

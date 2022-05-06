@@ -20,6 +20,12 @@ extensions = [
         "hypertree.tree._nd_splitter", ["hypertree/tree/_nd_splitter.pyx"]),
     Extension(
         "hypertree.tree._nd_criterion", ["hypertree/tree/_nd_criterion.pyx"]),
+    Extension(
+        "hypertree.tree._sklearn_splitter", ["hypertree/tree/_sklearn_splitter.pyx"]),
+    Extension(
+        "hypertree.tree._semisupervised", ["hypertree/tree/_semisupervised.pyx"]),
+    Extension(
+        "hypertree.utils._sorting", ["hypertree/utils/_sorting.pyx"]),
 ]
 
 setup(

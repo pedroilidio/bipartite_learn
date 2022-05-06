@@ -12,6 +12,9 @@ from hypertree.tree._nd_splitter import Splitter2D, make_2d_splitter
 from hypertree.tree._nd_criterion import MSE_Wrapper2D
 from hypertree.tree._nd_classes import DecisionTreeRegressor2D
 from hypertree.melter import row_cartesian_product
+from hypertree.tree._semisupervised import (
+    SSBestSplitter, SSCompositeCriterion,
+)
 
 import numpy as np
 #from sklearn.tree._tree import DTYPE_t, DOUBLE_t
@@ -111,7 +114,7 @@ def main(**PARAMS):
     pprint(PARAMS)
 
     t0 = time()
-    XX, Y, strfunc = make_interaction_data(
+    XX, Y, _ = make_interaction_data(
         PARAMS['shape'], PARAMS['nattrs'], nrules=PARAMS['nrules'],
         noise=PARAMS['noise'], random_state=PARAMS['seed']
     )
@@ -131,10 +134,44 @@ def main(**PARAMS):
     print('Data variance:', Y.var())
     print('=' * 50)
 
-    ########## Instantiate trees
+    # ######### Instantiate trees
     tree2d = DecisionTreeRegressor2D(
         min_samples_leaf=PARAMS['min_samples_leaf'],
-        # splitter='random',  
+        splitter=make_2d_splitter(
+            splitter_class=SSBestSplitter,
+            criterion_class=[
+                SSCompositeCriterion(
+                    unsupervised_criterion=MSE(
+                        n_samples=XX[0].shape[0],
+                        n_outputs=XX[0].shape[1],
+                    ),
+                    supervised_criterion=MSE(
+                        n_samples=Y.shape[0],
+                        n_outputs=1,
+                    ),
+                    supervision=1,
+                ),
+                SSCompositeCriterion(
+                    unsupervised_criterion=MSE(
+                        n_samples=XX[1].shape[0],
+                        n_outputs=XX[1].shape[1],
+                    ),
+                    supervised_criterion=MSE(
+                        n_samples=Y.shape[1],
+                        n_outputs=1,
+                    ),
+                    supervision=1,
+                ),
+            ],
+            n_outputs=1,
+            max_features=[X.shape[1] for X in XX],
+            min_samples_leaf=1,
+            min_weight_leaf=0.0,
+            ax_min_samples_leaf=1,
+            ax_min_weight_leaf=0.0,
+            random_state=None,
+            criterion_wrapper_class=MSE_Wrapper2D,
+        ),
         random_state=PARAMS['seed'],
     )
     tree1d = DecisionTreeRegressor(
@@ -142,6 +179,8 @@ def main(**PARAMS):
         # splitter='random',
         random_state=PARAMS['seed'],
     )
+
+    tree2d = DecisionTreeRegressor2D()  # TODO
     # NOTE on ExtraTrees:
     # Even with the same random_state, the way 2d splitter uses this random
     # state will be different (same random state for each axis), thus yielding
@@ -149,16 +188,16 @@ def main(**PARAMS):
 
     t0 = time()
     print(f'Fitting {tree1d.__class__.__name__}...')
-    tree2d.fit(XX, Y)
+    tree1d.fit(row_cartesian_product(XX), Y.reshape(-1))
     print(f'Done in {time()-t0} s.')
 
     t0 = time()
     print(f'Fitting {tree2d.__class__.__name__}...')
-    tree1d.fit(row_cartesian_product(XX), Y.reshape(-1))
+    tree2d.fit(XX, Y)
     print(f'Done in {time()-t0} s.')
 
-    tree2d_n_samples_in_leaves = print_n_samples_in_leaves(tree2d)
     tree1d_n_samples_in_leaves = print_n_samples_in_leaves(tree1d)
+    tree2d_n_samples_in_leaves = print_n_samples_in_leaves(tree2d)
 
     if not PARAMS['inspect']:
         assert tree1d_n_samples_in_leaves.shape[0] == \

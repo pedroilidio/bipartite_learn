@@ -10,14 +10,14 @@ extensions = [
         #     ("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")
         # ],
     ),
-    Extension("patched_modules._criterion", ["patched_modules/_criterion.pyx"],
-        extra_compile_args=["-g"],
-        extra_link_args=["-g"],
-    ),
-    Extension("patched_modules._splitter", ["patched_modules/_splitter.pyx"],
-        extra_compile_args=["-g"],
-        extra_link_args=["-g"],
-    )
+#    Extension("patched_modules._criterion", ["patched_modules/_criterion.pyx"],
+#        extra_compile_args=["-g"],
+#        extra_link_args=["-g"],
+#    ),
+#    Extension("patched_modules._splitter", ["patched_modules/_splitter.pyx"],
+#        extra_compile_args=["-g"],
+#        extra_link_args=["-g"],
+#    )
 ]
 
 setup(

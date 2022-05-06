@@ -209,13 +209,13 @@ cdef class RegressionCriterionWrapper2D:
 
         self.splitter_rows.y = self.y_row_sums
         self.splitter_rows.sample_weight = self.total_row_sample_weight
-        # FIXME: do bellow only once in Splitter2D.init()
-        self.splitter_rows.weighted_n_samples = self.weighted_n_samples
+        # TODO: It is done in Splitter2D.init(). Should we do it here?
+        # self.splitter_rows.weighted_n_samples = self.weighted_n_samples
 
         self.splitter_cols.y = self.y_col_sums
         self.splitter_cols.sample_weight = self.total_col_sample_weight
-        # FIXME: do bellow only once in Splitter2D.init()
-        self.splitter_cols.weighted_n_samples = self.weighted_n_samples
+        # TODO: It is done in Splitter2D.init(). Should we do it here?
+        # self.splitter_cols.weighted_n_samples = self.weighted_n_samples
 
         # FIXME what to do with this? Get self.weighted_n_samples from it?
         cdef double[2] wnns  # will be discarded
@@ -227,12 +227,14 @@ cdef class RegressionCriterionWrapper2D:
         
         cdef RegressionCriterion criterion
 
-        with gil:  # FIXME: high coupling to criterion.init()!
-            # assert wnns[0] == wnns[1] == self.weighted_n_node_samples
-            criterion = self.splitter_rows.criterion
-            criterion.sq_sum_total = self.sq_sum_total
-            criterion = self.splitter_cols.criterion
-            criterion.sq_sum_total = self.sq_sum_total
+        #with gil:
+        #    # FIXME: high coupling to criterion.init()!
+        #    # FIXME: does not work with semisupervised criteria
+        #    # assert wnns[0] == wnns[1] == self.weighted_n_node_samples
+        #    criterion = self.splitter_rows.criterion
+        #    criterion.sq_sum_total = self.sq_sum_total
+        #    criterion = self.splitter_cols.criterion
+        #    criterion.sq_sum_total = self.sq_sum_total
 
 
         if rc:
@@ -292,13 +294,45 @@ cdef class RegressionCriterionWrapper2D:
             double* impurity_right,
             SIZE_t axis,
     ) nogil:
-        if axis:
-            self.splitter_cols.criterion.children_impurity(impurity_left, impurity_right)
-        else:
-            self.splitter_rows.criterion.children_impurity(impurity_left, impurity_right)
+        if axis == 1:
+            self.splitter_cols.criterion.children_impurity(
+                impurity_left, impurity_right)
+        else:  # axis == 0
+            self.splitter_rows.criterion.children_impurity(
+                impurity_left, impurity_right)
+
+    cdef double impurity_improvement(
+            self, double impurity_parent, double
+            impurity_left, double impurity_right,
+            SIZE_t axis,
+    ) nogil:
+        if axis == 1:
+            return self.splitter_cols.criterion.impurity_improvement(
+                impurity_parent, impurity_left, impurity_right)
+        else:  # axis == 0
+            return self.splitter_rows.criterion.impurity_improvement(
+                impurity_parent, impurity_left, impurity_right)
 
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
+    cdef double node_impurity(self) nogil:
+        # Copied from sklearn.tree._criterion.MSE.node_impurity()
+        """Evaluate the impurity of the current node.
+
+        Evaluate the MSE criterion as impurity of the current node,
+        i.e. the impurity of samples[start:end]. The smaller the impurity the
+        better.
+        """
+        cdef double* sum_total = self.sum_total
+        cdef double impurity
+        cdef SIZE_t k
+
+        impurity = self.sq_sum_total / self.weighted_n_node_samples
+        for k in range(self.n_outputs):
+            impurity -= (sum_total[k] / self.weighted_n_node_samples)**2.0
+
+        return impurity / self.n_outputs
+
     cdef void children_impurity(
             self,
             double* impurity_left,
@@ -309,6 +343,9 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
 
         i.e. the impurity of the left child (samples[start:pos]) and the
         impurity the right child (samples[pos:end]).
+
+        Is done here because sq_sum_* of children criterion is messed up, as
+        they receive axis means as y.
         """
         cdef SIZE_t[2] end
         cdef DOUBLE_t y_ij

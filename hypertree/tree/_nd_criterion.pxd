@@ -61,6 +61,11 @@ cdef class RegressionCriterionWrapper2D:
             SIZE_t* samples, SIZE_t start,
             SIZE_t end,
     ) nogil except -1
+    cdef double impurity_improvement(
+            self, double impurity_parent, double
+            impurity_left, double impurity_right,
+            SIZE_t axis,
+    ) nogil
 
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):

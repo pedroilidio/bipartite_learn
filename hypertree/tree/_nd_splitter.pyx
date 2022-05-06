@@ -102,9 +102,9 @@ cdef class Splitter2D:
         self.weighted_n_samples = self.splitter_rows.weighted_n_samples * \
                                   self.splitter_cols.weighted_n_samples
 
-        ## Done in criterion_wrapper.init() # FIXME: it shouldn't be!
-        #self.splitter_rows.weighted_n_samples = self.weighted_n_samples
-        #self.splitter_cols.weighted_n_samples = self.weighted_n_samples
+        ## TODO: Do in criterion_wrapper.init()
+        self.splitter_rows.weighted_n_samples = self.weighted_n_samples
+        self.splitter_cols.weighted_n_samples = self.weighted_n_samples
 
         return 0
 
@@ -197,9 +197,8 @@ cdef class Splitter2D:
                 # Correct impurities.
                 self.criterion_wrapper.children_impurity(
                     &imp_left, &imp_right, 0)
-                imp_improve = self.splitter_rows.criterion.impurity_improvement(
-                    impurity, imp_left, imp_right)
-
+                imp_improve = self.criterion_wrapper.impurity_improvement(
+                    impurity, imp_left, imp_right, 0)
 
                 # if imp_improve > best_split.improvement:  # Always.
                 best_split = current_split
@@ -219,8 +218,8 @@ cdef class Splitter2D:
                 # Correct impurities.
                 self.criterion_wrapper.children_impurity(
                     &imp_left, &imp_right, 1)
-                imp_improve = self.splitter_cols.criterion.impurity_improvement(
-                    impurity, imp_left, imp_right)
+                imp_improve = self.criterion_wrapper.impurity_improvement(
+                    impurity, imp_left, imp_right, 1)
 
                 if imp_improve > best_split.improvement:
                     best_split = current_split
@@ -244,8 +243,8 @@ cdef class Splitter2D:
 def make_2d_splitter(
        splitter_class,
        criterion_class,
-       n_samples,
-       max_features,
+       n_samples=None,
+       max_features=None,
        n_outputs=1,
        min_samples_leaf=1,
        min_weight_leaf=0.0,
@@ -261,73 +260,66 @@ def make_2d_splitter(
     the remaining parameters may be set to a single value or a 2-valued
     tuple or list, to specify them for each axis.
     """
-    if type(max_features) not in {list, tuple}:
+    if not isinstance(n_samples, (list, tuple)):
+        n_samples = [n_samples, n_samples]
+    if not isinstance(max_features, (list, tuple)):
         max_features = [max_features, max_features]
-    if type(ax_min_samples_leaf) not in {list, tuple}:
+    if not isinstance(n_outputs, (list, tuple)):
+        n_outputs = [n_outputs, n_outputs]
+    if not isinstance(ax_min_samples_leaf, (list, tuple)):
         ax_min_samples_leaf = [ax_min_samples_leaf, ax_min_samples_leaf]
-    if type(ax_min_weight_leaf) not in {list, tuple}:
+    if not isinstance(ax_min_weight_leaf, (list, tuple)):
         ax_min_weight_leaf = [ax_min_weight_leaf, ax_min_weight_leaf]
-    if type(splitter_class) not in {list, tuple}:
+    if not isinstance(splitter_class, (list, tuple)):
         splitter_class = [splitter_class, splitter_class]
-    if type(criterion_class) not in {list, tuple}:
+    if not isinstance(criterion_class, (list, tuple)):
         criterion_class = [criterion_class, criterion_class]
-
     if not isinstance(random_state, np.random.RandomState):
         random_state = np.random.RandomState(random_state)
 
-    # Criteria.
-    if isinstance(criterion_class[0], Criterion):
-        criterion_rows = copy.deepcopy(criterion_class[0])
-    else:
-        criterion_rows = criterion_class[0](
-            n_outputs=n_outputs,
-            n_samples=n_samples[0])
+    criteria = [None, None]
+    splitters = [None, None]
 
-    if isinstance(criterion_class[1], Criterion):
-        criterion_cols = copy.deepcopy(criterion_class[1])
-    else:
-        criterion_cols = criterion_class[1](
-            n_outputs=n_outputs,
-            n_samples=n_samples[1])
+    for ax in range(2):
+        # Make criterion
+        if isinstance(criterion_class[ax], type):
+            if n_samples[ax] is None:
+                raise ValueError(
+                    f"n_samples[{ax}] must be provided if criterion_class"
+                    f"[{ax}]={criterion_class[ax]} is a Criterion type.")
+            criteria[ax] = criterion_class[ax](
+                n_outputs=n_outputs[ax],
+                n_samples=n_samples[ax])
+        else:
+            criteria[ax] = copy.deepcopy(criterion_class[ax])
 
-    if isinstance(splitter_class[0], Splitter):
-        if criterion_class[0] is not None:
-            warnings.warn("Since splitter_class[0] is not a class, the provided"
-                          " criterion_class[0] is being ignored.")
-        splitter_rows = copy.deepcopy(splitter_class[0])
-    else:
-        splitter_rows = splitter_class[0](
-            criterion=criterion_rows,
-            max_features=max_features[0],
-            min_samples_leaf=ax_min_samples_leaf[0],
-            min_weight_leaf=ax_min_weight_leaf[0],
-            random_state=random_state,
-        )
-    if isinstance(splitter_class[1], Splitter):
-        if criterion_class[1] is not None:
-            warnings.warn("Since splitter_class[1] is not a class, the provided"
-                          " criterion_class[1] is being ignored.")
-        splitter_cols = copy.deepcopy(splitter_class[1])
-    else:
-        splitter_cols = splitter_class[1](
-            criterion=criterion_cols,
-            max_features=max_features[1],
-            min_samples_leaf=ax_min_samples_leaf[1],
-            min_weight_leaf=ax_min_weight_leaf[1],
-            random_state=random_state,
-        )
+        # Make splitter
+        if isinstance(splitter_class[ax], type):
+            if max_features[ax] is None:
+                raise ValueError(
+                    f"max_features[{ax}] must be provided if splitter_class"
+                    f"[{ax}]={splitter_class[ax]} is a Splitter type.")
+            splitters[ax] = splitter_class[ax](
+                criterion=criteria[ax],
+                max_features=max_features[ax],
+                min_samples_leaf=ax_min_samples_leaf[ax],
+                min_weight_leaf=ax_min_weight_leaf[ax],
+                random_state=random_state,
+            )
+        else:
+            if criterion_class[ax] is not None:
+                warnings.warn("Since splitter_class[ax] is not a class, the provided"
+                            " criterion_class[ax] is being ignored.")
+            splitters[ax] = copy.deepcopy(splitter_class[ax])
 
     # Wrap criteria.
     criterion_wrapper = \
-        criterion_wrapper_class(
-            splitter_rows,
-            splitter_cols,
-    )
+        criterion_wrapper_class(splitters[0], splitters[1])
 
     # Wrap splitters.
     return Splitter2D(
-        splitter_rows=splitter_rows,
-        splitter_cols=splitter_cols,
+        splitter_rows=splitters[0],
+        splitter_cols=splitters[1],
         criterion_wrapper=criterion_wrapper,
         min_samples_leaf=min_samples_leaf,
         min_weight_leaf=min_weight_leaf,

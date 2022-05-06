@@ -26,15 +26,16 @@ cdef class myCriterion:
     # Internal structures
     cdef const DOUBLE_t[:, ::1] y        # Values of y
     cdef DOUBLE_t* sample_weight         # Sample weights
-
     cdef SIZE_t* samples                 # Sample indices in X, y
     cdef SIZE_t start                    # samples[start:pos] are the samples in the left node
-    cdef SIZE_t pos                      # samples[pos:end] are the samples in the right node
     cdef SIZE_t end
+    cdef SIZE_t n_node_samples           # Number of samples in the node (end-start)
+
+    cdef SIZE_t pos                      # samples[pos:end] are the samples in the right node
 
     cdef SIZE_t n_outputs                # Number of outputs
     cdef SIZE_t n_samples                # Number of samples
-    cdef SIZE_t n_node_samples           # Number of samples in the node (end-start)
+
     cdef double weighted_n_samples       # Weighted number of samples (in total)
     cdef double weighted_n_node_samples  # Weighted number of samples in the node
     cdef double weighted_n_left          # Weighted number of samples in the left node
