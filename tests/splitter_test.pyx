@@ -1,8 +1,8 @@
 from sklearn.tree._criterion cimport Criterion
-from sklearn.tree._splitter cimport Splitter#, SplitRecord
+from sklearn.tree._splitter cimport Splitter, SplitRecord
 from sklearn.tree._tree cimport SIZE_t
 
-from hypertree.tree._nd_splitter cimport SplitRecord, Splitter2D
+from hypertree.tree._nd_splitter cimport SplitRecord as SplitRecordND, Splitter2D
 
 import numpy as np
 cimport numpy as np
@@ -20,7 +20,7 @@ cdef inline void _init_split(SplitRecord* self, SIZE_t start_pos) nogil:
 
 cpdef test_splitter(
         Splitter splitter,
-        np.ndarray X, np.ndarray y,
+        object X, np.ndarray y,
         tuple shape,
 ):
     cdef SplitRecord split
@@ -30,16 +30,17 @@ cpdef test_splitter(
     cdef SIZE_t ncf = 0  # n_constant_features
     cdef double wnns  # weighted_n_node_samples
 
-    print('splitter.init(X, y, NULL)')
     splitter.init(X, y, NULL)
-    print('splitter.node_reset(0, end, &wnns)')
     splitter.node_reset(0, end, &wnns)
 
-    print('node_impurity')
     impurity = splitter.node_impurity()
-    # impurity = criterion.node_impurity()  # Same. Above wraps this.
-    print('node_split')
+    # impurity = splitter.criterion.node_impurity()  # Same. Above wraps this.
+    print('base impurity:', impurity)
+    print('y var:', y.var())
+    print('pos:', splitter.criterion.pos)
     splitter.node_split(impurity, &split, &ncf)
+    print('pos:', splitter.criterion.pos)
+    print('split', split)
     return split
 
 

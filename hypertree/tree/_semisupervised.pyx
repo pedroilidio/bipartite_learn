@@ -71,7 +71,7 @@ cdef class SSCompositeCriterion(SSCriterion):
         self.supervised_criterion.init(
             y, sample_weight, weighted_n_samples, samples, start, end,
         )
-        self.unsupervised_criterion.init(  # FIXME: some stuff recalculated 
+        self.unsupervised_criterion.init(  # TODO: some stuff recalculated 
             X, sample_weight, weighted_n_samples, samples, start, end,
         )
 
@@ -85,6 +85,7 @@ cdef class SSCompositeCriterion(SSCriterion):
         self.sum_total = self.supervised_criterion.sum_total
         self.sum_left = self.supervised_criterion.sum_left
         self.sum_right = self.supervised_criterion.sum_right
+        ### Only RegressionCriteria have sq_sum_total.
         # self.sq_sum_total = self.supervised_criterion.sq_sum_total
 
         return 0
@@ -117,11 +118,12 @@ cdef class SSCompositeCriterion(SSCriterion):
             New starting index position of the samples in the right child
         """
         cdef int rc
-        rc = self.supervised_criterion.update(new_pos)
-        rc += self.unsupervised_criterion.update(new_pos)
+        if self.supervised_criterion.update(new_pos) == -1:
+            return -1
+        if self.unsupervised_criterion.update(new_pos) == -1:
+            return -1
         self.pos = new_pos
-
-        return rc
+        return 0
 
     cdef double node_impurity(self) nogil:
         """Calculate the impurity of the node.
@@ -180,21 +182,21 @@ cdef class SSCompositeCriterion(SSCriterion):
         """
         self.supervised_criterion.node_value(dest)
 
-    # cdef double proxy_impurity_improvement(self) nogil:
-    #     """Compute a proxy of the impurity reduction.
+    cdef double proxy_impurity_improvement(self) nogil:
+        """Compute a proxy of the impurity reduction.
 
-    #     This method is used to speed up the search for the best split.
-    #     It is a proxy quantity such that the split that maximizes this value
-    #     also maximizes the impurity improvement. It neglects all constant terms
-    #     of the impurity decrease for a given split.
+        This method is used to speed up the search for the best split.
+        It is a proxy quantity such that the split that maximizes this value
+        also maximizes the impurity improvement. It neglects all constant terms
+        of the impurity decrease for a given split.
 
-    #     The absolute impurity improvement is only computed by the
-    #     impurity_improvement method once the best split has been found.
-    #     """
-    #     cdef double sup = self.supervision
+        The absolute impurity improvement is only computed by the
+        impurity_improvement method once the best split has been found.
+        """
+        cdef double sup = self.supervision
 
-    #     return self.supervised_criterion.proxy_impurity_improvement() * sup + \
-    #            self.unsupervised_criterion.proxy_impurity_improvement()*(1-sup)
+        return self.supervised_criterion.proxy_impurity_improvement() * sup + \
+               self.unsupervised_criterion.proxy_impurity_improvement()*(1-sup)
 
 
 cdef class SSBestSplitter(BestSplitter):
