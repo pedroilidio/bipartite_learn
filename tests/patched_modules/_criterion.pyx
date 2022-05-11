@@ -677,7 +677,7 @@ cdef class Gini(ClassificationCriterion):
         impurity_right[0] = gini_right / self.n_outputs
 
 
-cdef class myRegressionCriterion(Criterion):
+cdef class RegressionCriterion(Criterion):
     r"""Abstract regression criterion.
 
     This handles cases where the target is a continuous value, and is

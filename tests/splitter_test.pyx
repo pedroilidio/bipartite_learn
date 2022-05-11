@@ -22,6 +22,7 @@ cpdef test_splitter(
         Splitter splitter,
         object X, np.ndarray y,
         tuple shape,
+        verbose=False,
 ):
     cdef SplitRecord split
     _init_split(&split, 0)
@@ -30,17 +31,28 @@ cpdef test_splitter(
     cdef SIZE_t ncf = 0  # n_constant_features
     cdef double wnns  # weighted_n_node_samples
 
+    if verbose:
+        print('calling splitter.init(X, y, NULL)')
     splitter.init(X, y, NULL)
+    if verbose:
+        print('calling splitter.node_reset(0, end, &wnns)')
     splitter.node_reset(0, end, &wnns)
 
     impurity = splitter.node_impurity()
     # impurity = splitter.criterion.node_impurity()  # Same. Above wraps this.
-    print('base impurity:', impurity)
-    print('y var:', y.var())
-    print('pos:', splitter.criterion.pos)
+
+    if verbose:
+        print('splitter.node_impurity():', impurity)
+        print('y.var():', y.var())
+        print('splitter.criterion.pos:', splitter.criterion.pos)
+        print('calling splitter.node_split(impurity, &split, &ncf)')
+
     splitter.node_split(impurity, &split, &ncf)
-    print('pos:', splitter.criterion.pos)
-    print('split', split)
+
+    if verbose:
+        print('splitter.criterion.pos:', splitter.criterion.pos)
+        print('split', split)
+
     return split
 
 

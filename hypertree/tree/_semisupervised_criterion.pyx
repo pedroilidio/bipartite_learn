@@ -1,48 +1,49 @@
-from sklearn.tree._criterion cimport Criterion
-from sklearn.tree._splitter cimport Splitter
-from ._sklearn_splitter cimport (
-    BestSplitter, 
-#     BaseDenseSplitter, RandomSplitter,
-#     BaseSparseSplitter, BestSparseSplitter, RandomSparseSplitter 
-)
-import numpy as np
-cimport numpy as np
-from sklearn.tree._tree import DOUBLE
+from sklearn.tree._criterion cimport Criterion, RegressionCriterion
+from sklearn.tree._criterion import MSE
+from sklearn.tree._tree cimport SIZE_t
 
 
-cdef class SSCriterion(Criterion):
-    """Abstract base class for semisupervised criteria."""
+# cdef class WeightedMSE(RegressionCriterion, MSE):
+#     cdef void set_output_weights(self, DOUBLE_t* output_weigths) nogil:
+#         self.output_weights = output_weights
+#         # TODO:Implement output weights for multi-output criteria.
+          # Remember sq_sums must be calculated accordingly (w * y**2).
 
-    cdef int init(
-            self, const DOUBLE_t[:, ::1] y,
-            DOUBLE_t* sample_weight,
-            double weighted_n_samples, SIZE_t* samples, SIZE_t start,
-            SIZE_t end) nogil except -1:
 
-        with gil:
-            print("You must use semisupervised_init() with semisupervised "
-                  "Criteria, not init().")
-        return -1
+cdef class SemisupervisedCriterion(Criterion):
+    """Base class for semantic purposes and future maintenance.
 
-    cdef int semisupervised_init(
-            self, const DOUBLE_t[:, ::1] X, const DOUBLE_t[:, ::1] y,
-            DOUBLE_t* sample_weight,
-            double weighted_n_samples, SIZE_t* samples, SIZE_t start,
-            SIZE_t end) nogil except -1:
-        pass
+    When training with an unsupervised criterion, one must provide X and y
+    stacked (joined cols) as the y parameter of the estimator's fit(). E.g.:
+
+    >>> clf = DecisionTreeRregressor()
+    >>> clf.fit(X=X, y=np.hstack([X, y]))
+    """
 
 
 # Maybe "SSEnsembleCriterion"
-cdef class SSCompositeCriterion(SSCriterion):
+cdef class SSCompositeCriterion(SemisupervisedCriterion):
     """Combines results from two criteria to yield its own.
     
     One criteria will receive y in its init() and the other will receive X.
+    Their calculated impurities will then be combined as the final impurity:
+
+        sup*supervised_impurity + (1-sup)*unsupervised_impurity
+
+    where sup is self.supervision.
+
+    When training with an unsupervised criterion, one must provide X and y
+    stacked (joined cols) as the y parameter of the estimator's fit(). E.g.:
+
+    >>> clf = DecisionTreeRregressor(criterion=ss_criterion)
+    >>> clf.fit(X=X, y=np.hstack([X, y]))
     """
     def __init__(
         self,
         Criterion supervised_criterion,
         Criterion unsupervised_criterion,
         double supervision,
+        *args, **kwargs,
     ):
         if not (0 <= supervision <= 1):
             # TODO: == 0 only for tests.
@@ -52,15 +53,17 @@ cdef class SSCompositeCriterion(SSCriterion):
         self.unsupervised_criterion = unsupervised_criterion
         self.n_outputs = supervised_criterion.n_outputs
         self.n_samples = supervised_criterion.n_samples
+        self.n_features = unsupervised_criterion.n_outputs
 
-    cdef int semisupervised_init(
-            self, const DOUBLE_t[:, ::1] X, const DOUBLE_t[:, ::1] y,
+    cdef int init(
+            self, const DOUBLE_t[:, ::1] y,
             DOUBLE_t* sample_weight,
             double weighted_n_samples, SIZE_t* samples, SIZE_t start,
             SIZE_t end) nogil except -1:
 
-        self.X = X
-        self.y = y
+        # y will actually be X and y concatenated.
+        self.X = y[:, :self.n_features]
+        self.y = y[:, self.n_features:]
         self.sample_weight = sample_weight
         self.samples = samples
         self.start = start
@@ -68,13 +71,17 @@ cdef class SSCompositeCriterion(SSCriterion):
         self.n_node_samples = end-start
         self.weighted_n_samples = weighted_n_samples
 
+        with gil: print('self.supervised_criterion.init(')
         self.supervised_criterion.init(
-            y, sample_weight, weighted_n_samples, samples, start, end,
+            self.y, sample_weight, weighted_n_samples, samples, start, end,
         )
-        self.unsupervised_criterion.init(  # TODO: some stuff recalculated 
-            X, sample_weight, weighted_n_samples, samples, start, end,
+        with gil: print('self.supervised_criterion.init(')
+        self.unsupervised_criterion.init(
+            self.X, sample_weight, weighted_n_samples, samples, start, end,
         )
 
+        # TODO: the stuff bellow is also calculated by the second splitter,
+        # we should find a good way of calculating it only once.
         self.weighted_n_node_samples = \
             self.supervised_criterion.weighted_n_node_samples
         self.weighted_n_left = \
@@ -85,13 +92,13 @@ cdef class SSCompositeCriterion(SSCriterion):
         self.sum_total = self.supervised_criterion.sum_total
         self.sum_left = self.supervised_criterion.sum_left
         self.sum_right = self.supervised_criterion.sum_right
-        ### Only RegressionCriteria have sq_sum_total.
+        ### Only RegressionCriteria have sq_sum_total. TODO: will we need it?
         # self.sq_sum_total = self.supervised_criterion.sq_sum_total
 
         return 0
 
     cdef int reset(self) nogil except -1:
-        """Reset the criterion at pos=start."""
+        """Reset the criteria at pos=start."""
         if self.supervised_criterion.reset() == -1:
             return -1
         if self.unsupervised_criterion.reset() == -1:
@@ -99,7 +106,7 @@ cdef class SSCompositeCriterion(SSCriterion):
         return 0
 
     cdef int reverse_reset(self) nogil except -1:
-        """Reset the criterion at pos=end."""
+        """Reset the criteria at pos=end."""
         if self.supervised_criterion.reverse_reset() == -1:
             return -1
         if self.unsupervised_criterion.reverse_reset() == -1:
@@ -108,10 +115,8 @@ cdef class SSCompositeCriterion(SSCriterion):
 
     cdef int update(self, SIZE_t new_pos) nogil except -1:
         """Updated statistics by moving samples[pos:new_pos] to the left child.
-
         This updates the collected statistics by moving samples[pos:new_pos]
         from the right child to the left child.
-
         Parameters
         ----------
         new_pos : SIZE_t
@@ -127,7 +132,6 @@ cdef class SSCompositeCriterion(SSCriterion):
 
     cdef double node_impurity(self) nogil:
         """Calculate the impurity of the node.
-
         Impurity of the current node, i.e. the impurity of samples[start:end].
         This is the primary function of the criterion class. The smaller the
         impurity the better.
@@ -142,7 +146,6 @@ cdef class SSCompositeCriterion(SSCriterion):
     cdef void children_impurity(self, double* impurity_left,
                                 double* impurity_right) nogil:
         """Calculate the impurity of children.
-
         Evaluate the impurity in children nodes, i.e. the impurity of
         samples[start:pos] + the impurity of samples[pos:end].
 
@@ -171,7 +174,6 @@ cdef class SSCompositeCriterion(SSCriterion):
 
     cdef void node_value(self, double* dest) nogil:
         """Store the node value.
-
         Compute the node value of samples[start:end] and save the value into
         dest.
 
@@ -184,54 +186,49 @@ cdef class SSCompositeCriterion(SSCriterion):
 
     cdef double proxy_impurity_improvement(self) nogil:
         """Compute a proxy of the impurity reduction.
-
         This method is used to speed up the search for the best split.
         It is a proxy quantity such that the split that maximizes this value
         also maximizes the impurity improvement. It neglects all constant terms
         of the impurity decrease for a given split.
-
         The absolute impurity improvement is only computed by the
         impurity_improvement method once the best split has been found.
         """
         cdef double sup = self.supervision
+        return \
+            sup * self.supervised_criterion.proxy_impurity_improvement() + \
+            (1-sup) * self.unsupervised_criterion.proxy_impurity_improvement()
 
-        return self.supervised_criterion.proxy_impurity_improvement() * sup + \
-               self.unsupervised_criterion.proxy_impurity_improvement()*(1-sup)
 
+cdef class SSMSE(SSCompositeCriterion):
+    """Applies MSE both on supervised (X) and unsupervised (y) data.
+    
+    One criteria will receive y in its init() and the other will receive X.
+    Their calculated impurities will then be combined as the final impurity:
 
-cdef class SSBestSplitter(BestSplitter):
-    def __cinit__(self, Criterion criterion, SIZE_t max_features,
-                  SIZE_t min_samples_leaf, double min_weight_leaf,
-                  object random_state):
-        # Parent __cinit__ is automatically called.
-        self.sscriterion = criterion
+        sup*supervised_impurity + (1-sup)*unsupervised_impurity
 
-    cdef int init(self,
-                  object X,
-                  const DOUBLE_t[:, ::1] y,
-                  DOUBLE_t* sample_weight) except -1:
-        # Call parent init
-        BestSplitter.init(self, X, y, sample_weight)
+    where sup is self.supervision.
 
-        #if getattr(X, "dtype", None) != DOUBLE_t or not X.flags.contiguous:
-        self.X_targets = np.ascontiguousarray(self.X, dtype=DOUBLE)
+    When training with an unsupervised criterion, one must provide X and y
+    stacked (joined cols) as the y parameter of the estimator's fit(). E.g.:
 
-        return 0
+    >>> clf = DecisionTreeRregressor()
+    >>> clf.fit(X=X, y=np.hstack([X, y]))
+    """
+    def __init__(
+        self,
+        double supervision,
+        SIZE_t n_features,
+        SIZE_t n_samples,
+        SIZE_t n_outputs,  # of y's columns.
+        *args, **kwargs,
+    ):
+        self.supervision = supervision
+        self.supervised_criterion = MSE(
+            n_outputs=n_outputs, n_samples=n_samples)
+        self.unsupervised_criterion = MSE(
+            n_outputs=n_features, n_samples=n_samples)
 
-    cdef int node_reset(self, SIZE_t start, SIZE_t end,
-                        double* weighted_n_node_samples) nogil except -1:
-        self.start = start
-        self.end = end
-
-        self.sscriterion.semisupervised_init(
-            self.X_targets,  # NOTE: The only difference.
-            self.y,
-            self.sample_weight,
-            self.weighted_n_samples,
-            self.samples,
-            start,
-            end,
-        )
-
-        weighted_n_node_samples[0] = self.sscriterion.weighted_n_node_samples
-        return 0
+        self.n_features = n_features
+        self.n_samples = n_samples
+        self.n_outputs =  n_outputs
