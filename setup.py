@@ -25,7 +25,7 @@ extensions = [
 ]
 
 setup(
-    name='hypertree',
+    name='hypertrees',
     version=VERSION,
     description='HyperTrees in Python.',
     include_dirs=[numpy.get_include()],

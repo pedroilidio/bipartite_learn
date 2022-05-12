@@ -2,3 +2,8 @@ include requirements.txt
 include hypertree/tree/_nd_criterion.pxd
 include hypertree/tree/_nd_splitter.pxd
 include hypertree/tree/_nd_tree.pxd
+include hypertree/tree/_semisupervised_criterion.pxd
+include hypertree/tree/_nd_criterion.pyx
+include hypertree/tree/_nd_splitter.pyx
+include hypertree/tree/_nd_tree.pyx
+include hypertree/tree/_semisupervised_criterion.pyx
