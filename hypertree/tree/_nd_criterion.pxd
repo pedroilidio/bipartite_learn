@@ -45,22 +45,27 @@ cdef class RegressionCriterionWrapper2D:
             SIZE_t[2] y_shape,
         ) nogil except -1
 
+    cdef int _node_reset_child_splitter(
+            self,
+            Splitter child_splitter,
+            const DOUBLE_t[:, ::1] y,
+            DOUBLE_t* sample_weight,
+            SIZE_t start,
+            SIZE_t end,
+            DOUBLE_t* weighted_n_node_samples,
+    ) nogil except -1
+
     cdef void node_value(self, double* dest) nogil
+
     cdef double node_impurity(self) nogil
+
     cdef void children_impurity(
             self,
             double* impurity_left,
             double* impurity_right,
             SIZE_t axis,
     ) nogil
-    cdef int _init_child_criterion(
-            self,
-            RegressionCriterion child_criterion,
-            const DOUBLE_t[:, ::1] y,
-            DOUBLE_t* sample_weight,
-            SIZE_t* samples, SIZE_t start,
-            SIZE_t end,
-    ) nogil except -1
+
     cdef double impurity_improvement(
             self, double impurity_parent, double
             impurity_left, double impurity_right,

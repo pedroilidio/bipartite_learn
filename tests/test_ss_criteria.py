@@ -68,6 +68,9 @@ def ss_composite_u():
     )
 
 
+criteria['ss_composite_u'] = ss_composite_u
+criteria['ss_composite_s'] = ss_composite_s
+
 criteria['ssmse_s'] = lambda: SSMSE(
     n_samples=X.shape[0],
     n_features=X.shape[1],
@@ -81,8 +84,6 @@ criteria['ssmse_u'] = lambda: SSMSE(
     supervision=0.,
 )
 
-criteria['ss_composite_s'] = ss_composite_s
-criteria['ss_composite_u'] = ss_composite_u
 
 # Collect data ================================================================
 
@@ -101,7 +102,7 @@ for name, criterion in criteria.items():
     )
     print('Testing...')
     with stopwatch():
-        result = test_splitter(splitter, X, y_, y_.shape, verbose=True)
+        result = test_splitter(splitter, X, y_, y_.shape)
         print('Best split found:')
         pprint(result)
 
@@ -110,8 +111,8 @@ for name, criterion in criteria.items():
 
 # Test ========================================================================
 
-assert split_equality(splits['ss_composite_s'], splits['s_mse'])
-assert split_equality(splits['ssmse_s'], splits['s_mse'])
-assert split_equality(splits['ss_composite_u'], splits['u_mse'])
-assert split_equality(splits['ssmse_u'], splits['u_mse'])
+assert split_equality(splits['ss_composite_s'], splits['mse_s'])
+assert split_equality(splits['ssmse_s'], splits['mse_s'])
+assert split_equality(splits['ss_composite_u'], splits['mse_u'])
+assert split_equality(splits['ssmse_u'], splits['mse_u'])
 print("All assertiion tests succeeded.")

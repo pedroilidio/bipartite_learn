@@ -34,7 +34,7 @@ from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 # EPSILON is used in the Poisson criterion
 cdef double EPSILON = 10 * np.finfo('double').eps
 
-cdef class myCriterion:
+cdef class Criterion:
     """Interface for impurity criteria.
 
     This object stores methods on how to calculate how good a split is using
@@ -205,7 +205,7 @@ cdef class myCriterion:
                                     self.weighted_n_node_samples * impurity_left)))
 
 
-cdef class myClassificationCriterion(Criterion):
+cdef class ClassificationCriterion(Criterion):
     """Abstract criterion for classification."""
 
     def __cinit__(self, SIZE_t n_outputs,

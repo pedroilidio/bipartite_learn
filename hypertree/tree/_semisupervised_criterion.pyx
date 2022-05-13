@@ -1,6 +1,7 @@
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 from sklearn.tree._criterion import MSE
 from sklearn.tree._tree cimport SIZE_t
+from libc.stdlib cimport malloc
 
 
 # cdef class WeightedMSE(RegressionCriterion, MSE):
@@ -55,6 +56,19 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         self.n_samples = supervised_criterion.n_samples
         self.n_features = unsupervised_criterion.n_outputs
 
+    def __dealloc__(self):
+        """Overwrite Criterion.__dealloc__
+
+        Parent class would free sum_total, sum_left and sum_right, but since we
+        get these pointers from children criteria, we must delegate this job to
+        them.
+        """
+        # FIXME: allocating just to be deallocated by the parent class with no
+        # complainints.
+        self.sum_total = <double*> malloc(sizeof(double*))
+        self.sum_left = <double*> malloc(sizeof(double*))
+        self.sum_right = <double*> malloc(sizeof(double*))
+
     cdef int init(
             self, const DOUBLE_t[:, ::1] y,
             DOUBLE_t* sample_weight,
@@ -71,11 +85,9 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         self.n_node_samples = end-start
         self.weighted_n_samples = weighted_n_samples
 
-        with gil: print('self.supervised_criterion.init(')
         self.supervised_criterion.init(
             self.y, sample_weight, weighted_n_samples, samples, start, end,
         )
-        with gil: print('self.supervised_criterion.init(')
         self.unsupervised_criterion.init(
             self.X, sample_weight, weighted_n_samples, samples, start, end,
         )
@@ -231,4 +243,8 @@ cdef class SSMSE(SSCompositeCriterion):
 
         self.n_features = n_features
         self.n_samples = n_samples
-        self.n_outputs =  n_outputs
+        self.n_outputs = n_outputs
+
+
+# cdef class SSCriterionWrapper(RegressionCriterionWrapper2D):
+#     pass

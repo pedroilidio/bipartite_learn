@@ -13,16 +13,7 @@ README = (PATH_ROOT/"README.md").read_text()
 exec((PATH_ROOT/"hypertree/_version.py").read_text())
 VERSION = __version__
 
-extensions = [
-    Extension(
-        "hypertree.tree._nd_tree", ["hypertree/tree/_nd_tree.pyx"]),
-    Extension(
-        "hypertree.tree._nd_splitter", ["hypertree/tree/_nd_splitter.pyx"]),
-    Extension(
-        "hypertree.tree._nd_criterion", ["hypertree/tree/_nd_criterion.pyx"]),
-    Extension(
-        "hypertree.tree._semisupervised_criterion", ["hypertree/tree/_semisupervised_criterion.pyx"]),
-]
+extensions = [Extension( "hypertree.tree.*", ["hypertree/tree/*.pyx"])]
 
 setup(
     name='hypertrees',

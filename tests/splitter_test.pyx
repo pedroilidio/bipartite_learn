@@ -32,26 +32,26 @@ cpdef test_splitter(
     cdef double wnns  # weighted_n_node_samples
 
     if verbose:
-        print('calling splitter.init(X, y, NULL)')
+        print('[SPLITTER_TEST] calling splitter.init(X, y, NULL)')
     splitter.init(X, y, NULL)
     if verbose:
-        print('calling splitter.node_reset(0, end, &wnns)')
+        print('[SPLITTER_TEST] calling splitter.node_reset(0, end, &wnns)')
     splitter.node_reset(0, end, &wnns)
 
     impurity = splitter.node_impurity()
     # impurity = splitter.criterion.node_impurity()  # Same. Above wraps this.
 
     if verbose:
-        print('splitter.node_impurity():', impurity)
-        print('y.var():', y.var())
-        print('splitter.criterion.pos:', splitter.criterion.pos)
-        print('calling splitter.node_split(impurity, &split, &ncf)')
+        print('[SPLITTER_TEST] splitter.node_impurity():', impurity)
+        print('[SPLITTER_TEST] y.var():', y.var())
+        print('[SPLITTER_TEST] splitter.criterion.pos:', splitter.criterion.pos)
+        print('[SPLITTER_TEST] calling splitter.node_split(impurity, &split, &ncf)')
 
     splitter.node_split(impurity, &split, &ncf)
 
     if verbose:
-        print('splitter.criterion.pos:', splitter.criterion.pos)
-        print('split', split)
+        print('[SPLITTER_TEST] splitter.criterion.pos:', splitter.criterion.pos)
+        print('[SPLITTER_TEST] split', split)
 
     return split
 

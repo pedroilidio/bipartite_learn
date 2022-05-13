@@ -191,92 +191,47 @@ cdef class RegressionCriterionWrapper2D:
             self.y_col_sums[j, 0] = \
                 self.y_col_sums[j, 0] / self.weighted_n_row_samples
 
-        #with gil:
-        #    rc = self._init_child_criterion(
-        #        self.splitter_rows.criterion,
-        #        self.y_row_sums,
-        #        self.total_row_sample_weight,
-        #        self.row_samples,
-        #        self.start[0], self.end[0],
-        #    )
-        #    rc += self._init_child_criterion(
-        #        self.splitter_cols.criterion,
-        #        self.y_col_sums,
-        #        self.total_col_sample_weight,
-        #        self.col_samples,
-        #        self.start[1], self.end[1],
-        #    )
-
-        self.splitter_rows.y = self.y_row_sums
-        self.splitter_rows.sample_weight = self.total_row_sample_weight
-        # TODO: It is done in Splitter2D.init(). Should we do it here?
-        # self.splitter_rows.weighted_n_samples = self.weighted_n_samples
-
-        self.splitter_cols.y = self.y_col_sums
-        self.splitter_cols.sample_weight = self.total_col_sample_weight
-        # TODO: It is done in Splitter2D.init(). Should we do it here?
-        # self.splitter_cols.weighted_n_samples = self.weighted_n_samples
-
         # FIXME what to do with this? Get self.weighted_n_samples from it?
         cdef double[2] wnns  # will be discarded
 
-        rc = self.splitter_rows.node_reset(
-            start[0], end[0], wnns)
-        rc |= self.splitter_cols.node_reset(
-            start[1], end[1], wnns+1)
-        
-        cdef RegressionCriterion criterion
+        if -1 == self._node_reset_child_splitter(
+            child_splitter=self.splitter_rows,
+            y=self.y_row_sums,
+            sample_weight=self.total_row_sample_weight,
+            start=start[0],
+            end=end[0],
+            weighted_n_node_samples=wnns,
+        ):
+            return -1
 
-        #with gil:
-        #    # FIXME: high coupling to criterion.init()!
-        #    # FIXME: does not work with semisupervised criteria
-        #    # assert wnns[0] == wnns[1] == self.weighted_n_node_samples
-        #    criterion = self.splitter_rows.criterion
-        #    criterion.sq_sum_total = self.sq_sum_total
-        #    criterion = self.splitter_cols.criterion
-        #    criterion.sq_sum_total = self.sq_sum_total
-
-
-        if rc:
-            rc = -1
-        return rc
-
-    # TODO: Currently unused. Simplifies the end of self.init and eliminates re-
-    # dundancy with Criterion.split, but strongly depends on the specific
-    # Criterion.init implementation.
-    cdef int _init_child_criterion(
-            self,
-            RegressionCriterion child_criterion,
-            const DOUBLE_t[:, ::1] y,
-            DOUBLE_t* sample_weight,
-            SIZE_t* samples, SIZE_t start,
-            SIZE_t end,
-    ) nogil except -1:
-        """Substitutes criterion.init() initializing child criterion on 2D data.
-
-        This initializes the children criteria at node samples[start:end] and children
-        samples[start:start] and samples[start:end].
-        """
-        # Replicate Splitter.node_reset, which only calls Criterion.init
-        child_criterion.y = y
-        child_criterion.sample_weight = sample_weight
-        child_criterion.samples = samples
-        child_criterion.start = start
-        child_criterion.end = end
-        child_criterion.n_node_samples = end - start
-        child_criterion.weighted_n_samples = self.weighted_n_samples
-
-
-        # Copy some more from self, which would be calculated in Criterion.init
-        child_criterion.sum_total[0] = self.sum_total[0]
-        child_criterion.weighted_n_node_samples = self.weighted_n_node_samples
-        # sq_sum_total is the only one that would really be messed up
-        child_criterion.sq_sum_total = self.sq_sum_total
-
-        # Reset to pos=start
-        child_criterion.reset()
+        if -1 == self._node_reset_child_splitter(
+            child_splitter=self.splitter_cols,
+            y=self.y_col_sums,
+            sample_weight=self.total_col_sample_weight,
+            start=start[1],
+            end=end[1],
+            weighted_n_node_samples=wnns+1,
+        ):
+            return -1
 
         return 0
+
+    cdef int _node_reset_child_splitter(
+            self,
+            Splitter child_splitter,
+            const DOUBLE_t[:, ::1] y,
+            DOUBLE_t* sample_weight,
+            SIZE_t start,
+            SIZE_t end,
+            DOUBLE_t* weighted_n_node_samples,
+    ) nogil except -1:
+        """Substitutes splitter.node_reset() setting child splitter on 2D data.
+        """
+        # TODO: It is done in Splitter2D.init(). Should we do it here?
+        # child_splitter.weighted_n_samples = self.weighted_n_samples
+        child_splitter.y = y
+        child_splitter.sample_weight = sample_weight
+        return child_splitter.node_reset(start, end, weighted_n_node_samples)
 
     cdef void node_value(self, double* dest) nogil:
         """Copy the value (prototype) of node samples into dest."""
