@@ -317,13 +317,12 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         cdef double* sum_right
 
         with gil:
-            if axis:
+            if axis == 1:
                 criterion = self.splitter_cols.criterion
-            else:
+            elif axis == 0:
                 criterion = self.splitter_rows.criterion
 
         pos = criterion.pos
-
         sum_left = criterion.sum_left
         sum_right = criterion.sum_right
         weighted_n_left = criterion.weighted_n_left

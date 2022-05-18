@@ -1,5 +1,5 @@
 from splitter_test import test_splitter
-from hypertree.tree._semisupervised_criterion import \
+from hypertreestree._semisupervised_criterion import \
     SSCompositeCriterion, SSMSE
 
 from time import time

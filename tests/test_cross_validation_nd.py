@@ -2,8 +2,8 @@ from time import time
 from pprint import pprint
 import numpy as np
 
-from hypertree.model_selection import cross_validate_nd
-from hypertree.tree import DecisionTreeRegressor2D
+from hypertreesmodel_selection import cross_validate_nd
+from hypertreestree import DecisionTreeRegressor2D
 from make_examples import gen_imatrix
 
 DTYPE_t, DOUBLE_t = np.float32, np.float64

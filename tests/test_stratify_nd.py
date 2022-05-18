@@ -1,5 +1,5 @@
 import numpy as np
-from hypertree.model_selection import train_test_split_nd
+from hypertreesmodel_selection import train_test_split_nd
 from make_examples import make_interaction_data 
 from sklearn.utils.validation import _num_samples
 

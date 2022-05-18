@@ -3,13 +3,13 @@ from time import process_time
 from pprint import pprint
 import numpy as np
 
-from hypertree.tree import DecisionTreeRegressor2D, ExtraTreeRegressor2D
+from hypertreestree import DecisionTreeRegressor2D, ExtraTreeRegressor2D
 from sklearn.tree import DecisionTreeRegressor, ExtraTreeRegressor
 
-from hypertree.ensemble import ExtraTreesRegressor2D, RandomForestRegressor2D
+from hypertreesensemble import ExtraTreesRegressor2D, RandomForestRegressor2D
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 
-from hypertree.melter import row_cartesian_product, MelterND
+from hypertreesmelter import row_cartesian_product, MelterND
 from make_examples import make_interaction_data
 from test_nd_classes import parse_args
 
