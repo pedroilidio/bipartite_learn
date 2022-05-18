@@ -3,10 +3,10 @@ from sklearn.tree._criterion import MSE
 from sklearn.tree._splitter import BestSplitter
 
 from splitter_test import test_splitter
-from hypertreestree._nd_splitter import make_2d_splitter
-from hypertreestree._nd_criterion import MSE_Wrapper2D
-from hypertreestree._semisupervised import SSBestSplitter
-from hypertreestree._semisupervised import SSCompositeCriterion
+from hypertrees.tree._nd_splitter import make_2d_splitter
+from hypertrees.tree._nd_criterion import MSE_Wrapper2D
+from hypertrees.tree._semisupervised import SSBestSplitter
+from hypertrees.tree._semisupervised import SSCompositeCriterion
 
 
 import numpy as np

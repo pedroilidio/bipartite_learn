@@ -1,5 +1,5 @@
 """
-The :mod:`hypertreesutils` module includes various utilities.
+The :mod:`hypertrees.utils` module includes various utilities.
 """
 import sklearn
 from sklearn.utils import IS_PYPY
@@ -16,10 +16,10 @@ __all__ = [
 
 
 def all_estimators(type_filter=None):
-    """Get a list of all estimators from hypertrees
+    """Get a list of all estimators from hypertrees.
 
     This function is adapted from the original sklearn.utils.all_estimators to
-    crawl the hypertreespackage.
+    crawl the hypertrees package.
 
     This function crawls the module and gets all classes that inherit
     from sklearn.BaseEstimator. Classes that are defined in test-modules
@@ -66,12 +66,12 @@ def all_estimators(type_filter=None):
         "conftest",
         "enable_hist_gradient_boosting",
     }
-    root = str(Path(__file__).parent.parent)  # hypertreespackage
+    root = str(Path(__file__).parent.parent)  # hypertrees package
     # Ignore deprecation warnings triggered at import time and from walking
     # packages
     with ignore_warnings(category=FutureWarning):
         for importer, modname, ispkg in pkgutil.walk_packages(
-            path=[root], prefix="hypertrees"
+            path=[root], prefix="hypertrees."
         ):
             mod_parts = modname.split(".")
             if any(part in modules_to_ignore for part in mod_parts) or "._" in modname:

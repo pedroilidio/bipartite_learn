@@ -3,9 +3,9 @@ import numpy as np
 
 from make_examples import make_interaction_data
 from test_nd_classes import parse_args
-from hypertreestree import DecisionTreeRegressor2D
-from hypertreesmodel_selection._split import check_cv_nd, CrossValidatorNDWrapper
-from hypertreesmodel_selection._search import GridSearchCVND, RandomizedSearchCVND
+from hypertrees.tree import DecisionTreeRegressor2D
+from hypertrees.model_selection._split import check_cv_nd, CrossValidatorNDWrapper
+from hypertrees.model_selection._search import GridSearchCVND, RandomizedSearchCVND
 from test_ensembles import print_duration, test_compare_estimators
 
 

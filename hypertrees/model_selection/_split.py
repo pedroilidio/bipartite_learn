@@ -13,7 +13,7 @@ from sklearn.model_selection._split import (
 )
 from sklearn.utils.validation import _num_samples
 
-from hypertreesbase import InputDataND
+from hypertrees.base import InputDataND
 
 
 class CrossValidatorNDWrapper(BaseCrossValidator):
@@ -210,7 +210,7 @@ def make_kfold_nd(
     Wraps n_dim KFold or StratifiedKFold cross-validators with a
     CrossValidatorNDWrapper, that provides train-test indices for splitting
     InputDataND objects. The returned wrapper object is compatible with paramet-
-    er search objects in hypertreesmodel_selection, such as GridSearchCVND and
+    er search objects in hypertrees.model_selection, such as GridSearchCVND and
     RandomizedSearchCVND.
 
     The parameters 'cv', 'shuffle' and 'stratified' can be
@@ -285,7 +285,7 @@ def make_train_test_splitter_nd(
     Wraps len(n_samples) CrossValidator data splitters with a
     CrossValidatorNDWrapper, that provides train-test indices for splitting
     InputDataND objects. The returned wrapper object is compatible with paramet-
-    er search objects in hypertreesmodel_selection, such as GridSearchCVND and
+    er search objects in hypertrees.model_selection, such as GridSearchCVND and
     RandomizedSearchCVND.
 
     The parameters 'test_size', 'train_size', 'shuffle' and 'stratify' can be

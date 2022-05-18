@@ -3,7 +3,6 @@
 # License: 3-clause BSD
 
 from setuptools import setup, Extension, find_packages
-#from setuptools import setup, Extension, find_packages
 from pathlib import Path
 from Cython.Build import cythonize
 import numpy
@@ -16,20 +15,11 @@ VERSION = __version__
 
 extensions = [Extension( "hypertrees.tree.*", ["hypertrees/tree/*.pyx"])]
 
-#extensions = [
-#    Extension( "hypertrees.tree._nd_criterion",
-#        ["hypertrees/tree/_nd_criterion.pyx"]),
-#    Extension( "hypertrees.tree._nd_splitter",
-#        ["hypertrees/tree/_nd_splitter.pyx"]),
-#    Extension( "hypertrees.tree._nd_tree", ["hypertrees/tree/_nd_tree.pyx"]),
-#    Extension( "hypertrees.tree._semisupervised_criterion", ["hypertrees/tree/_semisupervised_criterion.pyx"]),
-#]
-
 setup(
     name='hypertrees',
     version=VERSION,
     description='HyperTrees in Python.',
-    include_dirs=numpy.get_include(),
+    include_dirs=[numpy.get_include()],
     long_description=README,
     long_description_content_type="text/markdown",
     url='http://github.com/pedroilidio/hypertrees',
@@ -50,5 +40,4 @@ setup(
         extensions,
         language_level="3",
     ),
-    options={'build_ext': {'inplace': True}},
 )
