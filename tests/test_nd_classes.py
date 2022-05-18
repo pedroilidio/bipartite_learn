@@ -8,10 +8,10 @@ from sklearn.tree._splitter import BestSplitter
 from sklearn.tree import DecisionTreeRegressor
 import sklearn.tree
 
-from hypertree.tree._nd_splitter import Splitter2D, make_2d_splitter
-from hypertree.tree._nd_criterion import MSE_Wrapper2D
-from hypertree.tree._nd_classes import DecisionTreeRegressor2D
-from hypertree.melter import row_cartesian_product
+from hypertrees.tree._nd_splitter import Splitter2D, make_2d_splitter
+from hypertrees.tree._nd_criterion import MSE_Wrapper2D
+from hypertrees.tree._nd_classes import DecisionTreeRegressor2D
+from hypertrees.melter import row_cartesian_product
 
 import numpy as np
 #from sklearn.tree._tree import DTYPE_t, DOUBLE_t
@@ -88,9 +88,9 @@ def parse_args(**DEF_PARAMS):
 
 # TODO: parameter description.
 def main(**PARAMS):
-    """Test hypertree.DecisionTreeRegressor2D
+    """Test hypertrees.DecisionTreeRegressor2D
 
-    Fit hypertree.DecisionTreeRegressor2D on mock data and assert the grown tree
+    Fit hypertrees.DecisionTreeRegressor2D on mock data and assert the grown tree
     is identical to the one built by sklearn.DecisionTreeRegressor.
 
     Parameters

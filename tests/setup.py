@@ -21,7 +21,7 @@ extensions = [
 ]
 
 setup(
-    name='hypertree tests',
+    name='hypertrees tests',
     ext_modules=cythonize(
         extensions,
         gdb_debug=True,

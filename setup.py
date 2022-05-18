@@ -10,10 +10,10 @@ import numpy
 PATH_ROOT = Path(__file__).parent
 README = (PATH_ROOT/"README.md").read_text()
 # Get __version__ from _version.py
-exec((PATH_ROOT/"hypertree/_version.py").read_text())
+exec((PATH_ROOT/"hypertrees/_version.py").read_text())
 VERSION = __version__
 
-extensions = [Extension( "hypertree.tree.*", ["hypertree/tree/*.pyx"])]
+extensions = [Extension( "hypertrees.tree.*", ["hypertrees/tree/*.pyx"])]
 
 setup(
     name='hypertrees',
@@ -22,12 +22,12 @@ setup(
     include_dirs=[numpy.get_include()],
     long_description=README,
     long_description_content_type="text/markdown",
-    url='http://github.com/pedroilidio/hypertree',
+    url='http://github.com/pedroilidio/hypertrees',
     author='Pedro Ilídio',
     author_email='pedrilidio@gmail.com',
     license='new BSD',
     packages=find_packages(),
-    # scripts=['bin/hypertree'],
+    # scripts=['bin/hypertrees'],
     zip_safe=False,
 
     install_requires=[

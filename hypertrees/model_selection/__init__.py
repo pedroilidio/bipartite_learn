@@ -1,15 +1,15 @@
-from hypertree.model_selection._validation import (
+from hypertrees.model_selection._validation import (
     cross_validate_nd,
 )
-from hypertree.model_selection._split import (
+from hypertrees.model_selection._split import (
     check_cv_nd,
     CrossValidatorNDWrapper,
     make_train_test_splitter_nd,
     make_kfold_nd,
     train_test_split_nd,
 )
-from hypertree.model_selection._search import GridSearchCVND
-from hypertree.model_selection._search import RandomizedSearchCVND
+from hypertrees.model_selection._search import GridSearchCVND
+from hypertrees.model_selection._search import RandomizedSearchCVND
 
 
 __all__ = [
