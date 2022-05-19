@@ -1,13 +1,14 @@
 from argparse import ArgumentParser
 from itertools import product
 from pprint import pprint
+from contextlib import contextmanager
 # from patched_modules._criterion import MSE
 # from patched_modules._splitter import BestSplitter
-from sklearn.tree._criterion import MSE
-from sklearn.tree._splitter import BestSplitter
 from sklearn.tree import DecisionTreeRegressor
 import sklearn.tree
 
+import sys
+sys.path.append('.')
 from hypertrees.tree._nd_splitter import Splitter2D, make_2d_splitter
 from hypertrees.tree._nd_criterion import MSE_Wrapper2D
 from hypertrees.tree._nd_classes import DecisionTreeRegressor2D
@@ -18,7 +19,6 @@ import numpy as np
 DTYPE_t, DOUBLE_t = np.float32, np.float64
 
 from pathlib import Path
-import sys
 from time import time
 
 from make_examples import make_interaction_data
@@ -45,6 +45,17 @@ DEF_PARAMS = dict(
 # --seed 23 --noise .1 --nrules 20 --shape 500 600 --nattrs 10 9 --msl 100
 
 
+@contextmanager
+def stopwatch(msg=None):
+    if msg:
+        print(msg)
+    t0 = time()
+    yield
+    t = time() - t0
+    print(f"It took {t} s.")
+    return t
+
+
 def print_eval_model(tree, XX, Y):
     x_gen = (np.hstack(x).reshape(1, -1) for x in product(*XX))
     pred = np.fromiter((tree.predict(x) for x in x_gen), dtype=float, like=Y)
@@ -53,7 +64,8 @@ def print_eval_model(tree, XX, Y):
     fake_preds = Y.reshape(-1).copy()
     np.random.shuffle(fake_preds)
     print('Random baseline MSE:', np.mean((fake_preds - Y.reshape(-1))**2))
-    print('Random baseline R^2:', np.corrcoef(fake_preds, Y.reshape(-1))[0, 1] ** 2)
+    print('Random baseline R^2:',
+          np.corrcoef(fake_preds, Y.reshape(-1))[0, 1] ** 2)
 
 
 def print_n_samples_in_leaves(tree):
@@ -87,11 +99,17 @@ def parse_args(**DEF_PARAMS):
 
 
 # TODO: parameter description.
-def main(**PARAMS):
-    """Test hypertrees.DecisionTreeRegressor2D
+def compare_trees(
+    tree1=DecisionTreeRegressor,
+    tree2=DecisionTreeRegressor2D,
+    tree2_is_2d=True,
+    tree2_is_ss=False,
+    **PARAMS,
+):
+    """Test hypertreesDecisionTreeRegressor2D
 
-    Fit hypertrees.DecisionTreeRegressor2D on mock data and assert the grown tree
-    is identical to the one built by sklearn.DecisionTreeRegressor.
+    Fit hypertreesDecisionTreeRegressor2D on mock data and assert the grown
+    tree is identical to the one built by sklearn.DecisionTreeRegressor.
 
     Parameters
     ----------
@@ -106,7 +124,7 @@ def main(**PARAMS):
         plot : bool
         save_trees : bool
     """
-    ## Generate mock data
+    # Generate mock data
     print('Starting with settings:')
     pprint(PARAMS)
 
@@ -131,71 +149,88 @@ def main(**PARAMS):
     print('Data variance:', Y.var())
     print('=' * 50)
 
-    ########## Instantiate trees
-    tree2d = DecisionTreeRegressor2D(
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        # splitter='random',  
-        random_state=PARAMS['seed'],
-    )
-    tree1d = DecisionTreeRegressor(
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        # splitter='random',
-        random_state=PARAMS['seed'],
-    )
+    # ######### Instantiate trees
+    if isinstance(tree2, type):
+        tree2 = tree2(
+            min_samples_leaf=PARAMS['min_samples_leaf'],
+            # splitter='random',
+            random_state=PARAMS['seed'],
+        )
+
+    if isinstance(tree1, type):
+        tree1 = tree1(
+            min_samples_leaf=PARAMS['min_samples_leaf'],
+            random_state=PARAMS['seed'],
+        )
     # NOTE on ExtraTrees:
     # Even with the same random_state, the way 2d splitter uses this random
     # state will be different (same random state for each axis), thus yielding
     # an ExtraTree2d different from sklearn's ExtraTree.
 
-    t0 = time()
-    print(f'Fitting {tree1d.__class__.__name__}...')
-    tree2d.fit(XX, Y)
-    print(f'Done in {time()-t0} s.')
+    with stopwatch(f'Fitting {tree2.__class__.__name__}...'):
+        if tree2_is_2d:
+            tree2.fit(XX, Y)
+        else:
+            X, y = row_cartesian_product(XX), Y.reshape(-1, 1)
+            if tree2_is_ss:
+                tree2.fit(X, np.hstack((X, y)))
+            else:
+                tree2.fit(X, y)
 
-    t0 = time()
-    print(f'Fitting {tree2d.__class__.__name__}...')
-    tree1d.fit(row_cartesian_product(XX), Y.reshape(-1))
-    print(f'Done in {time()-t0} s.')
+    with stopwatch(f'Fitting {tree1.__class__.__name__}...'):
+        tree1.fit(row_cartesian_product(XX), Y.reshape(-1))
 
-    tree2d_n_samples_in_leaves = print_n_samples_in_leaves(tree2d)
-    tree1d_n_samples_in_leaves = print_n_samples_in_leaves(tree1d)
+    tree1_n_samples_in_leaves = print_n_samples_in_leaves(tree1)
+    tree2_n_samples_in_leaves = print_n_samples_in_leaves(tree2)
 
     if not PARAMS['inspect']:
-        assert tree1d_n_samples_in_leaves.shape[0] == \
-               tree2d_n_samples_in_leaves.shape[0]
+        assert tree1_n_samples_in_leaves.shape[0] == \
+               tree2_n_samples_in_leaves.shape[0]
 
         leaves_comparison = \
-            tree1d_n_samples_in_leaves == tree2d_n_samples_in_leaves
+            tree1_n_samples_in_leaves == tree2_n_samples_in_leaves
         comparison_test = np.all(leaves_comparison)
         if not comparison_test:
             print("diff positions:", np.nonzero(~leaves_comparison)[0])
-            print("diff: ", tree1d_n_samples_in_leaves[~leaves_comparison],
-                  '!=', tree2d_n_samples_in_leaves[~leaves_comparison])
+            print("diff: ", tree1_n_samples_in_leaves[~leaves_comparison],
+                  '!=', tree2_n_samples_in_leaves[~leaves_comparison])
 
         assert comparison_test
         assert (
-            sklearn.tree.export_text(tree2d) == sklearn.tree.export_text(tree1d)
+            sklearn.tree.export_text(tree2) == sklearn.tree.export_text(tree1)
         )
 
     # print('Evaluating 2D tree...')
-    # print_eval_model(tree2d, XX, Y)
+    # print_eval_model(tree2, XX, Y)
     # print_n_samples_in_leaves(tree)
     # print('Evaluating 1D tree...')
-    # print_eval_model(tree1d, XX, Y)
-    # print_n_samples_in_leaves(tree1d)
+    # print_eval_model(tree1, XX, Y)
+    # print_n_samples_in_leaves(tree1)
 
-    with open('tree1d.txt', 'w') as f:
-        f.write(sklearn.tree.export_text(tree1d))
-    with open('tree2d.txt', 'w') as f:
-        f.write(sklearn.tree.export_text(tree2d))
+    with open('tree1.txt', 'w') as f:
+        f.write(sklearn.tree.export_text(tree1))
+    with open('tree2.txt', 'w') as f:
+        f.write(sklearn.tree.export_text(tree2))
 
     if PARAMS['plot']:
         import matplotlib.pyplot as plt
-        sklearn.tree.plot_tree(tree2d)
+        sklearn.tree.plot_tree(tree2)
         plt.show()
 
     if PARAMS['inspect']:
         breakpoint()
+
+
+def main(
+    tree1=DecisionTreeRegressor,
+    tree2=DecisionTreeRegressor2D,
+    **PARAMS,
+):
+    return compare_trees(
+        tree1=DecisionTreeRegressor,
+        tree2=DecisionTreeRegressor2D,
+        **PARAMS,
+    )
 
 
 def test_main():
