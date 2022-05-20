@@ -20,3 +20,14 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
 
 cdef class SSMSE(SSCompositeCriterion):
     pass
+
+cdef class WeightedOutputsRegressionCriterion(RegressionCriterion):
+    cdef DOUBLE_t* output_weights
+    cdef void set_output_weights(self, DOUBLE_t* output_weights) nogil
+
+cdef class WOMSE(WeightedOutputsRegressionCriterion):
+    pass
+
+cdef class SSMSE2(WOMSE):
+    cdef double supervision
+    cdef void set_supervision(self, supervision) nogil
