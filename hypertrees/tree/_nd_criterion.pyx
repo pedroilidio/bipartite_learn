@@ -36,7 +36,7 @@ cdef class RegressionCriterionWrapper2D:
             DOUBLE_t* row_sample_weight,
             DOUBLE_t* col_sample_weight,
             double weighted_n_samples,
-            SIZE_t[::1] row_samples, SIZE_t[::1] col_samples,
+            SIZE_t* row_samples, SIZE_t* col_samples,
             SIZE_t[2] start, SIZE_t[2] end,
             SIZE_t[2] y_shape,
         ) nogil except -1:

@@ -153,8 +153,8 @@ cdef class Splitter2D:
             self.row_sample_weight,
             self.col_sample_weight,
             self.weighted_n_samples,
-            self.splitter_rows.samples,
-            self.splitter_cols.samples,
+            &self.splitter_rows.samples[0],
+            &self.splitter_cols.samples[0],
             start, end,
             self.shape
         )
