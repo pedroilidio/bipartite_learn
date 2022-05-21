@@ -23,9 +23,24 @@ cdef class RegressionCriterionWrapper2D:
         # Default values
         self.row_sample_weight = NULL
         self.col_sample_weight = NULL
-        self.total_row_sample_weight = NULL
-        self.total_col_sample_weight = NULL
         self.sq_sum_total = 0.0
+
+        # total_row_sample_weight will correspond, for each row, to the weight
+        # of the row times the total weight of all columns (i.e. the sum of all 
+        # col_sample_weight's elements). If they were numpy arrays, it would be:
+        #
+        #       sample_weights * col_sample_weight.sum()
+        #
+        # NOTE: maybe we should use a [:, ::1] sample_weight matrix instead.
+        # TODO: weight sum is stored in Splitter.weighted_n_sample
+        self.total_row_sample_weight = \
+            <DOUBLE_t*> malloc(self.n_rows * sizeof(DOUBLE_t))
+        self.total_col_sample_weight = \
+            <DOUBLE_t*> malloc(self.n_cols * sizeof(DOUBLE_t))
+
+        if (self.total_row_sample_weight == NULL or
+            self.total_col_sample_weight == NULL):
+            raise MemoryError()
 
         self.start[0] = 0
         self.start[1] = 0
@@ -45,8 +60,8 @@ cdef class RegressionCriterionWrapper2D:
         self.sq_sum_total = 0.0
 
         self.sum_total = np.zeros(self.n_outputs, dtype=np.float64)
-        self.sum_left = np.zeros(self.n_outputs, dtype=np.float64)
-        self.sum_right = np.zeros(self.n_outputs, dtype=np.float64)
+        # self.sum_left = np.zeros(self.n_outputs, dtype=np.float64)
+        # self.sum_right = np.zeros(self.n_outputs, dtype=np.float64)
 
         self.y_row_sums = np.zeros(
             (self.n_rows, self.n_outputs), dtype=np.float64)
@@ -80,26 +95,7 @@ cdef class RegressionCriterionWrapper2D:
         cdef DOUBLE_t w_y_ij
         cdef DOUBLE_t w=1.0, wi=1.0, wj=1.0
 
-        # total_row_sample_weight will correspond, for each row, to the weight
-        # of the row times the total weight of all columns (i.e. the sum of all 
-        # col_sample_weight's elements). If they were numpy arrays, it would be:
-        #
-        #       sample_weights * col_sample_weight.sum()
-        #
-        # NOTE: maybe we should use a [:, ::1] sample_weight matrix instead.
-        # TODO: weight sum is stored in Splitter.weighted_n_sample
-        if self.total_row_sample_weight == NULL:
-        ##if self.total_col_samples_weight == NULL:  # same.
-            self.total_row_sample_weight = \
-                <DOUBLE_t*> malloc(self.n_rows * sizeof(DOUBLE_t))
-            self.total_col_sample_weight = \
-                <DOUBLE_t*> malloc(self.n_cols * sizeof(DOUBLE_t))
-
-            if (self.total_row_sample_weight == NULL or
-                self.total_col_sample_weight == NULL):
-                raise MemoryError()
-
-        # Initialize fields
+                # Initialize fields
         self.y_2D = y_2D
         self.row_sample_weight = row_sample_weight
         self.col_sample_weight = col_sample_weight
@@ -108,7 +104,6 @@ cdef class RegressionCriterionWrapper2D:
         self.col_samples = col_samples
         self.start[0], self.start[1] = start[0], start[1]
         self.end[0], self.end[1] = end[0], end[1]
-
 
         # TODO: implement multi-output.
         memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
@@ -120,6 +115,17 @@ cdef class RegressionCriterionWrapper2D:
                 j = col_samples[q]
                 self.y_row_sums[i, 0] = 0
                 self.y_col_sums[j, 0] = 0
+
+        # # TODO: remove block bellow, above should suffice.
+        # with gil:
+        #     for i in range(self.n_rows):
+        #         print(self.y_row_sums[i, 0])
+        #     self.y_row_sums = np.zeros(
+        #         (self.n_rows, self.n_outputs), dtype=np.float64)
+        #     self.y_col_sums = np.zeros(
+        #         (self.n_cols, self.n_outputs), dtype=np.float64)
+        #     for i in range(self.n_rows):
+        #         print(self.y_row_sums[i, 0])
 
         # Compute y axis means.
         for p in range(start[0], end[0]):
