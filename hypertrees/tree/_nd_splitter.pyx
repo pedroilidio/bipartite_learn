@@ -156,7 +156,6 @@ cdef class Splitter2D:
             &self.splitter_rows.samples[0],
             &self.splitter_cols.samples[0],
             start, end,
-            self.shape
         )
 
         ## Done in criterion_wrapper.init()

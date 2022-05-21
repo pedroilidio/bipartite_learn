@@ -17,6 +17,8 @@ cdef class RegressionCriterionWrapper2D:
         self.splitter_rows = splitter_rows
         self.splitter_cols = splitter_cols
         self.n_outputs = self.splitter_rows.criterion.n_outputs
+        self.n_rows = self.splitter_rows.criterion.n_samples
+        self.n_cols = self.splitter_cols.criterion.n_samples
 
         # Default values
         self.row_sample_weight = NULL
@@ -24,6 +26,32 @@ cdef class RegressionCriterionWrapper2D:
         self.total_row_sample_weight = NULL
         self.total_col_sample_weight = NULL
         self.sq_sum_total = 0.0
+
+        self.start[0] = 0
+        self.start[1] = 0
+        self.end[0] = 0
+        self.end[1] = 0
+
+        # 1D criteria's only.
+        # self.pos = 0
+        # self.n_node_samples = 0
+
+        self.weighted_n_node_samples = 0.0
+        # self.weighted_n_left = 0.0
+        # self.weighted_n_right = 0.0
+        self.weighted_n_row_samples = 0.0
+        self.weighted_n_col_samples = 0.0
+
+        self.sq_sum_total = 0.0
+
+        self.sum_total = np.zeros(self.n_outputs, dtype=np.float64)
+        self.sum_left = np.zeros(self.n_outputs, dtype=np.float64)
+        self.sum_right = np.zeros(self.n_outputs, dtype=np.float64)
+
+        self.y_row_sums = np.zeros(
+            (self.n_rows, self.n_outputs), dtype=np.float64)
+        self.y_col_sums = np.zeros(
+            (self.n_cols, self.n_outputs), dtype=np.float64)
 
     def __dealloc__(self):
         free(self.row_sample_weight)
@@ -38,7 +66,6 @@ cdef class RegressionCriterionWrapper2D:
             double weighted_n_samples,
             SIZE_t* row_samples, SIZE_t* col_samples,
             SIZE_t[2] start, SIZE_t[2] end,
-            SIZE_t[2] y_shape,
         ) nogil except -1:
         """This function adapts RegressionCriterion.init to 2D data."""
         # NOTE: A problem is sometimes n_outputs is actually treated the
@@ -53,9 +80,6 @@ cdef class RegressionCriterionWrapper2D:
         cdef DOUBLE_t w_y_ij
         cdef DOUBLE_t w=1.0, wi=1.0, wj=1.0
 
-        cdef SIZE_t n_rows = y_shape[0]
-        cdef SIZE_t n_cols = y_shape[1]
-
         # total_row_sample_weight will correspond, for each row, to the weight
         # of the row times the total weight of all columns (i.e. the sum of all 
         # col_sample_weight's elements). If they were numpy arrays, it would be:
@@ -67,9 +91,9 @@ cdef class RegressionCriterionWrapper2D:
         if self.total_row_sample_weight == NULL:
         ##if self.total_col_samples_weight == NULL:  # same.
             self.total_row_sample_weight = \
-                <DOUBLE_t*> malloc(n_rows * sizeof(DOUBLE_t))
+                <DOUBLE_t*> malloc(self.n_rows * sizeof(DOUBLE_t))
             self.total_col_sample_weight = \
-                <DOUBLE_t*> malloc(n_cols * sizeof(DOUBLE_t))
+                <DOUBLE_t*> malloc(self.n_cols * sizeof(DOUBLE_t))
 
             if (self.total_row_sample_weight == NULL or
                 self.total_col_sample_weight == NULL):
@@ -85,27 +109,21 @@ cdef class RegressionCriterionWrapper2D:
         self.start[0], self.start[1] = start[0], start[1]
         self.end[0], self.end[1] = end[0], end[1]
 
-        self.weighted_n_node_samples = 0.0
-        self.sq_sum_total = 0.0
-
-        self.weighted_n_row_samples = 0.0
-        self.weighted_n_col_samples = 0.0
-
-        # TODO: malloc/memset instead of np.
-        # TODO: Since single output, use fortran contiguous? Does it make any
-        # difference?
-        # TODO: only zero where you need.
-        with gil:
-            self.y_row_sums = np.zeros((n_rows, self.n_outputs), order='C')
-            self.y_col_sums = np.zeros((n_cols, self.n_outputs), order='C')
-
 
         # TODO: implement multi-output.
         memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
 
+        # Reset y axis means only where is needed.
         for p in range(start[0], end[0]):
             i = row_samples[p]
-            # self.y_row_sums[p] = 0  # TODO: only zero where you need.
+            for q in range(start[1], end[1]):
+                j = col_samples[q]
+                self.y_row_sums[i, 0] = 0
+                self.y_col_sums[j, 0] = 0
+
+        # Compute y axis means.
+        for p in range(start[0], end[0]):
+            i = row_samples[p]
 
             if row_sample_weight != NULL:
                 wi = row_sample_weight[i]

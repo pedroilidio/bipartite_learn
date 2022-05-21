@@ -22,6 +22,8 @@ cdef class RegressionCriterionWrapper2D:
     cdef SIZE_t[2] end
 
     cdef SIZE_t n_outputs
+    cdef SIZE_t n_rows
+    cdef SIZE_t n_cols
     cdef double sq_sum_total
     cdef double[::1] sum_total
     cdef double weighted_n_node_samples
@@ -41,7 +43,6 @@ cdef class RegressionCriterionWrapper2D:
             double weighted_n_samples,
             SIZE_t* row_samples, SIZE_t* col_samples,
             SIZE_t[2] start, SIZE_t[2] end,
-            SIZE_t[2] y_shape,
         ) nogil except -1
 
     cdef int _node_reset_child_splitter(

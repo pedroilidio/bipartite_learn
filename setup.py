@@ -13,7 +13,7 @@ README = (PATH_ROOT/"README.md").read_text()
 exec((PATH_ROOT/"hypertrees/_version.py").read_text())
 VERSION = __version__
 
-extensions = [Extension( "hypertrees.tree.*", ["hypertrees/tree/*.pyx"])]
+extensions = [Extension("hypertrees.tree.*", ["hypertrees/tree/*.pyx"])]
 
 setup(
     name='hypertrees',
@@ -38,5 +38,6 @@ setup(
     ext_modules=cythonize(
         extensions,
         language_level="3",
+        gdb_debug=True,
     ),
 )
