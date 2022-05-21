@@ -27,12 +27,11 @@ setup(
     author_email='pedrilidio@gmail.com',
     license='new BSD',
     packages=find_packages(),
-    # scripts=['bin/hypertrees'],
     zip_safe=False,
 
     install_requires=[
         'cython>=0.29.27',
-        'scikit-learn>=1.0.2',
+        'scikit-learn>=1.1.1',
         'numpy>=1.22.2',
         'imbalanced-learn>=0.7.0',
     ],

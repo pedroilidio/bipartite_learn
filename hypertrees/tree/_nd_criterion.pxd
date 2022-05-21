@@ -22,16 +22,15 @@ cdef class RegressionCriterionWrapper2D:
     cdef SIZE_t[2] end
 
     cdef SIZE_t n_outputs
-    cdef DOUBLE_t sq_sum_total
-    cdef DOUBLE_t* sum_total
-    cdef DOUBLE_t weighted_n_node_samples
-    cdef DOUBLE_t weighted_n_samples
+    cdef double sq_sum_total
+    cdef double[::1] sum_total
+    cdef double weighted_n_node_samples
+    cdef double weighted_n_samples
     cdef DOUBLE_t* total_row_sample_weight
     cdef DOUBLE_t* total_col_sample_weight
 
-    cdef DOUBLE_t weighted_n_row_samples
-    cdef DOUBLE_t weighted_n_col_samples
-
+    cdef double weighted_n_row_samples
+    cdef double weighted_n_col_samples
     cdef Splitter splitter_rows
     cdef Splitter splitter_cols
 
@@ -71,7 +70,6 @@ cdef class RegressionCriterionWrapper2D:
             impurity_left, double impurity_right,
             SIZE_t axis,
     ) nogil
-
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
     pass

@@ -1,7 +1,10 @@
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 from sklearn.tree._criterion import MSE
 from sklearn.tree._tree cimport SIZE_t
-from libc.stdlib cimport malloc, free, sizeof
+from libc.stdlib cimport malloc, free
+from libc.string cimport memset
+import numpy as np
+cimport numpy as cnp
 
 
 # cdef class WeightedMSE(RegressionCriterion, MSE):
@@ -11,7 +14,7 @@ from libc.stdlib cimport malloc, free, sizeof
           # Remember sq_sums must be calculated accordingly (w * y**2).
 
 
-cdef class SemisupervisedCriterion(Criterion):
+cdef class SSRegressionCriterion(RegressionCriterion):
     """Base class for semantic purposes and future maintenance.
 
     When training with an unsupervised criterion, one must provide X and y
@@ -21,9 +24,8 @@ cdef class SemisupervisedCriterion(Criterion):
     >>> clf.fit(X=X, y=np.hstack([X, y]))
     """
 
-
 # Maybe "SSEnsembleCriterion"
-cdef class SSCompositeCriterion(SemisupervisedCriterion):
+cdef class SSCompositeCriterion(SSRegressionCriterion):
     """Combines results from two criteria to yield its own.
     
     One criteria will receive y in its init() and the other will receive X.
@@ -55,19 +57,6 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         self.n_outputs = supervised_criterion.n_outputs
         self.n_samples = supervised_criterion.n_samples
         self.n_features = unsupervised_criterion.n_outputs
-
-    def __dealloc__(self):
-        """Overwrite Criterion.__dealloc__
-
-        Parent class would free sum_total, sum_left and sum_right, but since we
-        get these pointers from children criteria, we must delegate this job to
-        them.
-        """
-        # FIXME: allocating just to be deallocated by the parent class with no
-        # complainints.
-        self.sum_total = <double*> malloc(sizeof(double*))
-        self.sum_left = <double*> malloc(sizeof(double*))
-        self.sum_right = <double*> malloc(sizeof(double*))
 
     cdef int init(
             self, const DOUBLE_t[:, ::1] y,
@@ -104,8 +93,6 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         self.sum_total = self.supervised_criterion.sum_total
         self.sum_left = self.supervised_criterion.sum_left
         self.sum_right = self.supervised_criterion.sum_right
-        ### Only RegressionCriteria have sq_sum_total. TODO: will we need it?
-        # self.sq_sum_total = self.supervised_criterion.sq_sum_total
 
         return 0
 
@@ -278,26 +265,29 @@ cdef class WeightedOutputsRegressionCriterion(RegressionCriterion):
         This initializes the criterion at node samples[start:end] and children
         samples[start:start] and samples[start:end].
         """
+   # Initialize fields
+        self.sample_weight = sample_weight
+        self.samples = samples
+        self.start = start
+        self.end = end
+        self.n_node_samples = end - start
+        self.weighted_n_samples = weighted_n_samples
+        self.weighted_n_node_samples = 0.
+
         cdef SIZE_t i
         cdef SIZE_t p
         cdef SIZE_t k
         cdef DOUBLE_t y_ik
         cdef DOUBLE_t w_y_ik
+        cdef DOUBLE_t wo
         cdef DOUBLE_t w = 1.0
-
-        cdef DOUBLE_t[:, ::1] wy = y
-
-        for p in range(start, end):
-            i = samples[p]
-            for k in range(self.n_outputs):
-                wy[i, k] *= self.output_weights[k]
-
-        if RegressionCriterion.init(
-            self, wy, sample_weight, weighted_n_samples, samples, start, end,
-        ) == -1:
-            return -1
-
+        cdef DOUBLE_t[:,::1] wy
         self.sq_sum_total = 0.0
+
+        with gil:  # FIXME: not efficient.
+            wy = np.zeros(y.shape, dtype=np.float64)
+
+        memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
 
         for p in range(start, end):
             i = samples[p]
@@ -306,10 +296,19 @@ cdef class WeightedOutputsRegressionCriterion(RegressionCriterion):
                 w = sample_weight[i]
 
             for k in range(self.n_outputs):
-                y_ik = self.y[i, k]
-                w_y_ik = w * y_ik
-                self.sq_sum_total += w_y_ik * y_ik / self.output_weights[k]
+                y_ik = y[i, k]
+                wo = self.output_weights[k]
 
+                wy[i, k] = y_ik * wo
+                w_y_ik = w * y_ik
+                self.sum_total[k] += w_y_ik
+                self.sq_sum_total += w_y_ik * y_ik
+
+            self.weighted_n_node_samples += w
+
+        self.y = wy
+        # Reset to pos=start
+        self.reset()
         return 0
 
 
@@ -331,8 +330,8 @@ cdef class WOMSE(WeightedOutputsRegressionCriterion):
         cdef SIZE_t pos = self.pos
         cdef SIZE_t start = self.start
 
-        cdef double* sum_left = self.sum_left
-        cdef double* sum_right = self.sum_right
+        cdef double[::1] sum_left = self.sum_left
+        cdef double[::1] sum_right = self.sum_right
         cdef DOUBLE_t y_ik
 
         cdef double sq_sum_left = 0.0
@@ -367,5 +366,5 @@ cdef class WOMSE(WeightedOutputsRegressionCriterion):
         impurity_right[0] /= self.n_outputs
 
 cdef class SSMSE2(WOMSE):
-    cdef void set_supervision(self, supervision) nogil:
+    cdef void set_supervision(self, double supervision) nogil:
         self.supervision = supervision

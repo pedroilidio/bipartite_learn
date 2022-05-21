@@ -23,26 +23,11 @@ cdef class RegressionCriterionWrapper2D:
         self.col_sample_weight = NULL
         self.total_row_sample_weight = NULL
         self.total_col_sample_weight = NULL
-        # self.y_row_sums = NULL
-        # self.y_col_sums = NULL
-
-        self.row_samples = NULL
-        self.col_samples = NULL
-
         self.sq_sum_total = 0.0
 
-        # Allocate accumulators. Make sure they are NULL, not uninitialized,
-        # before an exception can be raised (which triggers __dealloc__).
-        self.sum_total = NULL
-
-        # Allocate memory for the accumulators
-        self.sum_total = <double*> calloc(self.n_outputs, sizeof(double))
-
-        if self.sum_total == NULL:
-            raise MemoryError()
-
     def __dealloc__(self):
-        free(self.sum_total)
+        free(self.row_sample_weight)
+        free(self.col_sample_weight)
         free(self.total_row_sample_weight)
         free(self.total_col_sample_weight)
 
@@ -60,7 +45,6 @@ cdef class RegressionCriterionWrapper2D:
         # number of outputs, but sometimes it is just an alias for y.shape[1].
         # In 1D, they have the same value, but now we have to discern them.
 
-        cdef int rc  # Return code
         cdef SIZE_t i
         cdef SIZE_t j
         cdef SIZE_t p
@@ -117,7 +101,7 @@ cdef class RegressionCriterionWrapper2D:
 
 
         # TODO: implement multi-output.
-        memset(self.sum_total, 0, self.n_outputs * sizeof(double))
+        memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
 
         for p in range(start[0], end[0]):
             i = row_samples[p]
@@ -278,7 +262,7 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         i.e. the impurity of samples[start:end]. The smaller the impurity the
         better.
         """
-        cdef double* sum_total = self.sum_total
+        cdef double[::1] sum_total = self.sum_total
         cdef double impurity
         cdef SIZE_t k
 
@@ -313,21 +297,24 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         cdef DOUBLE_t w = 1.0
 
         cdef SIZE_t pos
-        cdef double* sum_left
-        cdef double* sum_right
+        cdef double[::1] sum_left
+        cdef double[::1] sum_right
 
         with gil:
+            # FIXME: lots of repetition to avoid Python local
             if axis:
-                criterion = self.splitter_cols.criterion
+                pos = self.splitter_cols.criterion.pos
+                sum_left = self.splitter_cols.criterion.sum_left
+                sum_right = self.splitter_cols.criterion.sum_right
+                weighted_n_left = self.splitter_cols.criterion.weighted_n_left
+                weighted_n_right = self.splitter_cols.criterion.weighted_n_right
+
             else:
-                criterion = self.splitter_rows.criterion
-
-        pos = criterion.pos
-
-        sum_left = criterion.sum_left
-        sum_right = criterion.sum_right
-        weighted_n_left = criterion.weighted_n_left
-        weighted_n_right = criterion.weighted_n_right
+                pos = self.splitter_rows.criterion.pos
+                sum_left = self.splitter_rows.criterion.sum_left
+                sum_right = self.splitter_rows.criterion.sum_right
+                weighted_n_left = self.splitter_rows.criterion.weighted_n_left
+                weighted_n_right = self.splitter_rows.criterion.weighted_n_right
 
         end[0], end[1] = self.end[0], self.end[1]
         end[axis] = pos

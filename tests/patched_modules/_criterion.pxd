@@ -18,7 +18,7 @@ from sklearn.tree._tree cimport SIZE_t           # Type for indices and counters
 from sklearn.tree._tree cimport INT32_t          # Signed 32 bit integer
 from sklearn.tree._tree cimport UINT32_t         # Unsigned 32 bit integer
 
-cdef class myCriterion:
+cdef class Criterion:
     # The criterion computes the impurity of a node and the reduction of
     # impurity of a split on that node. It also computes the output statistics
     # such as the mean in regression and class probabilities in classification.
@@ -68,13 +68,11 @@ cdef class myCriterion:
                                      double impurity_right) nogil
     cdef double proxy_impurity_improvement(self) nogil
 
-cdef class myClassificationCriterion(Criterion):
+cdef class ClassificationCriterion(Criterion):
     """Abstract criterion for classification."""
-
     cdef SIZE_t* n_classes
     cdef SIZE_t sum_stride
 
-cdef class myRegressionCriterion(Criterion):
+cdef class RegressionCriterion(Criterion):
     """Abstract regression criterion."""
-
     cdef double sq_sum_total
