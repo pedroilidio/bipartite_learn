@@ -7,14 +7,8 @@ import numpy as np
 cimport numpy as cnp
 
 
-# cdef class WeightedMSE(RegressionCriterion, MSE):
-#     cdef void set_output_weights(self, DOUBLE_t* output_weigths) nogil:
-#         self.output_weights = output_weights
-#         # TODO:Implement output weights for multi-output criteria.
-          # Remember sq_sums must be calculated accordingly (w * y**2).
-
-
-cdef class SSRegressionCriterion(RegressionCriterion):
+# cdef class SSRegressionCriterion(RegressionCriterion):
+cdef class SSRegressionCriterion(Criterion):
     """Base class for semantic purposes and future maintenance.
 
     When training with an unsupervised criterion, one must provide X and y
@@ -23,6 +17,7 @@ cdef class SSRegressionCriterion(RegressionCriterion):
     >>> clf = DecisionTreeRregressor()
     >>> clf.fit(X=X, y=np.hstack([X, y]))
     """
+
 
 # Maybe "SSEnsembleCriterion"
 cdef class SSCompositeCriterion(SSRegressionCriterion):
@@ -233,138 +228,6 @@ cdef class SSMSE(SSCompositeCriterion):
         self.n_outputs = n_outputs
 
 
+# TODO
 # cdef class SSCriterionWrapper(RegressionCriterionWrapper2D):
 #     pass
-
-cdef class WeightedOutputsRegressionCriterion(RegressionCriterion):
-    r"""Abstract regression criterion with output weights.
-
-    This handles cases where the target is a continuous value, and is
-    evaluated by computing the variance of the target values left and right
-    of the split point. The computation takes linear time with `n_samples`
-    by using ::
-
-        var = \sum_i^n (y_i - y_bar) ** 2
-            = (\sum_i^n y_i ** 2) - n_samples * y_bar ** 2
-    """
-    def __cinit__(self, SIZE_t n_outputs, SIZE_t n_samples):
-        self.output_weights = <DOUBLE_t*> malloc(sizeof(DOUBLE_t)*n_outputs)
-
-    def __dealloc__(self):
-        free(self.output_weights)
-
-    cdef void set_output_weights(self, DOUBLE_t* output_weights) nogil:
-        for k in range(self.n_outputs):
-            self.output_weights[k] = output_weights[k]
-
-    cdef int init(self, const DOUBLE_t[:, ::1] y, DOUBLE_t* sample_weight,
-                  double weighted_n_samples, SIZE_t* samples, SIZE_t start,
-                  SIZE_t end) nogil except -1:
-        """Initialize the criterion.
-
-        This initializes the criterion at node samples[start:end] and children
-        samples[start:start] and samples[start:end].
-        """
-   # Initialize fields
-        self.sample_weight = sample_weight
-        self.samples = samples
-        self.start = start
-        self.end = end
-        self.n_node_samples = end - start
-        self.weighted_n_samples = weighted_n_samples
-        self.weighted_n_node_samples = 0.
-
-        cdef SIZE_t i
-        cdef SIZE_t p
-        cdef SIZE_t k
-        cdef DOUBLE_t y_ik
-        cdef DOUBLE_t w_y_ik
-        cdef DOUBLE_t wo
-        cdef DOUBLE_t w = 1.0
-        cdef DOUBLE_t[:,::1] wy
-        self.sq_sum_total = 0.0
-
-        with gil:  # FIXME: not efficient.
-            wy = np.zeros(y.shape, dtype=np.float64)
-
-        memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
-
-        for p in range(start, end):
-            i = samples[p]
-
-            if sample_weight != NULL:
-                w = sample_weight[i]
-
-            for k in range(self.n_outputs):
-                y_ik = y[i, k]
-                wo = self.output_weights[k]
-
-                wy[i, k] = y_ik * wo
-                w_y_ik = w * y_ik
-                self.sum_total[k] += w_y_ik
-                self.sq_sum_total += w_y_ik * y_ik
-
-            self.weighted_n_node_samples += w
-
-        self.y = wy
-        # Reset to pos=start
-        self.reset()
-        return 0
-
-
-cdef class WOMSE(WeightedOutputsRegressionCriterion):
-    """Weighted outputs mean squared error impurity criterion.
-
-        MSE = var_left + var_right
-    """
-
-    cdef void children_impurity(self, double* impurity_left,
-                                double* impurity_right) nogil:
-        """Evaluate the impurity in children nodes.
-
-        i.e. the impurity of the left child (samples[start:pos]) and the
-        impurity the right child (samples[pos:end]).
-        """
-        cdef DOUBLE_t* sample_weight = self.sample_weight
-        cdef SIZE_t* samples = self.samples
-        cdef SIZE_t pos = self.pos
-        cdef SIZE_t start = self.start
-
-        cdef double[::1] sum_left = self.sum_left
-        cdef double[::1] sum_right = self.sum_right
-        cdef DOUBLE_t y_ik
-
-        cdef double sq_sum_left = 0.0
-        cdef double sq_sum_right
-
-        cdef SIZE_t i
-        cdef SIZE_t p
-        cdef SIZE_t k
-        cdef DOUBLE_t w = 1.0
-
-        for p in range(start, pos):
-            i = samples[p]
-
-            if sample_weight != NULL:
-                w = sample_weight[i]
-
-            for k in range(self.n_outputs):
-                y_ik = self.y[i, k]
-                # Only change:
-                sq_sum_left += w * y_ik * y_ik / self.output_weights[k]
-
-        sq_sum_right = self.sq_sum_total - sq_sum_left
-
-        impurity_left[0] = sq_sum_left / self.weighted_n_left
-        impurity_right[0] = sq_sum_right / self.weighted_n_right
-
-        for k in range(self.n_outputs):
-            impurity_left[0] -= (sum_left[k] / self.weighted_n_left) ** 2.0
-            impurity_right[0] -= (sum_right[k] / self.weighted_n_right) ** 2.0
-
-        impurity_left[0] /= self.n_outputs
-        impurity_right[0] /= self.n_outputs
-
-cdef class SSMSE2(WOMSE):
-    cdef void set_supervision(self, double supervision) nogil:
-        self.supervision = supervision

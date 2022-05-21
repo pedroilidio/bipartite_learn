@@ -4,7 +4,10 @@ from sklearn.tree._tree cimport DTYPE_t          # Type of X
 from sklearn.tree._tree cimport DOUBLE_t         # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t           # Type for indices and counters
 
-cdef class SSRegressionCriterion(RegressionCriterion):
+cdef class SSRegressionCriterion(Criterion):
+    cdef double[::1] sum_total
+    cdef double[::1] sum_left
+    cdef double[::1] sum_right
     pass
 
 cdef class SSCompositeCriterion(SSRegressionCriterion):
@@ -16,14 +19,3 @@ cdef class SSCompositeCriterion(SSRegressionCriterion):
 
 cdef class SSMSE(SSCompositeCriterion):
     pass
-
-cdef class WeightedOutputsRegressionCriterion(RegressionCriterion):
-    cdef DOUBLE_t* output_weights
-    cdef void set_output_weights(self, DOUBLE_t* output_weights) nogil
-
-cdef class WOMSE(WeightedOutputsRegressionCriterion):
-    pass
-
-cdef class SSMSE2(WOMSE):
-    cdef double supervision
-    cdef void set_supervision(self, double supervision) nogil
