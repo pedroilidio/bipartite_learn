@@ -30,7 +30,7 @@ setup(
     zip_safe=False,
 
     install_requires=[
-        'cython>=0.29.27',
+        #'cython>=0.29.27',
         'scikit-learn>=1.1.1',
         'numpy>=1.22.2',
         'imbalanced-learn>=0.7.0',

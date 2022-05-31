@@ -1,29 +1,19 @@
-from argparse import ArgumentParser
+from make_examples import make_interaction_data
+from test_utils import stopwatch, parse_args, gen_mock_data
+
+import logging
 from itertools import product
 from pprint import pprint
-from contextlib import contextmanager
-# from patched_modules._criterion import MSE
-# from patched_modules._splitter import BestSplitter
 from sklearn.tree import DecisionTreeRegressor
 import sklearn.tree
 
-import sys
-sys.path.append('.')
-from hypertrees.tree._nd_splitter import Splitter2D, make_2d_splitter
-from hypertrees.tree._nd_criterion import MSE_Wrapper2D
 from hypertrees.tree._nd_classes import DecisionTreeRegressor2D
 from hypertrees.melter import row_cartesian_product
 
 import numpy as np
-#from sklearn.tree._tree import DTYPE_t, DOUBLE_t
+# from sklearn.tree._tree import DTYPE_t, DOUBLE_t
 DTYPE_t, DOUBLE_t = np.float32, np.float64
 
-from pathlib import Path
-from time import time
-
-from make_examples import make_interaction_data
-
-import logging
 logging.basicConfig(level=logging.DEBUG)
 logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 
@@ -39,21 +29,9 @@ DEF_PARAMS = dict(
     noise=0.1,
     inspect=False,
     plot=False,
-    save_trees=False,
 )
 # FIXME: Some leafs do not coincide whith the parameters below:
 # --seed 23 --noise .1 --nrules 20 --shape 500 600 --nattrs 10 9 --msl 100
-
-
-@contextmanager
-def stopwatch(msg=None):
-    if msg:
-        print(msg)
-    t0 = time()
-    yield
-    t = time() - t0
-    print(f"It took {t} s.")
-    return t
 
 
 def print_eval_model(tree, XX, Y):
@@ -80,24 +58,6 @@ def print_n_samples_in_leaves(tree):
     return n_samples_per_leaf
 
 
-def parse_args(**DEF_PARAMS):
-    argparser = ArgumentParser(fromfile_prefix_chars='@')
-    argparser.add_argument('--seed', type=int)
-    argparser.add_argument('--shape', nargs='+', type=int)
-    argparser.add_argument('--nattrs', nargs='+', type=int)
-    argparser.add_argument('--nrules', type=int)
-    argparser.add_argument('--min_samples_leaf', '--msl', type=int)
-
-    argparser.add_argument('--transpose_test', action='store_true')
-    argparser.add_argument('--noise', type=float)
-    argparser.add_argument('--inspect', action='store_true')
-    argparser.add_argument('--plot', action='store_true')
-    argparser.add_argument('--save_trees', action='store_true')
-    argparser.set_defaults(**DEF_PARAMS)
-
-    return argparser.parse_args()
-
-
 # TODO: parameter description.
 def compare_trees(
     tree1=DecisionTreeRegressor,
@@ -122,32 +82,12 @@ def compare_trees(
         noise : float
         inspect : bool
         plot : bool
-        save_trees : bool
     """
-    # Generate mock data
     print('Starting with settings:')
     pprint(PARAMS)
 
-    t0 = time()
-    XX, Y, strfunc = make_interaction_data(
-        PARAMS['shape'], PARAMS['nattrs'], nrules=PARAMS['nrules'],
-        noise=PARAMS['noise'], random_state=PARAMS['seed']
-    )
-
-    if PARAMS['transpose_test']:
-        print('Test transposing axis.')
-        Y = np.copy(Y.T.astype(DOUBLE_t), order='C')
-        XX = [np.ascontiguousarray(X, DTYPE_t) for X in XX[::-1]]
-        PARAMS['nattrs'] = PARAMS['nattrs'][::-1]
-        PARAMS['shape'] = PARAMS['shape'][::-1]
-    else:
-        Y = np.ascontiguousarray(Y, DOUBLE_t)
-        XX = [np.ascontiguousarray(X, DTYPE_t) for X in XX]
-
-    print('Data generation time:', time()-t0)
-    print('Data density (mean):', Y.mean())
-    print('Data variance:', Y.var())
-    print('=' * 50)
+    with stopwatch():
+        XX, Y, strfunc = gen_mock_data(**PARAMS)
 
     # ######### Instantiate trees
     if isinstance(tree2, type):
@@ -169,8 +109,10 @@ def compare_trees(
 
     with stopwatch(f'Fitting {tree2.__class__.__name__}...'):
         if tree2_is_2d:
+            print('Using 2D data.')
             tree2.fit(XX, Y)
         else:
+            print('Using 1D data.')
             X, y = row_cartesian_product(XX), Y.reshape(-1, 1)
             if tree2_is_ss:
                 tree2.fit(X, np.hstack((X, y)))
@@ -182,6 +124,20 @@ def compare_trees(
 
     tree1_n_samples_in_leaves = print_n_samples_in_leaves(tree1)
     tree2_n_samples_in_leaves = print_n_samples_in_leaves(tree2)
+
+    if PARAMS['plot']:
+        stree1 = sklearn.tree.export_text(tree1)
+        stree2 = sklearn.tree.export_text(tree2)
+
+        with open('tree1.txt', 'w') as f:
+            f.write(stree1)
+        with open('tree2.txt', 'w') as f:
+            f.write(stree2)
+
+        # import matplotlib.pyplot as plt
+        # sklearn.tree.plot_tree(tree2)
+        # plt.show()
+
 
     if not PARAMS['inspect']:
         assert tree1_n_samples_in_leaves.shape[0] == \
@@ -199,23 +155,6 @@ def compare_trees(
         assert (
             sklearn.tree.export_text(tree2) == sklearn.tree.export_text(tree1)
         )
-
-    # print('Evaluating 2D tree...')
-    # print_eval_model(tree2, XX, Y)
-    # print_n_samples_in_leaves(tree)
-    # print('Evaluating 1D tree...')
-    # print_eval_model(tree1, XX, Y)
-    # print_n_samples_in_leaves(tree1)
-
-    with open('tree1.txt', 'w') as f:
-        f.write(sklearn.tree.export_text(tree1))
-    with open('tree2.txt', 'w') as f:
-        f.write(sklearn.tree.export_text(tree2))
-
-    if PARAMS['plot']:
-        import matplotlib.pyplot as plt
-        sklearn.tree.plot_tree(tree2)
-        plt.show()
 
     if PARAMS['inspect']:
         breakpoint()

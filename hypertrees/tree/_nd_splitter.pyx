@@ -153,8 +153,6 @@ cdef class Splitter2D:
             self.row_sample_weight,
             self.col_sample_weight,
             self.weighted_n_samples,
-            &self.splitter_rows.samples[0],
-            &self.splitter_cols.samples[0],
             start, end,
         )
 
@@ -194,8 +192,9 @@ cdef class Splitter2D:
             # the split position at the end.
             if current_split.pos < self.splitter_rows.end:
                 # Correct impurities.
-                self.criterion_wrapper.children_impurity(
-                    &imp_left, &imp_right, 0)
+                with gil:  # TODO: remove
+                    self.criterion_wrapper.children_impurity(
+                        &imp_left, &imp_right, 0)
                 imp_improve = self.criterion_wrapper.impurity_improvement(
                     impurity, imp_left, imp_right, 0)
 
@@ -215,8 +214,9 @@ cdef class Splitter2D:
             # the split position at the end.
             if current_split.pos < self.splitter_cols.end:
                 # Correct impurities.
-                self.criterion_wrapper.children_impurity(
-                    &imp_left, &imp_right, 1)
+                with gil:  # TODO: remove
+                    self.criterion_wrapper.children_impurity(
+                        &imp_left, &imp_right, 1)
                 imp_improve = self.criterion_wrapper.impurity_improvement(
                     impurity, imp_left, imp_right, 1)
 
@@ -229,6 +229,10 @@ cdef class Splitter2D:
                     best_split.axis = 1
 
         split[0] = best_split
+        with gil:
+            print('*** ND_SPLITTER | split[0], best_split')
+            print(split[0])
+            print(best_split)
 
     cdef void node_value(self, double* dest) nogil:
         """Copy the value (prototype) of node samples into dest."""
