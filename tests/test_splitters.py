@@ -33,6 +33,15 @@ DEF_PARAMS = dict(
 )
 
 
+def eval_split(split, x, y, samples=None):
+    samples = samples or np.arange(x.shape[0])
+    sorted_indices = x[samples, split['feature']].argsort()
+    y_left = y[sorted_indices][:split['pos']]
+    y_right = y[sorted_indices][split['pos']:]
+    manual_impurity_left = y_left.var()
+    manual_impurity_right = y_right.var()
+
+
 def test_ideal_split(**PARAMS):
     print('Started with params:')
     pprint(PARAMS)

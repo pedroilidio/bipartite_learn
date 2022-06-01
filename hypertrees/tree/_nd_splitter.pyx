@@ -172,6 +172,7 @@ cdef class Splitter2D:
         """
         cdef SplitRecord current_split, best_split
         cdef DOUBLE_t imp_left, imp_right
+        with gil: print('*** ND_SPLITTER received impurity:', impurity)
 
         _init_split(&best_split, self.splitter_rows.end, 0)
 
@@ -232,7 +233,6 @@ cdef class Splitter2D:
         with gil:
             print('*** ND_SPLITTER | split[0], best_split')
             print(split[0])
-            print(best_split)
 
     cdef void node_value(self, double* dest) nogil:
         """Copy the value (prototype) of node samples into dest."""

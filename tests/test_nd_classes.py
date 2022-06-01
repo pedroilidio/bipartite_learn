@@ -52,8 +52,9 @@ def print_n_samples_in_leaves(tree):
     ch_right = tree.tree_.children_right
     n_samples_per_leaf = wn_samples[ch_left == ch_right]
 
-    print('n_nodes', tree.tree_.node_count)
-    print('n_leaves', n_samples_per_leaf.shape[0])
+    print('==> Class name:', tree.__class__.__name__)
+    print('n_nodes:', tree.tree_.node_count)
+    print('n_leaves:', n_samples_per_leaf.shape[0])
     print('weighted_n_node_samples:', n_samples_per_leaf)
     return n_samples_per_leaf
 

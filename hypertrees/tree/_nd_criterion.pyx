@@ -59,8 +59,6 @@ cdef class RegressionCriterionWrapper2D:
         self.weighted_n_row_samples = 0.0
         self.weighted_n_col_samples = 0.0
 
-        self.sq_sum_total = 0.0
-
         self.sum_total = np.zeros(self.n_outputs, dtype=np.float64)
         # self.sum_left = np.zeros(self.n_outputs, dtype=np.float64)
         # self.sum_right = np.zeros(self.n_outputs, dtype=np.float64)
@@ -105,15 +103,11 @@ cdef class RegressionCriterionWrapper2D:
         self.col_samples = &self.splitter_cols.samples[0]
         self.start[0], self.start[1] = start[0], start[1]
         self.end[0], self.end[1] = end[0], end[1]
+        self.sq_sum_total = 0.0
 
-        with gil:
-            print('[[[')
-            for i in range(self.n_rows):
-                print(self.row_samples[i], end=' ')
-            print('***')
-            for i in range(self.n_cols):
-                print(self.col_samples[i], end=' ')
-            print(']]]')
+        self.weighted_n_node_samples = 0.0
+        self.weighted_n_row_samples = 0.0
+        self.weighted_n_col_samples = 0.0
 
         # TODO: implement multi-output.
         memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
@@ -125,17 +119,6 @@ cdef class RegressionCriterionWrapper2D:
                 j = self.col_samples[q]
                 self.y_row_sums[i, 0] = 0
                 self.y_col_sums[j, 0] = 0
-
-        # # TODO: remove block bellow, above should suffice.
-        # with gil:
-        #     for i in range(self.n_rows):
-        #         print(self.y_row_sums[i, 0])
-        #     self.y_row_sums = np.zeros(
-        #         (self.n_rows, self.n_outputs), dtype=np.float64)
-        #     self.y_col_sums = np.zeros(
-        #         (self.n_cols, self.n_outputs), dtype=np.float64)
-        #     for i in range(self.n_rows):
-        #         print(self.y_row_sums[i, 0])
 
         # Compute y axis means.
         for p in range(start[0], end[0]):
@@ -312,7 +295,7 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
             double* impurity_left,
             double* impurity_right,
             SIZE_t axis,
-    ):
+    ):  # TODO nogil
         """Evaluate the impurity in children nodes.
 
         i.e. the impurity of the left child (samples[start:pos]) and the
@@ -341,38 +324,38 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         if axis == 1:
             criterion = self.splitter_cols.criterion
 
-        pos = criterion.pos
-        sum_left = criterion.sum_left
-        sum_right = criterion.sum_right
-        weighted_n_left = criterion.weighted_n_left
-        weighted_n_right = criterion.weighted_n_right
-        weighted_n_right = criterion.weighted_n_right
+        with nogil:
+            pos = criterion.pos
+            sum_left = criterion.sum_left
+            sum_right = criterion.sum_right
+            weighted_n_left = criterion.weighted_n_left
+            weighted_n_right = criterion.weighted_n_right
 
-        end[0], end[1] = self.end[0], self.end[1]
-        end[axis] = pos
+            end[0], end[1] = self.end[0], self.end[1]
+            end[axis] = pos
 
-        for p in range(self.start[0], end[0]):
-            i = self.row_samples[p]
-            for q in range(self.start[1], end[1]):
-                j = self.col_samples[q]
+            for p in range(self.start[0], end[0]):
+                i = self.row_samples[p]
+                for q in range(self.start[1], end[1]):
+                    j = self.col_samples[q]
 
-                w = 1.0
-                if self.row_sample_weight != NULL:
-                    w = self.row_sample_weight[i]
-                if self.col_sample_weight != NULL:
-                    w *= self.col_sample_weight[j]
+                    w = 1.0
+                    if self.row_sample_weight != NULL:
+                        w = self.row_sample_weight[i]
+                    if self.col_sample_weight != NULL:
+                        w *= self.col_sample_weight[j]
 
-                # TODO: multi-output
-                y_ij = self.y_2D[i, j]
-                sq_sum_left += w * y_ij * y_ij
+                    # TODO: multi-output
+                    y_ij = self.y_2D[i, j]
+                    sq_sum_left += w * y_ij * y_ij
 
-        sq_sum_right = self.sq_sum_total - sq_sum_left
+            sq_sum_right = self.sq_sum_total - sq_sum_left
 
-        impurity_left[0] = sq_sum_left / weighted_n_left
-        impurity_right[0] = sq_sum_right / weighted_n_right
+            impurity_left[0] = sq_sum_left / weighted_n_left
+            impurity_right[0] = sq_sum_right / weighted_n_right
 
-        for k in range(self.n_outputs):
-            impurity_left[0] -= (sum_left[k] / weighted_n_left) ** 2.0
-            impurity_right[0] -= (sum_right[k] / weighted_n_right) ** 2.0
-        impurity_left[0] /= self.n_outputs
-        impurity_right[0] /= self.n_outputs
+            for k in range(self.n_outputs):
+                impurity_left[0] -= (sum_left[k] / weighted_n_left) ** 2.0
+                impurity_right[0] -= (sum_right[k] / weighted_n_right) ** 2.0
+            impurity_left[0] /= self.n_outputs
+            impurity_right[0] /= self.n_outputs
