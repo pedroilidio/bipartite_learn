@@ -7,20 +7,18 @@ import numpy as np
 cimport numpy as cnp
 
 
-# cdef class SSRegressionCriterion(RegressionCriterion):
-cdef class SSRegressionCriterion(Criterion):
+cdef class SemisupervisedCriterion(Criterion):
     """Base class for semantic purposes and future maintenance.
+    """
 
-    When training with an unsupervised criterion, one must provide X and y
-    stacked (joined cols) as the y parameter of the estimator's fit(). E.g.:
 
-    >>> clf = DecisionTreeRregressor()
-    >>> clf.fit(X=X, y=np.hstack([X, y]))
+cdef class SSRegressionCriterion(SemisupervisedCriterion):
+    """Base class for semantic purposes and future maintenance.
     """
 
 
 # Maybe "SSEnsembleCriterion"
-cdef class SSCompositeCriterion(SSRegressionCriterion):
+cdef class SSCompositeCriterion(SemisupervisedCriterion):
     """Combines results from two criteria to yield its own.
     
     One criteria will receive y in its init() and the other will receive X.
@@ -36,29 +34,71 @@ cdef class SSCompositeCriterion(SSRegressionCriterion):
     >>> clf = DecisionTreeRregressor(criterion=ss_criterion)
     >>> clf.fit(X=X, y=np.hstack([X, y]))
     """
+    def __reduce__(self):
+        return (
+            SSCompositeCriterion,
+            (
+                self.supervision,
+                None,
+                self.supervised_criterion,
+                self.unsupervised_criterion,
+            ),
+            self.__getstate__(),
+        )
+
     def __init__(
         self,
-        Criterion supervised_criterion,
-        Criterion unsupervised_criterion,
-        double supervision,
+        double supervision=.5,
+        criterion=None,
+        supervised_criterion=None,
+        unsupervised_criterion=None,
+        SIZE_t n_outputs=0,
+        SIZE_t n_features=0,
+        SIZE_t n_samples=0,
         *args, **kwargs,
     ):
         if not (0 <= supervision <= 1):
             # TODO: == 0 only for tests.
             raise ValueError("supervision must be in [0, 1] interval.")
+
+        if criterion is None and (supervised_criterion is None or
+                                  unsupervised_criterion is None):
+            raise ValueError('If criterion is None, both supervised and unsupe'
+                            'rvised criteria must be given.')
+        supervised_criterion = supervised_criterion or criterion
+        unsupervised_criterion = unsupervised_criterion or criterion
+
+        if isinstance(supervised_criterion, type):
+            if not n_outputs or not n_samples:
+                raise ValueError('If supervised_criterion is a class, one must'
+                                 ' provide both n_outputs (received '
+                                 f'{n_outputs}) and n_samples ({n_samples}).')
+            supervised_criterion = supervised_criterion(
+                n_outputs=n_outputs,
+                n_samples=n_samples,
+            )
+        if isinstance(unsupervised_criterion, type):
+            if not n_features or not n_samples:
+                raise ValueError('If unsupervised_criterion is a class, one mu'
+                                 'st provide both n_features (received '
+                                 f'{n_features}) and n_samples ({n_samples}).')
+            unsupervised_criterion = unsupervised_criterion(
+                n_outputs=n_features,
+                n_samples=n_samples,
+            )
+
         self.supervision = supervision
         self.supervised_criterion = supervised_criterion
         self.unsupervised_criterion = unsupervised_criterion
-        self.n_outputs = supervised_criterion.n_outputs
-        self.n_samples = supervised_criterion.n_samples
-        self.n_features = unsupervised_criterion.n_outputs
+        self.n_outputs = self.supervised_criterion.n_outputs
+        self.n_samples = self.supervised_criterion.n_samples
+        self.n_features = self.unsupervised_criterion.n_outputs
 
     cdef int init(
             self, const DOUBLE_t[:, ::1] y,
             DOUBLE_t* sample_weight,
             double weighted_n_samples, SIZE_t* samples, SIZE_t start,
             SIZE_t end) nogil except -1:
-
         # y will actually be X and y concatenated.
         self.X = y[:, :self.n_features]
         self.y = y[:, self.n_features:]
@@ -69,6 +109,18 @@ cdef class SSCompositeCriterion(SSRegressionCriterion):
         self.n_node_samples = end-start
         self.weighted_n_samples = weighted_n_samples
 
+        # TODO: SCAFFOLD
+        with gil:
+            print('*** SS CRIT INIT sup', self.supervision)
+            print('*** SS CRIT INIT y', self.y.shape)
+            print('*** SS CRIT INIT X', self.X.shape)
+            print('*** SS CRIT n_features, n_outputs:',
+                self.n_features,
+                self.n_outputs,
+            )
+            print('*** SS CRIT', self.supervised_criterion.n_outputs, self.supervised_criterion.n_samples)
+            print('*** SS CRIT', self.unsupervised_criterion.n_outputs, self.unsupervised_criterion.n_samples)
+
         self.supervised_criterion.init(
             self.y, sample_weight, weighted_n_samples, samples, start, end,
         )
@@ -76,18 +128,16 @@ cdef class SSCompositeCriterion(SSRegressionCriterion):
             self.X, sample_weight, weighted_n_samples, samples, start, end,
         )
 
-        # TODO: the stuff bellow is also calculated by the second splitter,
+        # TODO: the stuff below is also calculated by the second splitter,
         # we should find a good way of calculating it only once.
+        # FIXME: this is probably wrong. Criterion.impurity_improvement fails
+        # when the values below are used.
         self.weighted_n_node_samples = \
             self.supervised_criterion.weighted_n_node_samples
         self.weighted_n_left = \
             self.supervised_criterion.weighted_n_left
         self.weighted_n_right = \
             self.supervised_criterion.weighted_n_right
-
-        self.sum_total = self.supervised_criterion.sum_total
-        self.sum_left = self.supervised_criterion.sum_left
-        self.sum_right = self.supervised_criterion.sum_right
 
         return 0
 
@@ -165,6 +215,8 @@ cdef class SSCompositeCriterion(SSRegressionCriterion):
 
         impurity_left[0] = sup*s_impurity_left + (1-sup)*u_impurity_left
         impurity_right[0] = sup*s_impurity_right + (1-sup)*u_impurity_right
+        with gil:  # TODO: scaffold
+            print('*** SS CRIT INIT imp left/right', impurity_left[0], impurity_right[0])
 
     cdef void node_value(self, double* dest) nogil:
         """Store the node value.
@@ -192,6 +244,17 @@ cdef class SSCompositeCriterion(SSRegressionCriterion):
             sup * self.supervised_criterion.proxy_impurity_improvement() + \
             (1-sup) * self.unsupervised_criterion.proxy_impurity_improvement()
 
+    cdef double impurity_improvement(self, double impurity_parent,
+                                     double impurity_left,
+                                     double impurity_right) nogil:
+        cdef double sup = self.supervision
+        cdef double s_imp = self.supervised_criterion.impurity_improvement(
+            impurity_parent, impurity_left, impurity_right)
+        cdef double u_imp = self.unsupervised_criterion.impurity_improvement(
+            impurity_parent, impurity_left, impurity_right)
+
+        return sup*s_imp + (1-sup)*u_imp
+
 
 cdef class SSMSE(SSCompositeCriterion):
     """Applies MSE both on supervised (X) and unsupervised (y) data.
@@ -202,30 +265,22 @@ cdef class SSMSE(SSCompositeCriterion):
         sup*supervised_impurity + (1-sup)*unsupervised_impurity
 
     where sup is self.supervision.
-
-    When training with an unsupervised criterion, one must provide X and y
-    stacked (joined cols) as the y parameter of the estimator's fit(). E.g.:
-
-    >>> clf = DecisionTreeRregressor()
-    >>> clf.fit(X=X, y=np.hstack([X, y]))
     """
     def __init__(
         self,
         double supervision,
+        SIZE_t n_outputs,
         SIZE_t n_features,
         SIZE_t n_samples,
-        SIZE_t n_outputs,  # of y's columns.
         *args, **kwargs,
     ):
-        self.supervision = supervision
-        self.supervised_criterion = MSE(
-            n_outputs=n_outputs, n_samples=n_samples)
-        self.unsupervised_criterion = MSE(
-            n_outputs=n_features, n_samples=n_samples)
-
-        self.n_features = n_features
-        self.n_samples = n_samples
-        self.n_outputs = n_outputs
+        super().__init__(
+            supervision=supervision,
+            criterion=MSE,
+            n_outputs=n_outputs,
+            n_features=n_features,
+            n_samples=n_samples,
+        )
 
 
 # TODO

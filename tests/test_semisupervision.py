@@ -6,13 +6,17 @@ from itertools import product
 from pprint import pprint
 
 from sklearn.tree import DecisionTreeRegressor
+from sklearn.tree._splitter import BestSplitter
 
-import sys
-sys.path.append(__file__+'/..')
+from hypertrees.tree import DecisionTreeRegressor2D
+from hypertrees.tree._nd_splitter import make_2d_splitter
 from hypertrees.melter import row_cartesian_product
 from hypertrees.tree._semisupervised_criterion import (
-    SSMSE,
+    SSMSE, SSCompositeCriterion
 )
+from hypertrees.tree._semisupervised_classes import DecisionTreeRegressorSS
+
+from sklearn.tree._criterion import MSE
 
 import numpy as np
 #from sklearn.tree._tree import DTYPE_t, DOUBLE_t
@@ -27,7 +31,6 @@ logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 
 # Default test params
 DEF_PARAMS = dict(
-    # seed=439,
     seed=7,
     shape=(50, 60),
     nattrs=(10, 9),
@@ -39,34 +42,46 @@ DEF_PARAMS = dict(
     plot=False,
     save_trees=False,
 )
-# FIXME: Some leafs do not coincide whith the parameters below:
-# --seed 23 --noise .1 --nrules 20 --shape 500 600 --nattrs 10 9 --msl 100
 
 
-def main(
-    **PARAMS,
-):
-    tree2 = DecisionTreeRegressor(
-        criterion=SSMSE(
-            n_features=PARAMS['nattrs'][0],
-            n_outputs=1,
-            n_samples=PARAMS['shape'][0],
-            supervision=1,
-        ),
+def test_supervised_component(**PARAMS):
+    PARAMS = DEF_PARAMS | PARAMS
+
+    treess = DecisionTreeRegressorSS(
+        supervision=1,
         min_samples_leaf=PARAMS['min_samples_leaf'],
         random_state=PARAMS['seed'],
     )
+
     return compare_trees(
-        tree1=DecisionTreeRegressor,
-        tree2=tree2,
+        tree1=treess,
+        tree2=DecisionTreeRegressor,
         tree2_is_2d=False,
-        tree2_is_ss=True,
         **PARAMS,
     )
 
 
-def test_main():
-    main(**DEF_PARAMS)
+
+def test_unsupervised_component(**PARAMS):
+    PARAMS = DEF_PARAMS | PARAMS
+
+    treess = DecisionTreeRegressorSS(
+        supervision=0,
+        min_samples_leaf=PARAMS['min_samples_leaf'],
+        random_state=PARAMS['seed'],
+    )
+    return compare_trees(
+        tree1=treess,
+        tree2=DecisionTreeRegressor,
+        tree2_is_2d=False,
+        tree2_is_unsupervised=True,
+        **PARAMS,
+    )
+
+
+def main(**PARAMS):
+    test_supervised_component(**PARAMS)
+    test_unsupervised_component(**PARAMS)
 
 
 if __name__ == "__main__":

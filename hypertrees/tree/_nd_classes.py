@@ -72,6 +72,7 @@ DENSE_SPLITTERS = {
 
 SPARSE_SPLITTERS = {}
 
+
 # =============================================================================
 # Base ND decision tree
 # =============================================================================
@@ -187,7 +188,8 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         self.n_outputs_ = 1
 
         if is_classification:
-            raise NotImplementedError("Let's not talk about classification.")
+            raise NotImplementedError(
+                "Let's not talk about classification for now.")
             check_classification_targets(y)
             y = np.copy(y)
 
@@ -214,15 +216,16 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         if getattr(y, "dtype", None) != DOUBLE or not y.flags.contiguous:
             y = np.ascontiguousarray(y, dtype=DOUBLE)
 
-
-        (max_depth,
-        min_samples_leaf,
-        min_samples_split,
-        max_features,
-        # self.max_features_ = max_features
-        max_leaf_nodes,
-        sample_weight,
-        min_weight_leaf) = self._check_parameters(
+        (
+            max_depth,
+            min_samples_leaf,
+            min_samples_split,
+            max_features,
+            # self.max_features_ = max_features
+            max_leaf_nodes,
+            sample_weight,
+            min_weight_leaf
+        ) = self._check_parameters(
             X, y, sample_weight, expanded_class_weight)
 
         # TODO: move to _check_parameters.
@@ -254,6 +257,7 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
 
         # Build tree
         criterion = self.criterion
+
         if isinstance(criterion, str):
             if is_classification:
                 criterion = CRITERIA_CLF[self.criterion]
@@ -273,8 +277,8 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
                 splitter = SPLITTERS[self.splitter]
 
             splitter = make_2d_splitter(
-                splitter_class=splitter,
-                criterion_class=criterion,
+                splitters=splitter,
+                criteria=criterion,
                 n_samples=y.shape,
                 n_outputs=self.n_outputs_,
                 # TODO: check ax_* parameters.

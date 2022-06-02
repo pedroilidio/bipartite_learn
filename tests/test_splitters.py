@@ -33,16 +33,8 @@ DEF_PARAMS = dict(
 )
 
 
-def eval_split(split, x, y, samples=None):
-    samples = samples or np.arange(x.shape[0])
-    sorted_indices = x[samples, split['feature']].argsort()
-    y_left = y[sorted_indices][:split['pos']]
-    y_right = y[sorted_indices][split['pos']:]
-    manual_impurity_left = y_left.var()
-    manual_impurity_right = y_right.var()
-
-
 def test_ideal_split(**PARAMS):
+    PARAMS = DEF_PARAMS | PARAMS
     print('Started with params:')
     pprint(PARAMS)
 
@@ -69,8 +61,8 @@ def test_ideal_split(**PARAMS):
     )
 
     splitter2d = make_2d_splitter(
-        splitter_class=BestSplitter,
-        criterion_class=MSE,
+        splitters=BestSplitter,
+        criteria=MSE,
         max_features=[X.shape[1] for X in XX],
         n_samples=Y.shape,
         n_outputs=1,
@@ -104,6 +96,7 @@ def test_ideal_split(**PARAMS):
 
 
 def test_1d2d(**PARAMS):
+    PARAMS = DEF_PARAMS | PARAMS
     PARAMS['noise'] = PARAMS['noise'] or 0.1
 
     print('Started with params:')
@@ -126,8 +119,8 @@ def test_1d2d(**PARAMS):
     )
 
     splitter2d = make_2d_splitter(
-        splitter_class=BestSplitter,
-        criterion_class=MSE,
+        splitters=BestSplitter,
+        criteria=MSE,
         max_features=[X.shape[1] for X in XX],
         n_samples=Y.shape,
         n_outputs=1,

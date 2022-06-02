@@ -61,7 +61,7 @@ def compare_trees(
     tree1=DecisionTreeRegressor,
     tree2=DecisionTreeRegressor2D,
     tree2_is_2d=True,
-    tree2_is_ss=False,
+    tree2_is_unsupervised=False,
     **PARAMS,
 ):
     """Test hypertreesDecisionTreeRegressor2D
@@ -112,8 +112,8 @@ def compare_trees(
         else:
             print('Using 1D data.')
             X, y = row_cartesian_product(XX), Y.reshape(-1, 1)
-            if tree2_is_ss:
-                tree2.fit(X, np.hstack((X, y)))
+            if tree2_is_unsupervised:
+                tree2.fit(X, X)
             else:
                 tree2.fit(X, y)
 
@@ -123,41 +123,41 @@ def compare_trees(
     tree1_n_samples_in_leaves = print_n_samples_in_leaves(tree1)
     tree2_n_samples_in_leaves = print_n_samples_in_leaves(tree2)
 
-    if PARAMS['plot']:
-        stree1 = sklearn.tree.export_text(tree1)
-        stree2 = sklearn.tree.export_text(tree2)
+    if PARAMS['inspect']:
+        breakpoint()
 
+    # =========================================================================
+    # Start of comparison tests
+    # =========================================================================
+
+    assert (tree1_n_samples_in_leaves.shape[0] ==
+            tree2_n_samples_in_leaves.shape[0]), \
+        "Number of leaves differ."
+    assert (tree1_n_samples_in_leaves.sum() ==
+            tree2_n_samples_in_leaves.sum()), \
+        "Total weighted_n_samples of leaves differ."
+
+    leaves_comparison = \
+        tree1_n_samples_in_leaves == tree2_n_samples_in_leaves
+    comparison_test = np.all(leaves_comparison)
+
+    assert comparison_test, (
+        "Some leaves differ in the number of samples."
+        f"\n\tdiff positions: {np.nonzero(~leaves_comparison)[0]}"
+        f"\n\tdiff: {tree1_n_samples_in_leaves[~leaves_comparison]}"
+        f"!= {tree2_n_samples_in_leaves[~leaves_comparison]}")
+
+    stree1 = sklearn.tree.export_text(tree1)
+    stree2 = sklearn.tree.export_text(tree2)
+
+    if PARAMS['plot'] or stree1 != stree2:
         with open('tree1.txt', 'w') as f:
             f.write(stree1)
         with open('tree2.txt', 'w') as f:
             f.write(stree2)
 
-        # import matplotlib.pyplot as plt
-        # sklearn.tree.plot_tree(tree2)
-        # plt.show()
-
-
-    if not PARAMS['inspect']:
-        assert tree1_n_samples_in_leaves.shape[0] == \
-               tree2_n_samples_in_leaves.shape[0]
-        assert tree1_n_samples_in_leaves.sum() == \
-               tree2_n_samples_in_leaves.sum()
-
-        leaves_comparison = \
-            tree1_n_samples_in_leaves == tree2_n_samples_in_leaves
-        comparison_test = np.all(leaves_comparison)
-        if not comparison_test:
-            print("diff positions:", np.nonzero(~leaves_comparison)[0])
-            print("diff: ", tree1_n_samples_in_leaves[~leaves_comparison],
-                  '!=', tree2_n_samples_in_leaves[~leaves_comparison])
-
-        assert comparison_test
-        assert (
-            sklearn.tree.export_text(tree2) == sklearn.tree.export_text(tree1)
-        )
-
-    if PARAMS['inspect']:
-        breakpoint()
+    assert tree2_is_unsupervised or stree1 == stree2, \
+        "Tree structure differs. See tree1.txt and tree2.txt"
 
 
 def main(
