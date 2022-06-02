@@ -19,7 +19,6 @@ logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 
 # Default test params
 DEF_PARAMS = dict(
-    # seed=439,
     seed=7,
     shape=(50, 60),
     nattrs=(10, 9),
@@ -30,8 +29,6 @@ DEF_PARAMS = dict(
     inspect=False,
     plot=False,
 )
-# FIXME: Some leafs do not coincide whith the parameters below:
-# --seed 23 --noise .1 --nrules 20 --shape 500 600 --nattrs 10 9 --msl 100
 
 
 def print_eval_model(tree, XX, Y):
@@ -143,6 +140,8 @@ def compare_trees(
     if not PARAMS['inspect']:
         assert tree1_n_samples_in_leaves.shape[0] == \
                tree2_n_samples_in_leaves.shape[0]
+        assert tree1_n_samples_in_leaves.sum() == \
+               tree2_n_samples_in_leaves.sum()
 
         leaves_comparison = \
             tree1_n_samples_in_leaves == tree2_n_samples_in_leaves
