@@ -96,10 +96,13 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         min_samples_leaf,
         min_weight_fraction_leaf,
         max_features,
+
+        # 2D parameters:
         # TODO: ax_min_samples_split,
-        ax_min_samples_leaf=1,  # New!
-        ax_min_weight_fraction_leaf=None,  # New!
-        ax_max_features=None,  # New!
+        ax_min_samples_leaf=1,
+        ax_min_weight_fraction_leaf=None,
+        ax_max_features=None,
+
         max_leaf_nodes,
         random_state,
         min_impurity_decrease,
@@ -255,42 +258,6 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
                 self.ax_min_weight_fraction_leaf
             ]
 
-        # Build tree
-        criterion = self.criterion
-
-        if isinstance(criterion, str):
-            if is_classification:
-                criterion = CRITERIA_CLF[self.criterion]
-            else:
-                criterion = CRITERIA_REG[self.criterion]
-
-        # NOTE: make_2d_splitter takes charge of that.
-        # Make a deepcopy in case the criterion has mutable attributes that
-        # might be shared and modified concurrently during parallel fitting
-        # criterion = copy.deepcopy(criterion)
-
-        SPLITTERS = SPARSE_SPLITTERS if issparse(X) else DENSE_SPLITTERS
-
-        splitter = self.splitter
-        if not isinstance(splitter, Splitter2D):
-            if isinstance(splitter, str):
-                splitter = SPLITTERS[self.splitter]
-
-            splitter = make_2d_splitter(
-                splitters=splitter,
-                criteria=criterion,
-                n_samples=y.shape,
-                n_outputs=self.n_outputs_,
-                # TODO: check ax_* parameters.
-                max_features=ax_max_features,
-                min_samples_leaf=min_samples_leaf,
-                min_weight_leaf=min_weight_leaf,
-                ax_min_samples_leaf=ax_min_samples_leaf,
-                ax_min_weight_leaf=ax_min_weight_leaf,
-                random_state=random_state,
-            )
-
-
         if is_classifier(self):
             self.tree_ = Tree(self.n_features_in_, self.n_classes_, self.n_outputs_)
         else:
@@ -300,6 +267,17 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
                 np.array([1] * self.n_outputs_, dtype=np.intp),
                 self.n_outputs_,
             )
+
+        splitter = self._make_splitter(
+            n_samples=y.shape,
+            sparse=issparse(X),
+            ax_max_features=ax_max_features,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_leaf=min_weight_leaf,
+            ax_min_samples_leaf=ax_min_samples_leaf,
+            ax_min_weight_leaf=ax_min_weight_leaf,
+            random_state=random_state,
+        )
 
         # Use BestFirst if max_leaf_nodes given; use DepthFirst otherwise
         if max_leaf_nodes < 0:
@@ -332,6 +310,60 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         self._prune_tree()
 
         return self
+    
+    def _make_splitter(
+        self,
+        n_samples,
+        sparse=False,
+        ax_max_features=None,
+        min_samples_leaf=None,
+        min_weight_leaf=None,
+        ax_min_samples_leaf=None,
+        ax_min_weight_leaf=None,
+        random_state=None,
+    ):
+        if isinstance(self.splitter, Splitter2D):
+            return self.splitter
+
+        criterion = self.criterion
+
+        if not isinstance(criterion, (tuple, list)):
+            criterion = [criterion, criterion]
+        for ax in range(2):
+            if isinstance(criterion[ax], str):
+                if is_classifier(self):
+                    criterion[ax] = CRITERIA_CLF[criterion[ax]]
+                else:
+                    criterion[ax] = CRITERIA_REG[criterion[ax]]
+
+        SPLITTERS = SPARSE_SPLITTERS if sparse else DENSE_SPLITTERS
+
+        # NOTE: make_2d_splitter takes charge of that.
+        # Make a deepcopy in case the criterion has mutable attributes that
+        # might be shared and modified concurrently during parallel fitting
+        # criterion = copy.deepcopy(criterion)
+        splitter = self.splitter
+        if not isinstance(splitter, (tuple, list)):
+            splitter = [splitter, splitter]
+        for ax in range(2):
+            if isinstance(splitter[ax], str):
+                splitter[ax] = SPLITTERS[splitter[ax]]
+
+        splitter = make_2d_splitter(
+            splitters=splitter,
+            criteria=criterion,
+            n_samples=n_samples,
+            n_outputs=self.n_outputs_,
+            # TODO: check ax_* parameters.
+            max_features=ax_max_features,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_leaf=min_weight_leaf,
+            ax_min_samples_leaf=ax_min_samples_leaf,
+            ax_min_weight_leaf=ax_min_weight_leaf,
+            random_state=random_state,
+        )
+
+        return splitter
 
     def _check_parameters(self, X, y, sample_weight, expanded_class_weight):
         if self.max_depth is not None:

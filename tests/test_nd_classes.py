@@ -61,7 +61,7 @@ def compare_trees(
     tree1=DecisionTreeRegressor,
     tree2=DecisionTreeRegressor2D,
     tree2_is_2d=True,
-    tree2_is_unsupervised=False,
+    tree1_is_unsupervised=False,
     **PARAMS,
 ):
     """Test hypertreesDecisionTreeRegressor2D
@@ -86,6 +86,7 @@ def compare_trees(
 
     with stopwatch():
         XX, Y, strfunc = gen_mock_data(**PARAMS)
+        X, y = row_cartesian_product(XX), Y.reshape(-1, 1)
 
     # ######### Instantiate trees
     if isinstance(tree2, type):
@@ -105,20 +106,20 @@ def compare_trees(
     # state will be different (same random state for each axis), thus yielding
     # an ExtraTree2d different from sklearn's ExtraTree.
 
+    with stopwatch(f'Fitting {tree1.__class__.__name__}...'):
+        if tree1_is_unsupervised:
+            print('Using unsupervised data for tree1.')
+            tree1.fit(X, X)
+        else:
+            tree1.fit(X, y)
+
     with stopwatch(f'Fitting {tree2.__class__.__name__}...'):
         if tree2_is_2d:
-            print('Using 2D data.')
+            print('Using 2D data for tree2.')
             tree2.fit(XX, Y)
         else:
-            print('Using 1D data.')
-            X, y = row_cartesian_product(XX), Y.reshape(-1, 1)
-            if tree2_is_unsupervised:
-                tree2.fit(X, X)
-            else:
-                tree2.fit(X, y)
-
-    with stopwatch(f'Fitting {tree1.__class__.__name__}...'):
-        tree1.fit(row_cartesian_product(XX), Y.reshape(-1))
+            print('Using 1D data for tree2.')
+            tree2.fit(X, y)
 
     tree1_n_samples_in_leaves = print_n_samples_in_leaves(tree1)
     tree2_n_samples_in_leaves = print_n_samples_in_leaves(tree2)
@@ -156,7 +157,7 @@ def compare_trees(
         with open('tree2.txt', 'w') as f:
             f.write(stree2)
 
-    assert tree2_is_unsupervised or stree1 == stree2, \
+    assert tree1_is_unsupervised or stree1 == stree2, \
         "Tree structure differs. See tree1.txt and tree2.txt"
 
 

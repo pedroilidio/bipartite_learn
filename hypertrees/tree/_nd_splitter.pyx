@@ -79,6 +79,10 @@ cdef class Splitter2D:
         # TODO: use memoryview's .transpose
         # TODO: test sample_weight
         cdef const DOUBLE_t[:, ::1] yT = np.ascontiguousarray(y.T)
+        # FIXME: only need to set criterion_wrapper.X* because 
+        # BaseDenseSplitter.X is not accessibe (sklearn problem).
+        self.criterion_wrapper.X_rows = np.ascontiguousarray(X[0], dtype=np.float64)
+        self.criterion_wrapper.X_cols = np.ascontiguousarray(X[1], dtype=np.float64)
         self.n_row_features = X[0].shape[1]
         self.shape[0] = y.shape[0]
         self.shape[1] = y.shape[1]
@@ -192,7 +196,7 @@ cdef class Splitter2D:
             # the split position at the end.
             if current_split.pos < self.splitter_rows.end:
                 # Correct impurities.
-                with gil:  # TODO: remove
+                with gil:
                     self.criterion_wrapper.children_impurity(
                         &imp_left, &imp_right, 0)
                 imp_improve = self.criterion_wrapper.impurity_improvement(
@@ -214,7 +218,7 @@ cdef class Splitter2D:
             # the split position at the end.
             if current_split.pos < self.splitter_cols.end:
                 # Correct impurities.
-                with gil:  # TODO: remove
+                with gil:
                     self.criterion_wrapper.children_impurity(
                         &imp_left, &imp_right, 1)
                 imp_improve = self.criterion_wrapper.impurity_improvement(

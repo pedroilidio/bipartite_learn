@@ -6,10 +6,13 @@ from sklearn.tree._tree cimport DOUBLE_t         # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t           # Type for indices and counters
 
 from sklearn.tree._splitter cimport Splitter
-from sklearn.tree._criterion cimport RegressionCriterion
+from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 
 
 cdef class RegressionCriterionWrapper2D:
+    # FIXME: We need X here because BaseDenseSplitter.X is not accessible.
+    cdef const DOUBLE_t[:, ::1] X_rows
+    cdef const DOUBLE_t[:, ::1] X_cols
     cdef const DOUBLE_t[:, ::1] y_2D
     cdef DOUBLE_t[:, ::1] y_row_sums
     cdef DOUBLE_t[:, ::1] y_col_sums
@@ -63,7 +66,7 @@ cdef class RegressionCriterionWrapper2D:
             double* impurity_left,
             double* impurity_right,
             SIZE_t axis,
-    )  # TODO: nogil
+    )
 
     cdef double impurity_improvement(
             self, double impurity_parent, double
@@ -72,4 +75,4 @@ cdef class RegressionCriterionWrapper2D:
     ) nogil
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
-    pass
+    cdef Criterion _get_criterion(self, SIZE_t axis)

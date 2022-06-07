@@ -59,7 +59,6 @@ cdef class TreeBuilderND:  # (TreeBuilder):
                 np.ndarray sample_weight=None):
         """Build a decision tree from the training set (X, y)."""
         # TODO: should be inherited.
-        pass
 
     cdef inline _check_input(self, object X, np.ndarray y,
                              np.ndarray sample_weight):
@@ -213,7 +212,6 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
             while not builder_stack.empty():
                 stack_record = builder_stack.top()
                 builder_stack.pop()
-                with gil: print('\n*** ND_TREE stack_record:', stack_record)
 
                 start[0] = stack_record.start_row
                 start[1] = stack_record.start_col
@@ -241,20 +239,6 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
 
                 # impurity == 0 with tolerance due to rounding errors
                 is_leaf = is_leaf or impurity <= EPSILON
-                if is_leaf:
-                    with gil:
-                        print('*** ND_TREE MAKING LEAF 1. CRITERIA:',
-                            "\n  is_leaf:", is_leaf,
-                            "\n  n_node_samples < min_samples_split:",
-                            f"{n_node_samples} < {min_samples_split}",
-                            n_node_samples < min_samples_split,
-                            "\n  n_node_samples < 2 * min_samples_leaf:",
-                            f"{n_node_samples} < {2 * min_samples_leaf}",
-                            n_node_samples < 2 * min_samples_leaf,
-                            "\n  weighted_n_node_samples < 2 * min_weight_leaf:",
-                            f"{weighted_n_node_samples} < {2 * min_weight_leaf}",
-                            weighted_n_node_samples < 2 * min_weight_leaf,
-                        )
 
                 if not is_leaf:
                     splitter.node_split(impurity, &split, n_constant_features)
@@ -264,17 +248,6 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                     is_leaf = (split.pos >= end[split.axis] or
                                (split.improvement + EPSILON <
                                 min_impurity_decrease))
-                    if is_leaf:
-                        with gil:
-                            print('*** ND_TREE MAKING LEAF 2. CRITERIA:',
-                                "\n  is_leaf:", is_leaf,
-                                "\n  split.pos >= end[split.axis]:",
-                                f"{split.pos} >= {end[split.axis]}",
-                                split.pos >= end[split.axis],
-                                "\n  split.improvement + EPSILON < min_impurity_decrease",
-                                f"{split.improvement + EPSILON} < {min_impurity_decrease}",
-                                split.improvement + EPSILON < min_impurity_decrease,
-                            )
 
                 node_id = tree._add_node(parent, is_left, is_leaf,
                                          split.feature,

@@ -14,7 +14,8 @@ from hypertrees.melter import row_cartesian_product
 from hypertrees.tree._semisupervised_criterion import (
     SSMSE, SSCompositeCriterion
 )
-from hypertrees.tree._semisupervised_classes import DecisionTreeRegressorSS
+from hypertrees.tree._semisupervised_classes import \
+    DecisionTreeRegressorSS, DecisionTreeRegressor2DSS
 
 from sklearn.tree._criterion import MSE
 
@@ -61,7 +62,6 @@ def test_supervised_component(**PARAMS):
     )
 
 
-
 def test_unsupervised_component(**PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
 
@@ -71,10 +71,44 @@ def test_unsupervised_component(**PARAMS):
         random_state=PARAMS['seed'],
     )
     return compare_trees(
-        tree1=treess,
-        tree2=DecisionTreeRegressor,
+        tree1=DecisionTreeRegressor,
+        tree2=treess,
         tree2_is_2d=False,
-        tree2_is_unsupervised=True,
+        tree1_is_unsupervised=True,
+        **PARAMS,
+    )
+
+
+def test_supervised_component_2d(**PARAMS):
+    PARAMS = DEF_PARAMS | PARAMS
+
+    treess = DecisionTreeRegressor2DSS(
+        supervision=1.,
+        min_samples_leaf=PARAMS['min_samples_leaf'],
+        random_state=PARAMS['seed'],
+    )
+    return compare_trees(
+        tree1=DecisionTreeRegressor,
+        tree1_is_unsupervised=False,
+        tree2=treess,
+        tree2_is_2d=True,
+        **PARAMS,
+    )
+
+
+def test_unsupervised_component_2d(**PARAMS):
+    PARAMS = DEF_PARAMS | PARAMS
+
+    treess = DecisionTreeRegressor2DSS(
+        supervision=0.,
+        min_samples_leaf=PARAMS['min_samples_leaf'],
+        random_state=PARAMS['seed'],
+    )
+    return compare_trees(
+        tree1=DecisionTreeRegressor,
+        tree1_is_unsupervised=True,
+        tree2=treess,
+        tree2_is_2d=True,
         **PARAMS,
     )
 
@@ -82,6 +116,8 @@ def test_unsupervised_component(**PARAMS):
 def main(**PARAMS):
     test_supervised_component(**PARAMS)
     test_unsupervised_component(**PARAMS)
+    test_supervised_component_2d(**PARAMS)
+    test_unsupervised_component_2d(**PARAMS)
 
 
 if __name__ == "__main__":

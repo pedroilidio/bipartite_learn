@@ -51,7 +51,9 @@ from sklearn.tree._classes import (
     DENSE_SPLITTERS, SPARSE_SPLITTERS,
 )
 from ._semisupervised_criterion import \
-    SemisupervisedCriterion, SSCompositeCriterion, SSMSE
+    SemisupervisedCriterion, SSCompositeCriterion, SSMSE, make_2dss_splitter
+from ._nd_classes import \
+    BaseDecisionTree2D, DecisionTreeRegressor2D, ExtraTreeRegressor2D
 
 
 __all__ = [
@@ -59,6 +61,8 @@ __all__ = [
     "ExtraTreeClassifierSS",
     "DecisionTreeRegressorSS",
     "ExtraTreeRegressorSS",
+    "DecisionTreeRegressor2DSS",
+    "ExtraTreeRegressor2DSS",
 ]
 
 
@@ -1709,3 +1713,237 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
             supervised_criterion=supervised_criterion,
             unsupervised_criterion=unsupervised_criterion,
         )
+
+
+# =============================================================================
+# Two-dimensional semi-supervised trees
+# =============================================================================
+
+
+class BaseDecisionTree2DSS(BaseDecisionTree2D, metaclass=ABCMeta):
+    @abstractmethod
+    def __init__(
+        self,
+        *,
+        splitter,
+        max_depth,
+        min_samples_split,
+        min_samples_leaf,
+        min_weight_fraction_leaf,
+        max_features,
+        max_leaf_nodes,
+        random_state,
+        min_impurity_decrease,
+        class_weight=None,
+        ccp_alpha=0.0,
+
+        # 2D parameters:
+        ax_min_samples_leaf=1,
+        ax_min_weight_fraction_leaf=None,
+        ax_max_features=None,
+
+        # Semi-supervised parameters:
+        supervision=0.5,
+        ss_criterion=None,
+        criterion=None,
+        supervised_criterion=None,
+        unsupervised_criterion=None,
+    ):
+        # 2D parameters:
+        self.ax_min_samples_leaf = ax_min_samples_leaf
+        self.ax_min_weight_fraction_leaf = ax_min_weight_fraction_leaf
+        self.ax_max_features = ax_max_features
+
+        # Semi-supervised parameters:
+        self.supervision = supervision
+        self.ss_criterion = ss_criterion
+        self.criterion = criterion
+        self.supervised_criterion = supervised_criterion
+        self.unsupervised_criterion = unsupervised_criterion
+
+        self.splitter = splitter
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.min_weight_fraction_leaf = min_weight_fraction_leaf
+        self.max_features = max_features
+        self.max_leaf_nodes = max_leaf_nodes
+        self.random_state = random_state
+        self.min_impurity_decrease = min_impurity_decrease
+        self.class_weight = class_weight
+        self.ccp_alpha = ccp_alpha
+
+    def _make_splitter(
+        self,
+        n_samples,
+        sparse=False,
+        ax_max_features=None,
+        min_samples_leaf=None,
+        min_weight_leaf=None,
+        ax_min_samples_leaf=None,
+        ax_min_weight_leaf=None,
+        random_state=None,
+    ):
+        if isinstance(self.splitter, Splitter2D):
+            return self.splitter
+
+        all_criteria = [
+            self.ss_criterion,
+            self.criterion,
+            self.supervised_criterion,
+            self.unsupervised_criterion,
+        ]
+
+        for i in range(len(all_criteria)):
+            if not isinstance(all_criteria[i], (tuple, list)):
+                all_criteria[i] = [all_criteria[i], all_criteria[i]]
+
+        for ax in range(2):
+            if isinstance(all_criteria[0][ax], str):
+                all_criteria[0][ax] = CRITERIA_SS[all_criteria[0][ax]]
+
+        for i in range(1, len(all_criteria)):
+            for ax in range(2):
+                if isinstance(all_criteria[i][ax], str):
+                    if is_classifier(self):
+                        all_criteria[i][ax] = CRITERIA_CLF[all_criteria[i][ax]]
+                    else:
+                        all_criteria[i][ax] = CRITERIA_REG[all_criteria[i][ax]]
+
+        SPLITTERS = SPARSE_SPLITTERS if sparse else DENSE_SPLITTERS
+
+        splitter = self.splitter
+        if not isinstance(splitter, (tuple, list)):
+            splitter = [splitter, splitter]
+        for ax in range(2):
+            if isinstance(splitter[ax], str):
+                splitter[ax] = SPLITTERS[splitter[ax]]
+
+        splitter = make_2dss_splitter(
+            supervision=self.supervision,
+            splitters=splitter,
+            ss_criteria=all_criteria[0],
+            criteria=all_criteria[1],
+            supervised_criteria=all_criteria[2],
+            unsupervised_criteria=all_criteria[3],
+            n_samples=n_samples,
+            n_outputs=self.n_outputs_,
+            n_features=self.n_features_in_,
+            max_features=ax_max_features,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_leaf=min_weight_leaf,
+            ax_min_samples_leaf=ax_min_samples_leaf,
+            ax_min_weight_leaf=ax_min_weight_leaf,
+            random_state=random_state,
+        )
+
+        return splitter
+
+
+class DecisionTreeRegressor2DSS(BaseDecisionTree2DSS, DecisionTreeRegressor2D):
+    def __init__(
+        self,
+        criterion="squared_error",
+        splitter="best",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=None,
+        random_state=None,
+        max_leaf_nodes=None,
+        class_weight=None,
+        min_impurity_decrease=0.0,
+        ccp_alpha=0.0,
+
+        # 2D parameters:
+        ax_min_samples_leaf=1,
+        ax_min_weight_fraction_leaf=None,
+        ax_max_features=None,
+
+        # Semi-supervised parameters:
+        supervision=0.5,
+        ss_criterion=None,
+        supervised_criterion=None,
+        unsupervised_criterion=None,
+    ):
+        super().__init__(
+            splitter=splitter,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+            random_state=random_state,
+            min_impurity_decrease=min_impurity_decrease,
+            class_weight=class_weight,
+            ccp_alpha=ccp_alpha,
+
+            # 2D parameters:
+            ax_min_samples_leaf=ax_min_samples_leaf,
+            ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf,
+            ax_max_features=ax_max_features,
+
+            # Semi-supervised parameters:
+            supervision=supervision,
+            ss_criterion=ss_criterion,
+            criterion=criterion,
+            supervised_criterion=supervised_criterion,
+            unsupervised_criterion=unsupervised_criterion,
+        )
+        
+
+class ExtraTreeRegressor2DSS(BaseDecisionTree2DSS, ExtraTreeRegressor2D):
+    def __init__(
+        self,
+        criterion="squared_error",
+        splitter="random",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=None,
+        random_state=None,
+        max_leaf_nodes=None,
+        class_weight=None,
+        min_impurity_decrease=0.0,
+        ccp_alpha=0.0,
+
+        # 2D parameters:
+        ax_min_samples_leaf=1,
+        ax_min_weight_fraction_leaf=None,
+        ax_max_features=None,
+
+        # Semi-supervised parameters:
+        supervision=0.5,
+        ss_criterion=None,
+        supervised_criterion=None,
+        unsupervised_criterion=None,
+    ):
+        super().__init__(
+            splitter=splitter,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+            random_state=random_state,
+            min_impurity_decrease=min_impurity_decrease,
+            class_weight=class_weight,
+            ccp_alpha=ccp_alpha,
+
+            # 2D parameters:
+            ax_min_samples_leaf=ax_min_samples_leaf,
+            ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf,
+            ax_max_features=ax_max_features,
+
+            # Semi-supervised parameters:
+            supervision=supervision,
+            ss_criterion=ss_criterion,
+            criterion=criterion,
+            supervised_criterion=supervised_criterion,
+            unsupervised_criterion=unsupervised_criterion,
+        )
+        

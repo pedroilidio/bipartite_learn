@@ -13,6 +13,11 @@ from copy import deepcopy
 
 
 cdef class RegressionCriterionWrapper2D:
+    def __reduce__(self):
+        return (type(self),
+                (self.splitter_rows, self.splitter_cols),
+                self.__getstate__())
+
     def __cinit__(self, Splitter splitter_rows, Splitter splitter_cols):
         self.splitter_rows = splitter_rows
         self.splitter_cols = splitter_cols
@@ -249,12 +254,12 @@ cdef class RegressionCriterionWrapper2D:
             double* impurity_left,
             double* impurity_right,
             SIZE_t axis,
-    ):  # TODO: nogil
+    ):
+        if axis == 0:
+            self.splitter_rows.criterion.children_impurity(
+                impurity_left, impurity_right)
         if axis == 1:
             self.splitter_cols.criterion.children_impurity(
-                impurity_left, impurity_right)
-        else:  # axis == 0
-            self.splitter_rows.criterion.children_impurity(
                 impurity_left, impurity_right)
 
     cdef double impurity_improvement(
@@ -289,13 +294,12 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
 
         return impurity / self.n_outputs
 
-    # TODO: pass criterion instead of axis.
     cdef void children_impurity(
             self,
             double* impurity_left,
             double* impurity_right,
             SIZE_t axis,
-    ):  # TODO nogil
+    ): # TODO nogil: it breaks semi-supervised criteria
         """Evaluate the impurity in children nodes.
 
         i.e. the impurity of the left child (samples[start:pos]) and the
@@ -304,36 +308,31 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         Is done here because sq_sum_* of children criterion is messed up, as
         they receive axis means as y.
         """
-        cdef SIZE_t[2] end
         cdef DOUBLE_t y_ij
 
         cdef double sq_sum_left = 0.0
         cdef double sq_sum_right
 
         cdef SIZE_t i, j, q, p, k
-        cdef DOUBLE_t weighted_n_left, weighted_n_right
         cdef DOUBLE_t w = 1.0
 
-        cdef SIZE_t pos
         cdef double[::1] sum_left
         cdef double[::1] sum_right
+        cdef DOUBLE_t weighted_n_left
+        cdef DOUBLE_t weighted_n_right
         cdef RegressionCriterion criterion
+        criterion = self._get_criterion(axis)
 
-        if axis == 0:
-            criterion = self.splitter_rows.criterion
-        if axis == 1:
-            criterion = self.splitter_cols.criterion
+        cdef SIZE_t[2] end
+        end[0], end[1] = self.end[0], self.end[1]
+
+        sum_left = criterion.sum_left
+        sum_right = criterion.sum_right
+        weighted_n_left = criterion.weighted_n_left
+        weighted_n_right = criterion.weighted_n_right
+        end[axis] = criterion.pos
 
         with nogil:
-            pos = criterion.pos
-            sum_left = criterion.sum_left
-            sum_right = criterion.sum_right
-            weighted_n_left = criterion.weighted_n_left
-            weighted_n_right = criterion.weighted_n_right
-
-            end[0], end[1] = self.end[0], self.end[1]
-            end[axis] = pos
-
             for p in range(self.start[0], end[0]):
                 i = self.row_samples[p]
                 for q in range(self.start[1], end[1]):
@@ -359,3 +358,10 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
                 impurity_right[0] -= (sum_right[k] / weighted_n_right) ** 2.0
             impurity_left[0] /= self.n_outputs
             impurity_right[0] /= self.n_outputs
+
+    cdef Criterion _get_criterion(self, SIZE_t axis): 
+        print('*** MSE2D GETCRIT')
+        if axis == 1:
+            return self.splitter_cols.criterion
+        if axis == 0:
+            return self.splitter_rows.criterion
