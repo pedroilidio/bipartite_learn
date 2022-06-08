@@ -11,7 +11,7 @@ randomized trees, adapted from sklearn for semi-supervised learning.
 
 import numbers
 import warnings
-import copy
+from copy import deepcopy
 from abc import ABCMeta
 from abc import abstractmethod
 from math import ceil
@@ -189,8 +189,6 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         expanded_class_weight = None
 
         self.n_outputs_ = y.shape[1]
-        print("*** SS_CLASSES n_outputs, n_feat, n_samp",
-            self.n_outputs_, self.n_features_in_, n_samples,)
 
         if is_classification:
             check_classification_targets(y)
@@ -440,9 +438,6 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
             return criterion
         supervised_criterion = supervised_criterion or criterion
         unsupervised_criterion = unsupervised_criterion or criterion
-        print("*** SS_CLASSES n_outputs, n_feat, n_samp",
-            self.n_outputs_, self.n_features_in_, n_samples,
-        )
 
         supervised_criterion = self._check_criterion(
             supervised_criterion, n_samples, self.n_outputs_)
@@ -1778,13 +1773,14 @@ class BaseDecisionTree2DSS(BaseDecisionTree2D, metaclass=ABCMeta):
         n_samples,
         sparse=False,
         ax_max_features=None,
-        min_samples_leaf=None,
+        min_samples_leaf=1,
         min_weight_leaf=None,
-        ax_min_samples_leaf=None,
+        ax_min_samples_leaf=1,
         ax_min_weight_leaf=None,
         random_state=None,
     ):
         if isinstance(self.splitter, Splitter2D):
+            # return deepcopy(self.splitter)  # FIXME: error.
             return self.splitter
 
         all_criteria = [
@@ -1796,7 +1792,7 @@ class BaseDecisionTree2DSS(BaseDecisionTree2D, metaclass=ABCMeta):
 
         for i in range(len(all_criteria)):
             if not isinstance(all_criteria[i], (tuple, list)):
-                all_criteria[i] = [all_criteria[i], all_criteria[i]]
+                all_criteria[i] = [deepcopy(all_criteria[i]) for j in range(2)]
 
         for ax in range(2):
             if isinstance(all_criteria[0][ax], str):
@@ -1814,7 +1810,7 @@ class BaseDecisionTree2DSS(BaseDecisionTree2D, metaclass=ABCMeta):
 
         splitter = self.splitter
         if not isinstance(splitter, (tuple, list)):
-            splitter = [splitter, splitter]
+            splitter = [deepcopy(splitter) for i in range(2)]
         for ax in range(2):
             if isinstance(splitter[ax], str):
                 splitter[ax] = SPLITTERS[splitter[ax]]
@@ -1828,7 +1824,7 @@ class BaseDecisionTree2DSS(BaseDecisionTree2D, metaclass=ABCMeta):
             unsupervised_criteria=all_criteria[3],
             n_samples=n_samples,
             n_outputs=self.n_outputs_,
-            n_features=self.n_features_in_,
+            n_features=self.ax_n_features_in_,
             max_features=ax_max_features,
             min_samples_leaf=min_samples_leaf,
             min_weight_leaf=min_weight_leaf,

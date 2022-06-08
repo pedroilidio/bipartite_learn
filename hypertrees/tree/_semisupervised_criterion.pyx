@@ -286,9 +286,6 @@ cdef class RegressionCriterionWrapper2DSS(RegressionCriterionWrapper2D):
         elif splitter == self.splitter_cols:
             splitter.y = np.hstack((self.X_cols, y))
 
-        # print("*** SS2DREGWRAP SET Y y", np.asarray(splitter.y))
-        print("*** SS2DREGWRAP SET Y y.shape", splitter.y.shape)
-
     cdef int _node_reset_child_splitter(
             self,
             Splitter child_splitter,
@@ -327,8 +324,6 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
             ret = self.splitter_rows.criterion.impurity_improvement(
                 impurity_parent, impurity_left, impurity_right)
 
-        with gil:
-            print('*** MSESS2D impimp', ret, impurity_parent, impurity_left, impurity_right)
         return ret
 
     cdef double ss_impurity(
@@ -337,7 +332,6 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
         double u_imp_cols,
         double s_imp,
     ):
-        print("*** SSMSE2D SS_IMP uir urc simp", u_imp_rows, u_imp_cols, s_imp)
         cdef double u_imp, sup_rows, sup_cols
         cdef SIZE_t n_row_features, n_col_features
 
@@ -362,9 +356,6 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
 
         s_imp *= sup_rows + sup_cols
 
-        print("*** SSMSE2D SS_IMP supr supc", sup_rows, sup_cols)
-        print("*** SSMSE2D SS_IMP uir urc simp", u_imp_rows, u_imp_cols, s_imp)
-        print("*** SSMSE2D SS_IMP ret", (u_imp + s_imp) / 2)
         # 2 = sup_rows + sup_cols + (1-sup_rows) + (1-sup_cols)
         return (u_imp + s_imp) / 2
 
@@ -384,7 +375,6 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
 
         u_imp_rows = ur_criterion.node_impurity()
         u_imp_cols = uc_criterion.node_impurity()
-        print("*** SSMSE2D _NODE_IMP ur/uc pos (0)", ur_criterion.pos, uc_criterion.pos)
 
         return self.ss_impurity(u_imp_rows, u_imp_cols, s_imp)
 
@@ -394,13 +384,10 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
 
     cdef Criterion _get_criterion(self, SIZE_t axis): 
         cdef SSCompositeCriterion ss_criterion
-        print('*** SSCRIT GETCRIT', axis)
 
         if axis == 1:
-            print('*** SSCRIT GETCRITaxis', axis)
             ss_criterion = self.splitter_cols.criterion
         if axis == 0:
-            print('*** SSCRIT GETCRITaxis', axis)
             ss_criterion = self.splitter_rows.criterion
 
         return ss_criterion.supervised_criterion
@@ -438,7 +425,6 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
         # =====================================================================
         # MSE_Wrapper2D.children_impurity(
         #     self, &s_impurity_left, &s_impurity_right, axis)
-        # print('*** SSCRIT CHILDIMP after shildimpu')
         # =====================================================================
 
         cdef DOUBLE_t y_ij
@@ -464,7 +450,6 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
         weighted_n_left = criterion.weighted_n_left
         weighted_n_right = criterion.weighted_n_right
         end[axis] = criterion.pos
-        print("*** SSMSE2D _CHILDIMP crit.pos", criterion.pos)
 
         with nogil:
             for p in range(self.start[0], end[0]):
@@ -486,13 +471,8 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
 
             s_impurity_left = sq_sum_left / weighted_n_left
             s_impurity_right = sq_sum_right / weighted_n_right
-            with gil:
-                print('*** (SSMSE) MSE2D CHILDIMP sil, sir',
-                    s_impurity_left, s_impurity_right)
 
             for k in range(self.n_outputs):
-                with gil: print('*** (SSMSE) MSE2D CHILDIMP sr, sl',
-                    sum_right[k], sum_left[k])
                 s_impurity_left -= (sum_left[k] / weighted_n_left) ** 2.0
                 s_impurity_right -= (sum_right[k] / weighted_n_right) ** 2.0
             s_impurity_left /= self.n_outputs
@@ -500,14 +480,6 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
 
         # =====================================================================
  
-        print('*** (SSMSE) MSE2D CHILDIMP ssr, ssl, wnr, wnl',
-            sq_sum_right, sq_sum_left,
-            weighted_n_right, weighted_n_left,
-        )
-        print("*** SSMSE2D _CHILDIMP crit.pos", criterion.pos)
-        print('*** (SSMSE) MSE2D CHILDIMP uil, uir, oui, sil, sir',
-            u_impurity_left, u_impurity_right,
-            other_u_imp, s_impurity_left, s_impurity_right)
         if axis == 0:
             impurity_left[0] = self.ss_impurity(
                 u_imp_rows=u_impurity_left,
@@ -568,13 +540,15 @@ def make_2dss_splitter(
     if not isinstance(supervision, (list, tuple)):
         supervision = [supervision, supervision]
     if not isinstance(ss_criteria, (list, tuple)):
-        ss_criteria = [ss_criteria, ss_criteria]
+        ss_criteria = [copy.deepcopy(ss_criteria) for i in range(2)]
     if not isinstance(criteria, (list, tuple)):
-        criteria = [criteria, criteria]
+        criteria = [copy.deepcopy(criteria) for i in range(2)]
     if not isinstance(supervised_criteria, (list, tuple)):
-        supervised_criteria = [supervised_criteria, supervised_criteria]
+        supervised_criteria = \
+            [copy.deepcopy(supervised_criteria) for i in range(2)]
     if not isinstance(unsupervised_criteria, (list, tuple)):
-        unsupervised_criteria = [unsupervised_criteria, unsupervised_criteria]
+        unsupervised_criteria = \
+            [copy.deepcopy(unsupervised_criteria) for i in range(2)]
 
     # Make semi-supervised criteria
     for ax in range(2):

@@ -22,11 +22,11 @@ cdef class SSRegressionCriterion(SemisupervisedCriterion):
     cdef double[::1] sum_right
 
 cdef class SSCompositeCriterion(SemisupervisedCriterion):
-    cdef RegressionCriterion supervised_criterion
-    cdef RegressionCriterion unsupervised_criterion
+    cdef public RegressionCriterion supervised_criterion
+    cdef public RegressionCriterion unsupervised_criterion
     cdef const DOUBLE_t[:, ::1] X
-    cdef SIZE_t n_features
-    cdef double supervision
+    cdef public SIZE_t n_features
+    cdef public double supervision
 
 cdef class SSMSE(SSCompositeCriterion):
     pass

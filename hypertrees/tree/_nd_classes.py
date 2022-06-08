@@ -175,8 +175,8 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
                     )
 
         # Determine output settings
-        n_attrs = [Xax.shape[1] for Xax in X]
-        n_samples, self.n_features_in_ = y.size, sum(n_attrs)
+        self.ax_n_features_in_ = [Xax.shape[1] for Xax in X]
+        n_samples, self.n_features_in_ = y.size, sum(self.ax_n_features_in_)
         is_classification = is_classifier(self)
 
         y = np.atleast_1d(y)
@@ -233,11 +233,11 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
 
         # TODO: move to _check_parameters.
         if self.ax_max_features is None:
-            ax_max_features = n_attrs
+            ax_max_features = self.ax_n_features_in_
         else:
             ax_max_features = self.ax_max_features
 
-        ax_min_samples_leaf = self.ax_min_samples_leaf  # Defaults to 1.
+        ax_min_samples_leaf = self.ax_min_samples_leaf
 
         # TODO: move to _check_parameters.
         if self.ax_min_weight_fraction_leaf is None:
@@ -316,10 +316,10 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         n_samples,
         sparse=False,
         ax_max_features=None,
-        min_samples_leaf=None,
-        min_weight_leaf=None,
-        ax_min_samples_leaf=None,
-        ax_min_weight_leaf=None,
+        min_samples_leaf=1,
+        min_weight_leaf=0.,
+        ax_min_samples_leaf=1,
+        ax_min_weight_leaf=0.,
         random_state=None,
     ):
         if isinstance(self.splitter, Splitter2D):
@@ -767,7 +767,7 @@ class DecisionTreeRegressor2D(
         min_weight_fraction_leaf=0.0,
         max_features=None,
 
-        # New:
+        # 2D specific:
         ax_min_samples_leaf=1,
         ax_min_weight_fraction_leaf=None,
         ax_max_features=None,
@@ -1019,7 +1019,7 @@ class ExtraTreeRegressor2D(DecisionTreeRegressor2D):
         min_weight_fraction_leaf=0.0,
         max_features=None,
 
-        # New:
+        # 2D parameters:
         ax_min_samples_leaf=1,
         ax_min_weight_fraction_leaf=None,
         ax_max_features=None,

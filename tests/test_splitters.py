@@ -29,6 +29,8 @@ DEF_PARAMS = dict(
     noise=.5,
     inspect=False,
     plot=False,
+    start=0,
+    end=0,
 )
 
 
@@ -76,6 +78,13 @@ def compare_splitters_1d2d(
         raise RuntimeError(f"Bad seed ({PARAMS['seed']}), y is homogeneus."
                            " Try another one or reduce nrules.")
 
+    start = PARAMS['start'] or 0
+    end = PARAMS['end'] or Y.shape[0]
+
+    if (not isinstance(start, int)) or (not isinstance(end, int)):
+        raise TypeError(f"2D start/end not possible. start ({repr(start)}) and end "
+                        f"({repr(end)}) must be integers.")
+
     if isinstance(splitter1d, type):
         splitter1d = splitter1d(
             criterion=MSE(n_outputs=y.shape[1], n_samples=x.shape[0]),
@@ -96,13 +105,18 @@ def compare_splitters_1d2d(
 
     # Run test
     with stopwatch(f'Testing 1D splitter ({splitter1d.__class__.__name__})...'):
-        result1d = test_splitter(splitter1d, x, y)
+        result1d = test_splitter(
+            splitter1d, x, y, start=start*Y.shape[1], end=end*Y.shape[1])
         print('Best split found:')
         pprint(result1d)
 
-    sorted_indices = x[:, result1d['feature']].argsort()
-    manual_impurity_left = y[sorted_indices][:result1d['pos']].var()
-    manual_impurity_right = y[sorted_indices][result1d['pos']:].var()
+    x_ = x[start*Y.shape[1] : end*Y.shape[1]]
+    y_ = y[start*Y.shape[1] : end*Y.shape[1]]
+    pos = result1d['pos'] - start*Y.shape[1]
+
+    sorted_indices = x_[:, result1d['feature']].argsort()
+    manual_impurity_left = y_[sorted_indices][:pos].var()
+    manual_impurity_right = y_[sorted_indices][pos:].var()
 
     assert result1d['improvement'] >= 0, \
         'Negative reference improvement, input seems wrong.'
@@ -113,7 +127,8 @@ def compare_splitters_1d2d(
 
     # Run test 2d
     with stopwatch(f'Testing 2D splitter ({splitter2d.__class__.__name__})...'):
-        result2d = test_splitter_nd(splitter2d, XX, Y)
+        result2d = test_splitter_nd(
+            splitter2d, XX, Y, start=[start, 0], end=[end, Y.shape[1]])
         print('Best split found:')
         pprint(result2d)
 
@@ -129,7 +144,7 @@ def compare_splitters_1d2d(
     return result1d, result2d
 
 
-def test_impurities():
+def splitter_test_update_pos():
     pass
 
 
@@ -192,6 +207,6 @@ def test_ss_1d2d_ideal_split(**PARAMS):
 if __name__ == "__main__":
     args = parse_args(**DEF_PARAMS)
     # test_1d2d_ideal(**vars(args))
-    # test_1d2d(**vars(args))
+    test_1d2d(**vars(args))
     test_ss_1d2d(**vars(args))
-    # test_ss_1d2d_ideal_split(**vars(args))
+    test_ss_1d2d_ideal_split(**vars(args))

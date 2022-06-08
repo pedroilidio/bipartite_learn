@@ -47,6 +47,19 @@ cdef class Splitter2D:
         self.min_rows_leaf = self.splitter_rows.min_samples_leaf
         self.min_cols_leaf = self.splitter_cols.min_samples_leaf
 
+    def __reduce__(self):
+        return (
+            type(self),
+            (
+                self.splitter_rows,
+                self.splitter_cols,
+                self.criterion_wrapper,
+                self.min_samples_leaf,
+                self.min_weight_leaf,
+            ),
+            self.__getstate__(),
+        )
+
     def __getstate__(self):
         return {}
 
@@ -106,7 +119,7 @@ cdef class Splitter2D:
         self.weighted_n_samples = self.splitter_rows.weighted_n_samples * \
                                   self.splitter_cols.weighted_n_samples
 
-        ## TODO: Do in criterion_wrapper.init()
+        # TODO: Do it in criterion_wrapper.init()
         self.splitter_rows.weighted_n_samples = self.weighted_n_samples
         self.splitter_cols.weighted_n_samples = self.weighted_n_samples
 
@@ -160,7 +173,7 @@ cdef class Splitter2D:
             start, end,
         )
 
-        ## Done in criterion_wrapper.init()
+        # # Done in criterion_wrapper.init()
         # self.splitter_rows.criterion.reset()
         # self.splitter_cols.criterion.reset()
 
@@ -262,6 +275,8 @@ def make_2d_splitter(
     tion is provided to simplificate the process. With exception of n_samples,
     the remaining parameters may be set to a single value or a 2-valued
     tuple or list, to specify them for each axis.
+
+    ax_min_samples_leaf represents [min_rows_leaf, min_cols_leaf]
     """
     if not isinstance(n_samples, (list, tuple)):
         n_samples = [n_samples, n_samples]
@@ -274,9 +289,9 @@ def make_2d_splitter(
     if not isinstance(ax_min_weight_leaf, (list, tuple)):
         ax_min_weight_leaf = [ax_min_weight_leaf, ax_min_weight_leaf]
     if not isinstance(splitters, (list, tuple)):
-        splitters = [splitters, splitters]
+        splitters = [copy.deepcopy(splitters), copy.deepcopy(splitters)]
     if not isinstance(criteria, (list, tuple)):
-        criteria = [criteria, criteria]
+        criteria = [copy.deepcopy(criteria), copy.deepcopy(criteria)]
     if not isinstance(random_state, np.random.RandomState):
         random_state = np.random.RandomState(random_state)
 

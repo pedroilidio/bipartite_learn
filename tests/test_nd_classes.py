@@ -1,5 +1,5 @@
 from make_examples import make_interaction_data
-from test_utils import stopwatch, parse_args, gen_mock_data
+from test_utils import stopwatch, parse_args, gen_mock_data, melt_2d_data
 
 import logging
 from itertools import product
@@ -8,6 +8,7 @@ from sklearn.tree import DecisionTreeRegressor
 import sklearn.tree
 
 from hypertrees.tree._nd_classes import DecisionTreeRegressor2D
+from hypertrees.melter import row_cartesian_product
 from hypertrees.melter import row_cartesian_product
 
 import numpy as np
@@ -85,14 +86,13 @@ def compare_trees(
     pprint(PARAMS)
 
     with stopwatch():
-        XX, Y, strfunc = gen_mock_data(**PARAMS)
-        X, y = row_cartesian_product(XX), Y.reshape(-1, 1)
+        XX, Y, _ = gen_mock_data(**PARAMS)
+        x, y = melt_2d_data(XX, Y)
 
     # ######### Instantiate trees
     if isinstance(tree2, type):
         tree2 = tree2(
             min_samples_leaf=PARAMS['min_samples_leaf'],
-            # splitter='random',
             random_state=PARAMS['seed'],
         )
 
@@ -109,9 +109,9 @@ def compare_trees(
     with stopwatch(f'Fitting {tree1.__class__.__name__}...'):
         if tree1_is_unsupervised:
             print('Using unsupervised data for tree1.')
-            tree1.fit(X, X)
+            tree1.fit(x, x)
         else:
-            tree1.fit(X, y)
+            tree1.fit(x, y)
 
     with stopwatch(f'Fitting {tree2.__class__.__name__}...'):
         if tree2_is_2d:
@@ -119,7 +119,7 @@ def compare_trees(
             tree2.fit(XX, Y)
         else:
             print('Using 1D data for tree2.')
-            tree2.fit(X, y)
+            tree2.fit(x, y)
 
     tree1_n_samples_in_leaves = print_n_samples_in_leaves(tree1)
     tree2_n_samples_in_leaves = print_n_samples_in_leaves(tree2)
@@ -131,6 +131,22 @@ def compare_trees(
     # Start of comparison tests
     # =========================================================================
 
+    leaves_comparison = \
+        tree1_n_samples_in_leaves == tree2_n_samples_in_leaves
+
+    # comparison_test = np.all(leaves_comparison)  # See issue #1
+    comparison_test = \
+        set(tree1_n_samples_in_leaves) == set(tree2_n_samples_in_leaves)
+
+    stree1 = sklearn.tree.export_text(tree1)
+    stree2 = sklearn.tree.export_text(tree2)
+
+    if PARAMS['plot'] or not comparison_test:
+        with open('tree1.txt', 'w') as f:
+            f.write(stree1)
+        with open('tree2.txt', 'w') as f:
+            f.write(stree2)
+
     assert (tree1_n_samples_in_leaves.shape[0] ==
             tree2_n_samples_in_leaves.shape[0]), \
         "Number of leaves differ."
@@ -138,24 +154,11 @@ def compare_trees(
             tree2_n_samples_in_leaves.sum()), \
         "Total weighted_n_samples of leaves differ."
 
-    leaves_comparison = \
-        tree1_n_samples_in_leaves == tree2_n_samples_in_leaves
-    comparison_test = np.all(leaves_comparison)
-
     assert comparison_test, (
         "Some leaves differ in the number of samples."
         f"\n\tdiff positions: {np.nonzero(~leaves_comparison)[0]}"
         f"\n\tdiff: {tree1_n_samples_in_leaves[~leaves_comparison]}"
         f"!= {tree2_n_samples_in_leaves[~leaves_comparison]}")
-
-    stree1 = sklearn.tree.export_text(tree1)
-    stree2 = sklearn.tree.export_text(tree2)
-
-    if PARAMS['plot'] or stree1 != stree2:
-        with open('tree1.txt', 'w') as f:
-            f.write(stree1)
-        with open('tree2.txt', 'w') as f:
-            f.write(stree2)
 
     assert tree1_is_unsupervised or stree1 == stree2, \
         "Tree structure differs. See tree1.txt and tree2.txt"

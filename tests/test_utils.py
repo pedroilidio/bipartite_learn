@@ -34,7 +34,7 @@ def stopwatch(msg=None):
     return t
 
 
-def parse_args(**DEF_PARAMS):
+def parse_args(**PARAMS):
     argparser = ArgumentParser(fromfile_prefix_chars='@')
     argparser.add_argument('--seed', type=int)
     argparser.add_argument('--shape', nargs='+', type=int)
@@ -46,7 +46,14 @@ def parse_args(**DEF_PARAMS):
     argparser.add_argument('--noise', type=float)
     argparser.add_argument('--inspect', action='store_true')
     argparser.add_argument('--plot', action='store_true')
-    argparser.set_defaults(**DEF_PARAMS)
+
+    for k in set(DEF_PARAMS) ^ set(PARAMS):
+        v = PARAMS[k]
+        argtype = str if (v is None) else type(v)
+        argparser.add_argument('--'+k, type=argtype)
+
+    PARAMS = DEF_PARAMS | PARAMS
+    argparser.set_defaults(**PARAMS)
 
     return argparser.parse_args()
 

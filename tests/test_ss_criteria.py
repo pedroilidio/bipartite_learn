@@ -101,7 +101,7 @@ for name, criterion in criteria.items():
     )
     print('Testing...')
     with stopwatch():
-        result = test_splitter(splitter, X, y_, y_.shape)
+        result = test_splitter(splitter, X, y_)
         print('Best split found:')
         pprint(result)
 

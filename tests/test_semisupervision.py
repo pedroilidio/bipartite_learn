@@ -10,9 +10,8 @@ from sklearn.tree._splitter import BestSplitter
 
 from hypertrees.tree import DecisionTreeRegressor2D
 from hypertrees.tree._nd_splitter import make_2d_splitter
-from hypertrees.melter import row_cartesian_product
 from hypertrees.tree._semisupervised_criterion import (
-    SSMSE, SSCompositeCriterion
+    SSMSE, SSCompositeCriterion, make_2dss_splitter
 )
 from hypertrees.tree._semisupervised_classes import \
     DecisionTreeRegressorSS, DecisionTreeRegressor2DSS

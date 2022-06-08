@@ -13,11 +13,6 @@ from copy import deepcopy
 
 
 cdef class RegressionCriterionWrapper2D:
-    def __reduce__(self):
-        return (type(self),
-                (self.splitter_rows, self.splitter_cols),
-                self.__getstate__())
-
     def __cinit__(self, Splitter splitter_rows, Splitter splitter_cols):
         self.splitter_rows = splitter_rows
         self.splitter_cols = splitter_cols
@@ -78,6 +73,14 @@ cdef class RegressionCriterionWrapper2D:
         free(self.col_sample_weight)
         free(self.total_row_sample_weight)
         free(self.total_col_sample_weight)
+
+    def __reduce__(self):
+        return (type(self),
+                (self.splitter_rows, self.splitter_cols),
+                self.__getstate__())
+
+    def __getstate__(self):
+        return {}
 
     cdef int init(
             self, const DOUBLE_t[:, ::1] y_2D,
@@ -360,7 +363,6 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
             impurity_right[0] /= self.n_outputs
 
     cdef Criterion _get_criterion(self, SIZE_t axis): 
-        print('*** MSE2D GETCRIT')
         if axis == 1:
             return self.splitter_cols.criterion
         if axis == 0:
