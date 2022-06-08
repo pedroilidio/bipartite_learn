@@ -305,8 +305,9 @@ def make_2d_splitter(
             criteria[ax] = criteria[ax](
                 n_outputs=n_outputs[ax],
                 n_samples=n_samples[ax])
-        else:
-            criteria[ax] = copy.deepcopy(criteria[ax])
+
+        elif not isinstance(criteria[ax], Criterion):
+            raise TypeError
 
         # Make splitter
         if isinstance(splitters[ax], type):
@@ -321,11 +322,9 @@ def make_2d_splitter(
                 min_weight_leaf=ax_min_weight_leaf[ax],
                 random_state=random_state,
             )
-        else:
-            if criteria[ax] is not None:
+        elif criteria[ax] is not None:
                 warnings.warn("Since splitters[ax] is not a class, the provided"
                             " criteria[ax] is being ignored.")
-            splitters[ax] = copy.deepcopy(splitters[ax])
 
     # Wrap criteria.
     criterion_wrapper = \

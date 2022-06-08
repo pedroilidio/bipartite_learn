@@ -51,7 +51,9 @@ from sklearn.tree._classes import (
     DENSE_SPLITTERS, SPARSE_SPLITTERS,
 )
 from ._semisupervised_criterion import \
-    SemisupervisedCriterion, SSCompositeCriterion, SSMSE, make_2dss_splitter
+    SemisupervisedCriterion, SSCompositeCriterion, SSMSE, make_2dss_splitter, \
+    DynamicSSMSE
+
 from ._nd_classes import \
     BaseDecisionTree2D, DecisionTreeRegressor2D, ExtraTreeRegressor2D
 
@@ -61,8 +63,10 @@ __all__ = [
     "ExtraTreeClassifierSS",
     "DecisionTreeRegressorSS",
     "ExtraTreeRegressorSS",
+    "ExtraTreeRegressorDS",
     "DecisionTreeRegressor2DSS",
     "ExtraTreeRegressor2DSS",
+    "ExtraTreeRegressor2DDS",
 ]
 
 
@@ -75,8 +79,8 @@ DOUBLE = _tree.DOUBLE
 
 CRITERIA_SS = {
     "ss_squared_error": SSMSE,
+    "dynamic_ssmse": DynamicSSMSE,
 }
-
 
 # =============================================================================
 # Semisupervised classes
@@ -434,15 +438,29 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         unsupervised_criterion, n_samples,
     ):
         # TODO: pass Criterion types as *criterion parameters.
+        if isinstance(criterion, str) and criterion in CRITERIA_SS:
+            return CRITERIA_SS[criterion](
+                supervision=self.supervision,
+                n_outputs=self.n_outputs_,
+                n_features=self.n_features_in_,
+                n_samples=n_samples,
+            )
         if isinstance(criterion, SemisupervisedCriterion):
             return criterion
+
         supervised_criterion = supervised_criterion or criterion
         unsupervised_criterion = unsupervised_criterion or criterion
 
         supervised_criterion = self._check_criterion(
-            supervised_criterion, n_samples, self.n_outputs_)
+            supervised_criterion,
+            n_samples=n_samples,
+            n_outputs=self.n_outputs_,
+        )
         unsupervised_criterion = self._check_criterion(
-            unsupervised_criterion, n_samples, self.n_features_in_)
+            unsupervised_criterion,
+            n_samples=n_samples,
+            n_outputs=self.n_features_in_,
+        )
         
         return SSCompositeCriterion(
             supervision=self.supervision,
@@ -451,18 +469,13 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         )
 
 
-    def _check_criterion(self, criterion, n_samples, n_outputs):
+    def _check_criterion(self, criterion, **kwargs):
         if isinstance(criterion, str):
             if is_classifier(self):
-                criterion = CRITERIA_CLF[criterion](
-                    n_outputs=n_outputs,
-                    n_samples=n_samples,
-                )
+                criterion = CRITERIA_CLF[criterion](**kwargs)
             else:
-                criterion = CRITERIA_REG[criterion](
-                    n_outputs=n_outputs,
-                    n_samples=n_samples,
-                )
+                criterion = CRITERIA_REG[criterion](**kwargs)
+
         elif not isinstance(criterion, Criterion):
             raise TypeError('criterion provided must be a Criterion instance.')
 
@@ -1942,4 +1955,196 @@ class ExtraTreeRegressor2DSS(BaseDecisionTree2DSS, ExtraTreeRegressor2D):
             supervised_criterion=supervised_criterion,
             unsupervised_criterion=unsupervised_criterion,
         )
-        
+
+
+# =============================================================================
+# Dynamically supervised trees
+# =============================================================================
+
+
+class DecisionTreeRegressorDS(DecisionTreeRegressorSS):
+    def __init__(
+        self,
+        *,
+        criterion="dynamic_ssmse",
+        splitter="best",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=1.0,
+        random_state=None,
+        min_impurity_decrease=0.0,
+        max_leaf_nodes=None,
+        ccp_alpha=0.0,
+
+        # Semi-supervised parameters:
+        supervision=0.,  #  Indifferent.
+        supervised_criterion=None,
+        unsupervised_criterion=None,
+    ):
+        super().__init__(
+            splitter=splitter,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+            min_impurity_decrease=min_impurity_decrease,
+            random_state=random_state,
+            ccp_alpha=ccp_alpha,
+            # Semi-supervised parameters:
+            supervision=supervision,
+            criterion=criterion,
+            supervised_criterion=supervised_criterion,
+            unsupervised_criterion=unsupervised_criterion,
+        )
+
+
+class DecisionTreeRegressor2DDS(BaseDecisionTree2DSS, DecisionTreeRegressor2D):
+    def __init__(
+        self,
+        criterion=None,
+        splitter="best",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=None,
+        random_state=None,
+        max_leaf_nodes=None,
+        class_weight=None,
+        min_impurity_decrease=0.0,
+        ccp_alpha=0.0,
+
+        # 2D parameters:
+        ax_min_samples_leaf=1,
+        ax_min_weight_fraction_leaf=None,
+        ax_max_features=None,
+
+        # Semi-supervised parameters:
+        supervision=1,  # Will be ignored.
+        ss_criterion="dynamic_ssmse",
+        supervised_criterion=None,
+        unsupervised_criterion=None,
+    ):
+        super().__init__(
+            splitter=splitter,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+            random_state=random_state,
+            min_impurity_decrease=min_impurity_decrease,
+            class_weight=class_weight,
+            ccp_alpha=ccp_alpha,
+
+            # 2D parameters:
+            ax_min_samples_leaf=ax_min_samples_leaf,
+            ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf,
+            ax_max_features=ax_max_features,
+
+            # Semi-supervised parameters:
+            supervision=supervision,
+            ss_criterion=ss_criterion,
+            criterion=criterion,
+            supervised_criterion=supervised_criterion,
+            unsupervised_criterion=unsupervised_criterion,
+        )
+
+
+class ExtraTreeRegressorDS(DecisionTreeRegressorSS):
+    def __init__(
+        self,
+        *,
+        criterion="dynamic_ssmse",
+        splitter="random",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=1.0,
+        random_state=None,
+        min_impurity_decrease=0.0,
+        max_leaf_nodes=None,
+        ccp_alpha=0.0,
+
+        # Semi-supervised parameters:
+        supervision=0.,  #  Indifferent.
+        supervised_criterion=None,
+        unsupervised_criterion=None,
+    ):
+        super().__init__(
+            splitter=splitter,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+            min_impurity_decrease=min_impurity_decrease,
+            random_state=random_state,
+            ccp_alpha=ccp_alpha,
+            # Semi-supervised parameters:
+            supervision=supervision,
+            criterion=criterion,
+            supervised_criterion=supervised_criterion,
+            unsupervised_criterion=unsupervised_criterion,
+        )
+
+
+class ExtraTreeRegressor2DDS(BaseDecisionTree2DSS, ExtraTreeRegressor2D):
+    def __init__(
+        self,
+        criterion=None,
+        splitter="random",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=None,
+        random_state=None,
+        max_leaf_nodes=None,
+        class_weight=None,
+        min_impurity_decrease=0.0,
+        ccp_alpha=0.0,
+
+        # 2D parameters:
+        ax_min_samples_leaf=1,
+        ax_min_weight_fraction_leaf=None,
+        ax_max_features=None,
+
+        # Semi-supervised parameters:
+        supervision=1,  # Will be ignored.
+        ss_criterion="dynamic_ssmse",
+        supervised_criterion=None,
+        unsupervised_criterion=None,
+    ):
+        super().__init__(
+            splitter=splitter,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+            random_state=random_state,
+            min_impurity_decrease=min_impurity_decrease,
+            class_weight=class_weight,
+            ccp_alpha=ccp_alpha,
+
+            # 2D parameters:
+            ax_min_samples_leaf=ax_min_samples_leaf,
+            ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf,
+            ax_max_features=ax_max_features,
+
+            # Semi-supervised parameters:
+            supervision=supervision,
+            ss_criterion=ss_criterion,
+            criterion=criterion,
+            supervised_criterion=supervised_criterion,
+            unsupervised_criterion=unsupervised_criterion,
+        )

@@ -5,6 +5,7 @@ from sklearn.tree._criterion import MSE
 from sklearn.tree._tree cimport SIZE_t
 from libc.stdlib cimport malloc, free
 from libc.string cimport memset
+from libc.math cimport log2
 import numpy as np
 cimport numpy as cnp
 
@@ -51,6 +52,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
             self.__getstate__(),
         )
 
+    # TODO: We maybe should make __init__ simpler.
     def __init__(
         self,
         double supervision=.5,
@@ -274,6 +276,64 @@ cdef class SSMSE(SSCompositeCriterion):
         )
 
 
+# TODO: cdef class DynamicSSCompositeCriterion(SSCompositeCriterion):
+
+
+cdef class DynamicSSMSE(SSMSE):
+    """ It's SSMSE, but changes its supervision value each run. 
+    
+    One criteria will receive y in its init() and the other will receive X.
+    Their calculated impurities will then be combined as the final impurity:
+
+        sup*supervised_impurity + (1-sup)*unsupervised_impurity
+
+    where sup is self.supervision.
+
+    Note that the splitter holding it should receive X and y concatenated
+    (horizontally stacked) as its y parameter (y=np.hstack((X, y))).
+    """
+    def __init__(
+        self,
+        SIZE_t n_outputs,
+        SIZE_t n_features,
+        SIZE_t n_samples,
+        *args, **kwargs,
+    ):
+        super().__init__(
+            supervision=0.,  # Any value will work.
+            criterion=MSE,
+            n_outputs=n_outputs,
+            n_features=n_features,
+            n_samples=n_samples,
+        )
+        #self.supervision_persistence = supervision
+
+    cdef int init(
+            self, const DOUBLE_t[:, ::1] y,
+            DOUBLE_t* sample_weight,
+            double weighted_n_samples, SIZE_t* samples, SIZE_t start,
+            SIZE_t end) nogil except -1:
+
+        cdef double w, W
+        cdef int rc = SSMSE.init(
+            self, y, sample_weight, weighted_n_samples, samples, start, end)
+
+        w = self.weighted_n_node_samples 
+        W = weighted_n_samples
+
+        self.supervision = \
+            1/(1 + 2 ** (10*(.5 - log2(w)/log2(W))))
+            # self.weighted_n_node_samples / weighted_n_samples
+        with gil: print("*** SSCRIT self.sup changed to:", self.supervision)
+        
+        return rc
+        
+
+# =============================================================================
+# 2D Semi-supervised Criterion Wrapper
+# =============================================================================
+
+
 cdef class RegressionCriterionWrapper2DSS(RegressionCriterionWrapper2D):
     cdef void _set_splitter_y(
         self,
@@ -281,6 +341,7 @@ cdef class RegressionCriterionWrapper2DSS(RegressionCriterionWrapper2D):
         const DOUBLE_t[:, ::1] y,
     ):
         # FIXME: avoid using Python here.
+        # TODO: only set y values after the first call.
         if splitter == self.splitter_rows:
             splitter.y = np.hstack((self.X_rows, y))
         elif splitter == self.splitter_cols:
@@ -555,11 +616,12 @@ def make_2dss_splitter(
         if ss_criteria[ax] is None:
             ss_criteria[ax] = SSCompositeCriterion
         elif isinstance(ss_criteria[ax], SemisupervisedCriterion):
-            criteria[ax] = copy.deepcopy(criteria[ax])
             continue
         elif isinstance(ss_criteria[ax], type):
             if not issubclass(ss_criteria[ax], SSCompositeCriterion):
                 raise ValueError
+        else:
+            raise ValueError
 
         supervised_criteria[ax] = supervised_criteria[ax] or criteria[ax]
         unsupervised_criteria[ax] = unsupervised_criteria[ax] or criteria[ax]
@@ -571,8 +633,6 @@ def make_2dss_splitter(
                 n_outputs=n_outputs[ax],
                 n_samples=n_samples[ax],
             )
-        else:
-            supervised_criteria[ax] = copy.deepcopy(supervised_criteria[ax])
 
         if isinstance(unsupervised_criteria[ax], type):
             if not issubclass(unsupervised_criteria[ax], Criterion):
@@ -581,8 +641,6 @@ def make_2dss_splitter(
                 n_outputs=n_features[ax],
                 n_samples=n_samples[ax],
             )
-        else:
-            unsupervised_criteria[ax] = copy.deepcopy(unsupervised_criteria[ax])
 
         ss_criteria[ax] = ss_criteria[ax](
             supervision=supervision[ax],

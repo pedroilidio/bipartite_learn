@@ -7,7 +7,8 @@ from sklearn.tree._splitter import BestSplitter
 from splitter_test import test_splitter, test_splitter_nd
 from hypertrees.tree._semisupervised_criterion import SSCompositeCriterion
 from hypertrees.tree._nd_splitter import make_2d_splitter
-from hypertrees.tree._semisupervised_criterion import make_2dss_splitter
+from hypertrees.tree._semisupervised_criterion import \
+    make_2dss_splitter, DynamicSSMSE
 
 import numpy as np
 #from sklearn.tree._tree import DTYPE_t, DOUBLE_t
@@ -63,6 +64,7 @@ def compare_splitters_1d2d(
     splitter1d,
     splitter2d,
     tol=1e-10,
+    manual_impurity=True,
     **PARAMS,
 ):
     PARAMS = DEF_PARAMS | PARAMS
@@ -110,20 +112,22 @@ def compare_splitters_1d2d(
         print('Best split found:')
         pprint(result1d)
 
-    x_ = x[start*Y.shape[1] : end*Y.shape[1]]
-    y_ = y[start*Y.shape[1] : end*Y.shape[1]]
-    pos = result1d['pos'] - start*Y.shape[1]
-
-    sorted_indices = x_[:, result1d['feature']].argsort()
-    manual_impurity_left = y_[sorted_indices][:pos].var()
-    manual_impurity_right = y_[sorted_indices][pos:].var()
-
     assert result1d['improvement'] >= 0, \
         'Negative reference improvement, input seems wrong.'
-    assert abs(result1d['impurity_left']-manual_impurity_left) <= tol, \
-        'Wrong reference impurity left.'
-    assert abs(result1d['impurity_right']-manual_impurity_right) <= tol, \
-        'Wrong reference impurity right.'
+
+    if manual_impurity:
+        x_ = x[start*Y.shape[1] : end*Y.shape[1]]
+        y_ = y[start*Y.shape[1] : end*Y.shape[1]]
+        pos = result1d['pos'] - start*Y.shape[1]
+
+        sorted_indices = x_[:, result1d['feature']].argsort()
+        manual_impurity_left = y_[sorted_indices][:pos].var()
+        manual_impurity_right = y_[sorted_indices][pos:].var()
+
+        assert abs(result1d['impurity_left']-manual_impurity_left) <= tol, \
+            'Wrong reference impurity left.'
+        assert abs(result1d['impurity_right']-manual_impurity_right) <= tol, \
+            'Wrong reference impurity right.'
 
     # Run test 2d
     with stopwatch(f'Testing 2D splitter ({splitter2d.__class__.__name__})...'):
@@ -142,10 +146,6 @@ def compare_splitters_1d2d(
         'impurity_right differs from reference.'
     
     return result1d, result2d
-
-
-def splitter_test_update_pos():
-    pass
 
 
 def test_1d2d_ideal(**PARAMS):
@@ -168,9 +168,9 @@ def test_1d2d(**PARAMS):
 
 def test_ss_1d2d(**PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
-    ss2d_splitter = make_2dss_splitter(
-        splitters = BestSplitter,
-        criteria = MSE,
+    ss2d_splitter=make_2dss_splitter(
+        splitters=BestSplitter,
+        criteria=MSE,
         supervision=1.,
         max_features=PARAMS['nattrs'],
         n_features=PARAMS['nattrs'],
@@ -187,9 +187,9 @@ def test_ss_1d2d(**PARAMS):
 
 def test_ss_1d2d_ideal_split(**PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
-    ss2d_splitter = make_2dss_splitter(
-        splitters = BestSplitter,
-        criteria = MSE,
+    ss2d_splitter=make_2dss_splitter(
+        splitters=BestSplitter,
+        criteria=MSE,
         supervision=1.,
         max_features=PARAMS['nattrs'],
         n_features=PARAMS['nattrs'],
@@ -206,7 +206,8 @@ def test_ss_1d2d_ideal_split(**PARAMS):
 
 if __name__ == "__main__":
     args = parse_args(**DEF_PARAMS)
-    # test_1d2d_ideal(**vars(args))
+
+    test_1d2d_ideal(**vars(args))
     test_1d2d(**vars(args))
     test_ss_1d2d(**vars(args))
     test_ss_1d2d_ideal_split(**vars(args))

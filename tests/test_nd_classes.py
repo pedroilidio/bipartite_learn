@@ -160,9 +160,6 @@ def compare_trees(
         f"\n\tdiff: {tree1_n_samples_in_leaves[~leaves_comparison]}"
         f"!= {tree2_n_samples_in_leaves[~leaves_comparison]}")
 
-    assert tree1_is_unsupervised or stree1 == stree2, \
-        "Tree structure differs. See tree1.txt and tree2.txt"
-
 
 def main(
     tree1=DecisionTreeRegressor,
