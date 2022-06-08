@@ -1,4 +1,4 @@
-# HyperTree
+# HyperTrees
 This code implements PBCTs based on its original proposal by Pliakos, Geurts and Vens in 2018<sup>1</sup>. Functionality is intended be extended to semi-supervision approaches and n-dimensional interaction tensors, where n instances of n different classes would interact or not for each database instance.
 
 <sup>1</sup>Pliakos, Konstantinos, Pierre Geurts, and Celine Vens. "Global multi-output decision trees for interaction prediction." *Machine Learning* 107.8 (2018): 1257-1281.
