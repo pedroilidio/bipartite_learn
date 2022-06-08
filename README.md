@@ -10,8 +10,8 @@ $ pip install hypertrees
 ```
 Local installation can be done either by providing the `--user` flag to the above command or by cloning this repo and issuing `pip` afterwards, for example:
 ```
-$ git clone https://github.com/pedroilidio/hypertree
-$ cd hypertree
+$ git clone https://github.com/pedroilidio/hypertrees
+$ cd hypertrees
 $ pip install -e .
 ```
 Where the `-e` option installs it as symbolic links to the local cloned repository, so that changes in it will reflect on the installation directly.
