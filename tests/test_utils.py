@@ -5,6 +5,7 @@ from time import time
 from argparse import ArgumentParser
 from contextlib import contextmanager
 import numpy as np
+from pprint import pformat
 
 DTYPE_t, DOUBLE_t = np.float32, np.float64
 
@@ -14,7 +15,7 @@ DEF_PARAMS = dict(
     seed=7,
     shape=(50, 60),
     nattrs=(10, 9),
-    nrules=10,
+    nrules=5,
     min_samples_leaf=100,
     transpose_test=False,
     noise=0.1,
@@ -47,7 +48,7 @@ def parse_args(**PARAMS):
     argparser.add_argument('--inspect', action='store_true')
     argparser.add_argument('--plot', action='store_true')
 
-    for k in set(DEF_PARAMS) ^ set(PARAMS):
+    for k in set(PARAMS) - set(DEF_PARAMS):
         v = PARAMS[k]
         argtype = str if (v is None) else type(v)
         argparser.add_argument('--'+k, type=argtype)
@@ -58,27 +59,33 @@ def parse_args(**PARAMS):
     return argparser.parse_args()
 
 
-def gen_mock_data(**PARAMS):
-    XX, Y, strfunc = make_interaction_data(
-        PARAMS['shape'], PARAMS['nattrs'], nrules=PARAMS['nrules'],
-        noise=PARAMS['noise'], random_state=PARAMS['seed']
-    )
+def gen_mock_data(melt=False, **PARAMS):
+    with stopwatch("Generating mock interaction data with the following "
+                   f"params:\n{pformat(PARAMS)}"):
 
-    if PARAMS['transpose_test']:
-        print('Test transposing axis.')
-        Y = np.copy(Y.T.astype(DOUBLE_t), order='C')
-        XX = [np.ascontiguousarray(X, DTYPE_t) for X in XX[::-1]]
-        PARAMS['nattrs'] = PARAMS['nattrs'][::-1]
-        PARAMS['shape'] = PARAMS['shape'][::-1]
-    else:
-        Y = np.ascontiguousarray(Y, DOUBLE_t)
-        XX = [np.ascontiguousarray(X, DTYPE_t) for X in XX]
+        XX, Y, strfunc = make_interaction_data(
+            PARAMS['shape'], PARAMS['nattrs'], nrules=PARAMS['nrules'],
+            noise=PARAMS['noise'], random_state=PARAMS['seed']
+        )
+
+        if PARAMS['transpose_test']:
+            print('Test transposing axis.')
+            Y = np.copy(Y.T.astype(DOUBLE_t), order='C')
+            XX = [np.ascontiguousarray(X, DTYPE_t) for X in XX[::-1]]
+            PARAMS['nattrs'] = PARAMS['nattrs'][::-1]
+            PARAMS['shape'] = PARAMS['shape'][::-1]
+        else:
+            Y = np.ascontiguousarray(Y, DOUBLE_t)
+            XX = [np.ascontiguousarray(X, DTYPE_t) for X in XX]
 
     print('Data density (mean):', Y.mean())
     print('Data variance:', Y.var())
     print('=' * 50)
 
-    return XX, Y, strfunc
+    if melt:
+        return XX, Y, *melt_2d_data(XX, Y), strfunc
+    else:
+        return XX, Y, strfunc
 
 
 def melt_2d_data(XX, Y):

@@ -178,5 +178,5 @@ def test_main():
 
 
 if __name__ == "__main__":
-    args = parse_args(**DEF_PARAMS)
+    args = parse_args()
     main(**vars(args))

@@ -69,8 +69,6 @@ cdef class RegressionCriterionWrapper2D:
             (self.n_cols, self.n_outputs), dtype=np.float64)
 
     def __dealloc__(self):
-        free(self.row_sample_weight)
-        free(self.col_sample_weight)
         free(self.total_row_sample_weight)
         free(self.total_col_sample_weight)
 

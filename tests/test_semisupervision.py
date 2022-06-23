@@ -1,10 +1,4 @@
-from copy import deepcopy
-from make_examples import make_interaction_data
 from test_nd_classes import compare_trees, parse_args
-
-from argparse import ArgumentParser
-from itertools import product
-from pprint import pprint
 
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.tree._splitter import BestSplitter

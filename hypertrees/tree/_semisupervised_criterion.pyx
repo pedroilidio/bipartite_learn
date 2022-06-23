@@ -324,7 +324,7 @@ cdef class DynamicSSMSE(SSMSE):
         self.supervision = \
             1/(1 + 2 ** (10*(.5 - log2(w)/log2(W))))
             # self.weighted_n_node_samples / weighted_n_samples
-        with gil: print("*** SSCRIT self.sup changed to:", self.supervision)
+        # with gil: print("*** SSCRIT self.sup changed to:", self.supervision)
         
         return rc
         

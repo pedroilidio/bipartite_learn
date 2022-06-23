@@ -32,6 +32,8 @@ The module structure is the following:
 Single and multi-output problems are both handled.
 """
 
+# TODO: Documentation.
+
 # Author: Pedro Ilidio <pedrilidio@gmail.com>
 # Adapted from scikit-learn.
 #
@@ -238,18 +240,27 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
         if issparse(y):
             raise ValueError("sparse y is not supported.")
 
-        # FIXME: skipping validation.
-        # X, y = self._validate_data(
-        #     X, y, multi_output=True, accept_sparse="csc", dtype=DTYPE
-        # )
+        check_X_params = dict(dtype=DTYPE, accept_sparse="csc")
+        check_y_params = dict(multi_output=True)
+
+        y = self._validate_data(X="no_validation", y=y, **check_y_params)
+
+        for ax in range(len(X)):
+            X[ax] = self._validate_data(X[ax], **check_X_params, reset=False)
+            if issparse(X[ax]):
+                # Pre-sort indices to avoid that each individual tree of the
+                # ensemble sorts the indices.
+                X[ax].sort_indices()
+
+        # FIXME
         # if sample_weight is not None:
         #     sample_weight = _check_sample_weight(sample_weight, X)
 
-        if any(issparse(Xi) for Xi in X):
-            # Pre-sort indices to avoid that each individual tree of the
-            # ensemble sorts the indices.
-            for Xi in X:
-                Xi.sort_indices()
+        # NOTE: n_features_in_ must be set after calling self._validate_data.
+        #       Otherwise, the method will try to compare self.n_features_in_
+        #       to X[ax].shape[1] and throw an error when they do not match.
+        self.ax_n_features_in_ = [Xax.shape[1] for Xax in X]
+        self.n_features_in_ = sum(self.ax_n_features_in_)
 
         y = np.atleast_1d(y)
         if y.ndim == 2 and y.shape[1] == 1:
@@ -373,7 +384,7 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
             self.estimators_.extend(trees)
 
         if self.oob_score:
-            # FIXME: type_of_target doesn't know about ND data.
+            # FIXME: type_of_target doesn't know about 2D data.
             # y_type = type_of_target(y)
             # if y_type in ("multiclass-multioutput", "unknown"):
             #     # FIXME: we could consider to support multiclass-multioutput if
@@ -462,15 +473,12 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
         return oob_pred
 
     def _validate_X_predict(self, X):
+        """ Validate X whenever one tries to predict, apply, predict_proba.
         """
-        Validate X whenever one tries to predict, apply, predict_proba."""
-        check_is_fitted(self)
-        # FIXME: fails to understand nd X format because self.n_outputs
-        # FIXME: TypeError: super(type, obj): obj must be an instance or subtype of type
-        # X = [super()._validate_data(Xi) for Xi in X]
         if isinstance(X, (tuple, list)):  # FIXME: better criteria.
             X = row_cartesian_product(X)
-        return X
+
+        return super()._validate_X_predict(X)
 
 
 class ForestRegressorND(BaseForestND, ForestRegressor, RegressorMixin, metaclass=ABCMeta):
@@ -771,7 +779,7 @@ class RandomForestRegressor2D(ForestRegressorND):
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,
 
-        # New:
+        # 2D parameters:
         ax_min_samples_leaf=1,
         ax_min_weight_fraction_leaf=None,
         ax_max_features=None,
@@ -800,7 +808,7 @@ class RandomForestRegressor2D(ForestRegressorND):
                 "random_state",
                 "ccp_alpha",
 
-                # New:
+                # 2D parameters:
                 "ax_min_samples_leaf",
                 "ax_min_weight_fraction_leaf",
                 "ax_max_features",
@@ -824,7 +832,7 @@ class RandomForestRegressor2D(ForestRegressorND):
         self.min_impurity_decrease = min_impurity_decrease
         self.ccp_alpha = ccp_alpha
 
-        # New:
+        # 2D parameters:
         self.ax_min_samples_leaf=ax_min_samples_leaf
         self.ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf
         self.ax_max_features=ax_max_features
@@ -1101,7 +1109,7 @@ class ExtraTreesRegressor2D(ForestRegressorND):
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,
 
-        # New:
+        # 2D parameters:
         ax_min_samples_leaf=1,
         ax_min_weight_fraction_leaf=None,
         ax_max_features=None,
@@ -1130,7 +1138,7 @@ class ExtraTreesRegressor2D(ForestRegressorND):
                 "random_state",
                 "ccp_alpha",
 
-                # New:
+                # 2D parameters:
                 "ax_min_samples_leaf",
                 "ax_min_weight_fraction_leaf",
                 "ax_max_features",
@@ -1154,7 +1162,7 @@ class ExtraTreesRegressor2D(ForestRegressorND):
         self.min_impurity_decrease = min_impurity_decrease
         self.ccp_alpha = ccp_alpha
 
-        # New:
+        # 2D parameters:
         self.ax_min_samples_leaf=ax_min_samples_leaf
         self.ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf
         self.ax_max_features=ax_max_features

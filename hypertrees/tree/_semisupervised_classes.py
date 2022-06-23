@@ -36,7 +36,7 @@ from sklearn.tree._tree import \
     Tree, DepthFirstTreeBuilder, BestFirstTreeBuilder
 from sklearn.tree import _tree, _splitter, _criterion, DecisionTreeRegressor
 
-# ND new:
+# Hypertree-specific:
 from itertools import product
 from typing import Iterable
 from ..base import RegressorMixinND
@@ -45,7 +45,7 @@ from ._nd_criterion import MSE_Wrapper2D
 from ._nd_splitter import Splitter2D, make_2d_splitter
 from ..melter import row_cartesian_product
 
-# SS new:
+# Semi-supervision-specific:
 from sklearn.tree._classes import (
     check_is_fitted, BaseDecisionTree, CRITERIA_CLF, CRITERIA_REG,
     DENSE_SPLITTERS, SPARSE_SPLITTERS,
@@ -109,6 +109,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         min_impurity_decrease,
         class_weight=None,
         ccp_alpha=0.0,
+
         # Semi-supervised parameters:
         supervision=0.5,
         criterion=None,
@@ -1699,6 +1700,7 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
         min_impurity_decrease=0.0,
         max_leaf_nodes=None,
         ccp_alpha=0.0,
+
         # Semi-supervised parameters:
         supervision=0.5,
         supervised_criterion=None,
@@ -1715,6 +1717,7 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
             min_impurity_decrease=min_impurity_decrease,
             random_state=random_state,
             ccp_alpha=ccp_alpha,
+
             # Semi-supervised parameters:
             supervision=supervision,
             criterion=criterion,
@@ -1994,6 +1997,7 @@ class DecisionTreeRegressorDS(DecisionTreeRegressorSS):
             min_impurity_decrease=min_impurity_decrease,
             random_state=random_state,
             ccp_alpha=ccp_alpha,
+
             # Semi-supervised parameters:
             supervision=supervision,
             criterion=criterion,
@@ -2088,6 +2092,7 @@ class ExtraTreeRegressorDS(DecisionTreeRegressorSS):
             min_impurity_decrease=min_impurity_decrease,
             random_state=random_state,
             ccp_alpha=ccp_alpha,
+
             # Semi-supervised parameters:
             supervision=supervision,
             criterion=criterion,

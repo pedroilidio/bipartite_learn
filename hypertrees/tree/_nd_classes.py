@@ -141,17 +141,17 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         )
 
 
-        # FIXME: enable check_input.
-        # It currently tests the number of outputs and fail.
-        if False and check_input:
-            # We can't pass multi_ouput=True because that would allow y to be
-            # csr.
+        if check_input:
+            # SK: Need to validate separately here.
+            # SK: We can't pass multi_ouput=True because that would allow y
+            # to be csr.
+            # FIXME: set multi_output=False
             check_X_params = dict(dtype=DTYPE, accept_sparse="csc")
-            check_y_params = dict(ensure_2d=False, dtype=None)
-            y = self._validate_data(y, **check_y_params)
+            check_y_params = dict(multi_output=True)
+
+            y = self._validate_data(X="no_validation", y=y, **check_y_params)
 
             for ax in range(len(X)):
-                # FIXME: it will test the # of outputs and fail.
                 X[ax] = self._validate_data(X[ax], **check_X_params)
                 if issparse(X[ax]):
                     X[ax].sort_indices()
@@ -175,6 +175,9 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
                     )
 
         # Determine output settings
+        # NOTE: n_features_in_ must be set after calling self._validate_data.
+        #       Otherwise, the method will try to compare self.n_features_in_
+        #       to X[ax].shape[1] and throw an error when they do not match.
         self.ax_n_features_in_ = [Xax.shape[1] for Xax in X]
         n_samples, self.n_features_in_ = y.size, sum(self.ax_n_features_in_)
         is_classification = is_classifier(self)
@@ -527,8 +530,8 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         # FIXME: storing a whole matrix unnecessarily.
         if isinstance(X, (tuple, list)):  # FIXME: better criteria.
             X = row_cartesian_product(X)
-        # return super()._validate_X_predict(X, check_input)  # FIXMEJ
-        return X
+
+        return super()._validate_X_predict(X, check_input)
 
 #     # FIXME: reshape after?
 #     def predict(self, X, check_input=True):
@@ -797,8 +800,7 @@ class DecisionTreeRegressor2D(
             ccp_alpha=ccp_alpha,
         )
 
-    # FIXME: fix check_input to set default to True.
-    def fit(self, X, y, sample_weight=None, check_input=False):
+    def fit(self, X, y, sample_weight=None, check_input=True):
         """Build a decision tree regressor from the training set (X, y).
 
         Parameters

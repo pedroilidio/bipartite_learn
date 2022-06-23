@@ -17,7 +17,7 @@ import itertools
 from sklearn.model_selection._validation import (
     _score,
     _normalize_score_results,
-    _warn_about_fit_failures,
+    _warn_or_raise_about_fit_failures,
     _aggregate_score_dicts,
 )
 from sklearn.utils.validation import (
@@ -74,7 +74,7 @@ def cross_validate_nd(
     diagonal=False,
     train_test_combinations=None,
 ):
-    # TODO: ND adapt.
+    # TODO: ND adapt docs.
     """Evaluate metric(s) by cross-validation and also record fit/score times.
 
     Read more in the :ref:`User Guide <multimetric_cross_validation>`.
@@ -329,7 +329,7 @@ def cross_validate_nd(
         for train_test in splits_iter
     )
 
-    _warn_about_fit_failures(results, error_score)
+    _warn_or_raise_about_fit_failures(results, error_score)
 
     # For callabe scoring, the return type is only know after calling. If the
     # return type is a dictionary, the error scores can now be inserted with
@@ -507,6 +507,7 @@ def _fit_and_score_nd(
 
     ####################### MODFIED SECTION ##########################
 
+    train_indices = [i[0] for i in train_test]
     test_splits = {}
 
     # NOTE: ttc stands for train-test combinations
@@ -514,10 +515,10 @@ def _fit_and_score_nd(
         # is_test_tuple ~= (0, 1, 1, 0)
         test_indices = [ax_train_test[is_test] for is_test, ax_train_test in
                         zip(is_test_tuple, train_test)]
-        test_splits[ttc_name] = _safe_split_nd(estimator, X, y, test_indices)
+        test_splits[ttc_name] = _safe_split_nd(
+            estimator, X, y, test_indices, train_indices)
 
 
-    train_indices = [i[0] for i in train_test]
     X_train, y_train = _safe_split_nd(estimator, X, y, train_indices)
 
     result = {}

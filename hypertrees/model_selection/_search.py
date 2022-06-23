@@ -33,9 +33,7 @@ from sklearn.base import MetaEstimatorMixin
 from sklearn.model_selection._validation import _aggregate_score_dicts
 from sklearn.model_selection._validation import _insert_error_scores
 from sklearn.model_selection._validation import _normalize_score_results
-# Future:
-# from sklearn.model_selection._validation import _warn_or_raise_about_fit_failures
-from sklearn.model_selection._validation import _warn_about_fit_failures
+from sklearn.model_selection._validation import _warn_or_raise_about_fit_failures
 from joblib import Parallel
 from sklearn.utils.validation import indexable, _check_fit_params
 from sklearn.utils.fixes import delayed
@@ -211,7 +209,7 @@ class BaseSearchCVND(BaseSearchCV, metaclass=ABCMeta):
                         "splits, got {}".format(n_splits, len(out) // n_candidates)
                     )
 
-                _warn_about_fit_failures(out, self.error_score)
+                _warn_or_raise_about_fit_failures(out, self.error_score)
 
                 # For callable self.scoring, the return type is only know after
                 # calling. If the return type is a dictionary, the error scores
