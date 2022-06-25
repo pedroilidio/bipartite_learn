@@ -7,7 +7,7 @@ from hypertrees.tree import DecisionTreeRegressor2D
 from hypertrees.tree._nd_splitter import make_2d_splitter
 from hypertrees.tree._semisupervised_criterion import (
     SSMSE, SSCompositeCriterion, make_2dss_splitter, DynamicSSMSE,
-    SingleFeatureSSCompositeCriterion,
+    SingleFeatureSSCompositeCriterion, MSE2DSFSS,
 )
 from hypertrees.tree._semisupervised_classes import (
     DecisionTreeRegressorSS, DecisionTreeRegressor2DSS,
@@ -114,18 +114,18 @@ def test_unsupervised_component_2d(**PARAMS):
 
 def test_semisupervision_1d2d(supervision=None, **PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
+    rstate = np.random.RandomState(PARAMS['seed'])
     if supervision is None:
-        rng = np.random.default_rng(PARAMS['seed'])
-        supervision = rng.random()
+        supervision = rstate.random()
     print('Supervision level:', supervision)
 
     tree1 = DecisionTreeRegressorSS(
-        supervision=.78,  # FIXME
+        supervision=supervision,
         min_samples_leaf=PARAMS['min_samples_leaf'],
         random_state=PARAMS['seed'],
     )
     tree2 = DecisionTreeRegressor2DSS(
-        supervision=0,  # FIXME
+        supervision=supervision,
         min_samples_leaf=PARAMS['min_samples_leaf'],
         random_state=PARAMS['seed'],
     )
@@ -152,20 +152,49 @@ def test_dynamic_supervision_1d2d(**PARAMS):
     )
 
 
+def test_single_feature_semisupervision_1d_sup(**PARAMS):
+    PARAMS = DEF_PARAMS | PARAMS
+    rstate = np.random.RandomState(PARAMS['seed'])
+
+    splitter1d = BestSplitterSFSS(
+        criterion=SingleFeatureSSCompositeCriterion(
+            supervision=1.,
+            criterion=MSE,
+            n_features=np.sum(PARAMS['nattrs']),
+            n_samples=np.prod(PARAMS['shape']),
+            n_outputs=1,
+        ),
+        max_features=np.sum(PARAMS['nattrs']),
+        min_samples_leaf=PARAMS['min_samples_leaf'],
+        min_weight_leaf=0.,
+        random_state=rstate,
+    )
+
+    tree1 = DecisionTreeRegressorSS(
+        splitter=splitter1d,
+    )
+
+    return compare_trees(
+        tree1=tree1,
+        tree2_is_2d=True,
+        **PARAMS,
+    )
+
+
 def test_single_feature_semisupervision_1d2d(supervision=None, **PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
     rstate = np.random.RandomState(PARAMS['seed'])
     if supervision is None:
-        rng = np.random.default_rng(PARAMS['seed'])
-        supervision = rng.random()
+        supervision = rstate.random()
     print('Supervision level:', supervision)
 
-    splitter1d = BestSplitter(
+    splitter1d = BestSplitterSFSS(
         criterion=SingleFeatureSSCompositeCriterion(
             supervision=supervision,
             criterion=MSE,
-            n_outputs=1,
+            n_features=1.,
             n_samples=np.prod(PARAMS['shape']),
+            n_outputs=1,
         ),
         max_features=np.sum(PARAMS['nattrs']),
         min_samples_leaf=PARAMS['min_samples_leaf'],
@@ -174,17 +203,18 @@ def test_single_feature_semisupervision_1d2d(supervision=None, **PARAMS):
     )
 
     ss2d_splitter=make_2dss_splitter(
-        splitters=BestSplitter,
-        ss_criteria=SingleFeatureSSCompositeCriterion,
+        splitters=BestSplitterSFSS,
         criteria=MSE,
+        ss_criteria=SingleFeatureSSCompositeCriterion,
         supervision=supervision,
         max_features=PARAMS['nattrs'],
         n_features=1,
         n_samples=PARAMS['shape'],
         n_outputs=1,
+        random_state=rstate,
         min_samples_leaf=PARAMS['min_samples_leaf'],
         min_weight_leaf=0.,
-        random_state=rstate,
+        criterion_wrapper_class=MSE2DSFSS,
     )
 
     tree1 = DecisionTreeRegressorSS(
@@ -194,7 +224,6 @@ def test_single_feature_semisupervision_1d2d(supervision=None, **PARAMS):
         splitter=ss2d_splitter,
     )
 
-    # FIXME: Are not they supposed to match?
     return compare_trees(
         tree1=tree1,
         tree2=tree2,
@@ -205,12 +234,13 @@ def test_single_feature_semisupervision_1d2d(supervision=None, **PARAMS):
 
 
 def main(**PARAMS):
-    # test_supervised_component(**PARAMS)
-    # test_unsupervised_component(**PARAMS)
-    # test_supervised_component_2d(**PARAMS)
-    # test_unsupervised_component_2d(**PARAMS)
-    # test_semisupervision_1d2d(**PARAMS)
-    # test_dynamic_supervision_1d2d(**PARAMS)
+    test_supervised_component(**PARAMS)
+    test_unsupervised_component(**PARAMS)
+    test_supervised_component_2d(**PARAMS)
+    test_unsupervised_component_2d(**PARAMS)
+    test_semisupervision_1d2d(**PARAMS)  # FIXME: seed=82; seed=3 nrules=3
+    test_dynamic_supervision_1d2d(**PARAMS)
+    test_single_feature_semisupervision_1d_sup(**PARAMS)
     test_single_feature_semisupervision_1d2d(**PARAMS)
 
 

@@ -416,7 +416,7 @@ def test_sfss_1d2d(**PARAMS):
         criterion=SingleFeatureSSCompositeCriterion(
             supervision=supervision,
             criterion=MSE,
-            n_features=np.sum(PARAMS['nattrs']),
+            n_features=1,
             n_samples=np.prod(PARAMS['shape']),
             n_outputs=1,
         ),
@@ -448,21 +448,21 @@ def test_sfss_1d2d(**PARAMS):
         **PARAMS,
     )
 
-# BUG: test with different axis supervisions. sscrit2d.impurity_improvement()
-#      may fail.
+# TODO: test with different axis supervisions. sscrit2d.impurity_improvement()
+#       may fail.
 def main(**PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
-    # test_1d2d_ideal(**vars(args))
-    # test_1d2d(**vars(args))
-    # test_ss_1d2d_sup(**vars(args))
-    # test_ss_1d2d_unsup(**vars(args))
-    # test_ss_1d2d(**vars(args))
-    # test_ss_1d2d_ideal_split(**vars(args))
-    # test_sfss_1d_sup(**vars(args))
-    # test_sfss_1d_unsup(**vars(args))
-    # test_sfss_2d_sup(**vars(args))
+    test_1d2d_ideal(**vars(args))
+    test_1d2d(**vars(args))
+    test_ss_1d2d_sup(**vars(args))
+    test_ss_1d2d_unsup(**vars(args))
+    test_ss_1d2d(**vars(args))
+    test_ss_1d2d_ideal_split(**vars(args))
+    test_sfss_1d_sup(**vars(args))
+    test_sfss_1d_unsup(**vars(args))
+    test_sfss_2d_sup(**vars(args))
     # test_sfss_2d_unsup(**vars(args))  # FIXME
-    test_sfss_1d2d(**vars(args))
+    test_sfss_1d2d(**vars(args))  # FIXME: seed=1
 
 
 if __name__ == "__main__":

@@ -259,9 +259,6 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
             impurity_parent, impurity_left, impurity_right)
         cdef double u_imp = self.unsupervised_criterion.impurity_improvement(
             impurity_parent, impurity_left, impurity_right)
-        with gil:
-            print('*** SSCRIT SSCOMP.IMPIMP improve, parent, left, right',
-                sup*s_imp + (1-sup)*u_imp, impurity_parent, impurity_left, impurity_right)
 
         return sup*s_imp + (1-sup)*u_imp
 
@@ -401,7 +398,6 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
 
         # TODO: no need to calculate y impurity again.
         self.current_node_impurity = self.node_impurity()
-        # print('*** SFSSCRIT SETFEAT node_imp', self.current_node_impurity)
 
     # FIXME: Unpredictable errors can arise.
     cdef double impurity_improvement(self, double impurity_parent,
@@ -666,16 +662,16 @@ cdef class MSE2DSFSS(MSE_Wrapper2DSS):
     ) nogil:
         """Recalculate current node impurity for the current feature.
 
-        TODO: We are considering Each time self.set_feature(*) is called 
+        We are considering one X column at a time so each time
+        self.set_feature(*) is called, unspervised_criterion.y changes and
+        node impurity must be recalculated.
         """
-        with gil:
-            print("*** SSCRIT 2DIMPIMP parent, ileft, iright, axis",
-                  self.node_impurity(), impurity_left, impurity_right, axis)
-
         # FIXME: Unpredictable errors can arise. We need to bypass
         #        children's impurity_improvement(), because they discard
         #        parent_impurity and their supervised impurity they use is
         #        wrong due to wrong .sq_sum_total
+
+        with gil: pass  # Avoid 'function declared nogil has python locals'
 
         cdef double u_imp, sup
         cdef double s_imp = MSE_Wrapper2D.node_impurity(self)  # TODO: Store.
@@ -706,43 +702,6 @@ cdef class MSE2DSFSS(MSE_Wrapper2DSS):
                     impurity_parent, impurity_left, impurity_right
                 )
 
-    cdef double ss_impurity(
-        self,
-        double u_imp_rows,
-        double u_imp_cols,
-        double s_imp,
-    ):
-        cdef double u_imp, sup_rows, sup_cols, u_imp_cols_w, u_imp_rows_w
-        cdef SIZE_t n_features, n_row_features, n_col_features
-
-        cdef SSCompositeCriterion ss_criterion_rows = \
-            self.splitter_rows.criterion
-        cdef SSCompositeCriterion ss_criterion_cols = \
-            self.splitter_cols.criterion
-        cdef Criterion ur_criterion = \
-            ss_criterion_rows.unsupervised_criterion
-        cdef Criterion uc_criterion = \
-            ss_criterion_cols.unsupervised_criterion
-
-        sup_rows = ss_criterion_rows.supervision
-        sup_cols = ss_criterion_cols.supervision
-        n_row_features = ur_criterion.n_outputs
-        n_col_features = uc_criterion.n_outputs
-
-        u_imp_rows *= (1-sup_rows)
-        u_imp_cols *= (1-sup_cols)
-
-        # n_features = n_row_features + n_col_features
-        u_imp_rows_w = u_imp_rows * n_row_features  # / n_features
-        u_imp_cols_w = u_imp_cols * n_col_features  # / n_features
-
-        u_imp = u_imp_rows if u_imp_rows_w < u_imp_cols_w else u_imp_cols # max
-        s_imp *= sup_rows + sup_cols
-
-        print("*** SSCRIT SSIMP uir, uic, s_imp", u_imp_rows, u_imp_cols, s_imp)
-
-        return u_imp + s_imp / 2
-
     # FIXME: avoid this repetition
     cdef void children_impurity(
             self,
@@ -752,43 +711,19 @@ cdef class MSE2DSFSS(MSE_Wrapper2DSS):
     ):
         cdef double s_impurity_left, s_impurity_right
         cdef double u_impurity_left, u_impurity_right
-        cdef double other_u_imp
+        cdef double sup, other_u_imp
 
         cdef Splitter splitter = self._get_splitter(axis)
         cdef Splitter other_splitter = self._get_splitter(not axis)
-        cdef SSCompositeCriterion ss_criterion, other_ss_criterion
+        cdef SSCompositeCriterion ss_criterion
         cdef Criterion u_crit, other_u_crit
 
         ss_criterion = splitter.criterion
-        other_ss_criterion = other_splitter.criterion
         u_crit = ss_criterion.unsupervised_criterion
-        other_u_crit = other_ss_criterion.unsupervised_criterion
-        other_u_imp = other_u_crit.node_impurity()
-
-        print("*** SSCRIT CHILDIMP sscrit.current_feature", ss_criterion.current_feature)
+        sup = ss_criterion.supervision
 
         u_crit.children_impurity(&u_impurity_left, &u_impurity_right)
 
-        # FIXME: repeating ss_impurity below until next divider.
-        # =====================================================================
-        cdef double sup_rows, sup_cols
-        cdef SIZE_t n_row_features, n_col_features
-
-        cdef SSCompositeCriterion ss_criterion_rows = \
-            self.splitter_rows.criterion
-        cdef SSCompositeCriterion ss_criterion_cols = \
-            self.splitter_cols.criterion
-        cdef Criterion ur_criterion = \
-            ss_criterion_rows.unsupervised_criterion
-        cdef Criterion uc_criterion = \
-            ss_criterion_cols.unsupervised_criterion
-
-        sup_rows = ss_criterion_rows.supervision
-        sup_cols = ss_criterion_cols.supervision
-        n_row_features = ur_criterion.n_outputs
-        n_col_features = uc_criterion.n_outputs
-        # =====================================================================
- 
         # FIXME: the following should substitute everything until the 3rd hline
         # =====================================================================
         # MSE_Wrapper2D.children_impurity(
@@ -846,54 +781,8 @@ cdef class MSE2DSFSS(MSE_Wrapper2DSS):
             s_impurity_right /= self.n_outputs
         # =====================================================================
 
-        cdef:
-            double u_imp_rows_left
-            double u_imp_rows_right
-            double u_imp_cols_left
-            double u_imp_cols_right
-
-        if axis == 0:
-            u_imp_rows_left = u_impurity_left
-            u_imp_cols_left = other_u_imp
-            u_imp_rows_right = u_impurity_right
-            u_imp_cols_right = other_u_imp
-
-        elif axis == 1:
-            u_imp_rows_left = other_u_imp
-            u_imp_cols_left = u_impurity_left
-            u_imp_rows_right = other_u_imp
-            u_imp_cols_right = u_impurity_right
-
-        u_imp_rows_left *= (1-sup_rows)
-        u_imp_cols_left *= (1-sup_cols)
-        u_imp_rows_left_w = u_imp_rows_left * n_row_features  # / n_features
-        u_imp_cols_left_w = u_imp_cols_left * n_col_features  # / n_features
-
-        u_imp_rows_right *= (1-sup_rows)
-        u_imp_cols_right *= (1-sup_cols)
-        u_imp_rows_right_w = u_imp_rows_right * n_row_features  # / n_features
-        u_imp_cols_right_w = u_imp_cols_right * n_col_features  # / n_features
-
-        mean_u_imp_rows = u_imp_rows_left_w + u_imp_rows_right_w
-        mean_u_imp_cols = u_imp_cols_left_w + u_imp_cols_right_w
-
-        print("*** SSCRIT CHILDIMP mean_u_rows, mean_u_cols", mean_u_imp_rows, mean_u_imp_cols)
-        # FIXME: Should this really be necessary? axis is not supposed to
-        #        select a specific axis instead of comparing both?
-        #
-        # Select row or column based on minimal overall impurity
-        if mean_u_imp_rows < mean_u_imp_cols:
-            u_imp_left = u_imp_rows_left
-            u_imp_right = u_imp_rows_right
-        else:
-            u_imp_left = u_imp_cols_left
-            u_imp_right = u_imp_cols_right
-
-        ws = (sup_rows + sup_cols) / 2
-
-        impurity_left[0] = u_imp_left + s_impurity_left * ws
-        impurity_right[0] = u_imp_right + s_impurity_right * ws
-        print("*** SSCRIT CHILDIMP imp left, imp right", impurity_left[0], impurity_right[0])
+        impurity_left[0] = u_impurity_left*(1-sup) + s_impurity_left * sup
+        impurity_right[0] = u_impurity_right*(1-sup) + s_impurity_right * sup
 
 # =============================================================================
 # Splitter factory function
