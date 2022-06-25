@@ -27,9 +27,23 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     cdef const DOUBLE_t[:, ::1] X
     cdef public SIZE_t n_features
     cdef public double supervision
+    cdef void unpack_y(self, const DOUBLE_t[:, ::1] y) nogil
 
 cdef class SSMSE(SSCompositeCriterion):
-    pass
+    """Semi-supervised composite criterion with only MSE.
+    """
+
+cdef class DynamicSSMSE(SSMSE):
+    """self.supervision value can with each split.
+    """
+    cdef public double original_supervision
+
+cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
+    """Uses only the current feature as unsupervised data.
+    """
+    cdef public SIZE_t current_feature
+    cdef public double current_node_impurity
+    cdef const DOUBLE_t[:, ::1] full_X
 
 cdef class RegressionCriterionWrapper2DSS(RegressionCriterionWrapper2D):
     cdef void _set_splitter_y(

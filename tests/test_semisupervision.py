@@ -7,11 +7,14 @@ from hypertrees.tree import DecisionTreeRegressor2D
 from hypertrees.tree._nd_splitter import make_2d_splitter
 from hypertrees.tree._semisupervised_criterion import (
     SSMSE, SSCompositeCriterion, make_2dss_splitter, DynamicSSMSE,
+    SingleFeatureSSCompositeCriterion,
 )
 from hypertrees.tree._semisupervised_classes import (
     DecisionTreeRegressorSS, DecisionTreeRegressor2DSS,
     DecisionTreeRegressorDS, DecisionTreeRegressor2DDS,
 )
+
+from hypertrees.tree._semisupervised_splitter import BestSplitterSFSS
 
 from sklearn.tree._criterion import MSE
 
@@ -117,12 +120,12 @@ def test_semisupervision_1d2d(supervision=None, **PARAMS):
     print('Supervision level:', supervision)
 
     tree1 = DecisionTreeRegressorSS(
-        supervision=supervision,
+        supervision=.78,  # FIXME
         min_samples_leaf=PARAMS['min_samples_leaf'],
         random_state=PARAMS['seed'],
     )
     tree2 = DecisionTreeRegressor2DSS(
-        supervision=supervision,
+        supervision=0,  # FIXME
         min_samples_leaf=PARAMS['min_samples_leaf'],
         random_state=PARAMS['seed'],
     )
@@ -136,7 +139,7 @@ def test_semisupervision_1d2d(supervision=None, **PARAMS):
     )
 
 
-def test_dynamic_supervision_1d(**PARAMS):
+def test_dynamic_supervision_1d2d(**PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
 
     # FIXME: Are not they supposed to match?
@@ -149,13 +152,66 @@ def test_dynamic_supervision_1d(**PARAMS):
     )
 
 
+def test_single_feature_semisupervision_1d2d(supervision=None, **PARAMS):
+    PARAMS = DEF_PARAMS | PARAMS
+    rstate = np.random.RandomState(PARAMS['seed'])
+    if supervision is None:
+        rng = np.random.default_rng(PARAMS['seed'])
+        supervision = rng.random()
+    print('Supervision level:', supervision)
+
+    splitter1d = BestSplitter(
+        criterion=SingleFeatureSSCompositeCriterion(
+            supervision=supervision,
+            criterion=MSE,
+            n_outputs=1,
+            n_samples=np.prod(PARAMS['shape']),
+        ),
+        max_features=np.sum(PARAMS['nattrs']),
+        min_samples_leaf=PARAMS['min_samples_leaf'],
+        min_weight_leaf=0.,
+        random_state=rstate,
+    )
+
+    ss2d_splitter=make_2dss_splitter(
+        splitters=BestSplitter,
+        ss_criteria=SingleFeatureSSCompositeCriterion,
+        criteria=MSE,
+        supervision=supervision,
+        max_features=PARAMS['nattrs'],
+        n_features=1,
+        n_samples=PARAMS['shape'],
+        n_outputs=1,
+        min_samples_leaf=PARAMS['min_samples_leaf'],
+        min_weight_leaf=0.,
+        random_state=rstate,
+    )
+
+    tree1 = DecisionTreeRegressorSS(
+        splitter=splitter1d,
+    )
+    tree2 = DecisionTreeRegressor2DSS(
+        splitter=ss2d_splitter,
+    )
+
+    # FIXME: Are not they supposed to match?
+    return compare_trees(
+        tree1=tree1,
+        tree2=tree2,
+        tree1_is_unsupervised=False,
+        tree2_is_2d=True,
+        **PARAMS,
+    )
+
+
 def main(**PARAMS):
     # test_supervised_component(**PARAMS)
     # test_unsupervised_component(**PARAMS)
     # test_supervised_component_2d(**PARAMS)
     # test_unsupervised_component_2d(**PARAMS)
     # test_semisupervision_1d2d(**PARAMS)
-    test_dynamic_supervision_1d(**PARAMS)
+    # test_dynamic_supervision_1d2d(**PARAMS)
+    test_single_feature_semisupervision_1d2d(**PARAMS)
 
 
 if __name__ == "__main__":
