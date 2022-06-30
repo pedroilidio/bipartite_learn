@@ -1,9 +1,9 @@
-from make_examples import make_interaction_data
-from test_utils import stopwatch, parse_args, gen_mock_data, melt_2d_data
-
 import logging
+import numpy as np
 from itertools import product
 from pprint import pprint
+from typing import Callable
+
 from sklearn.tree import DecisionTreeRegressor
 import sklearn.tree
 
@@ -11,7 +11,9 @@ from hypertrees.tree._nd_classes import DecisionTreeRegressor2D
 from hypertrees.melter import row_cartesian_product
 from hypertrees.melter import row_cartesian_product
 
-import numpy as np
+from make_examples import make_interaction_data
+from test_utils import stopwatch, parse_args, gen_mock_data, melt_2d_data
+
 # from sklearn.tree._tree import DTYPE_t, DOUBLE_t
 DTYPE_t, DOUBLE_t = np.float32, np.float64
 
@@ -90,13 +92,13 @@ def compare_trees(
         x, y = melt_2d_data(XX, Y)
 
     # ######### Instantiate trees
-    if isinstance(tree2, type):
+    if isinstance(tree2, Callable):
         tree2 = tree2(
             min_samples_leaf=PARAMS['min_samples_leaf'],
             random_state=PARAMS['seed'],
         )
 
-    if isinstance(tree1, type):
+    if isinstance(tree1, Callable):
         tree1 = tree1(
             min_samples_leaf=PARAMS['min_samples_leaf'],
             random_state=PARAMS['seed'],
@@ -171,10 +173,6 @@ def main(
         tree2=DecisionTreeRegressor2D,
         **PARAMS,
     )
-
-
-def test_main():
-    main(**DEF_PARAMS)
 
 
 if __name__ == "__main__":

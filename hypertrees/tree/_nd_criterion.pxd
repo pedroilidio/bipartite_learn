@@ -9,7 +9,11 @@ from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 
 
-cdef class RegressionCriterionWrapper2D:
+cdef class CriterionWrapper2D:
+    """Abstract base class."""
+
+
+cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     # FIXME: We need X here because BaseDenseSplitter.X is not accessible.
     cdef const DOUBLE_t[:, ::1] X_rows
     cdef const DOUBLE_t[:, ::1] X_cols

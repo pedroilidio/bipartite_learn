@@ -9,9 +9,13 @@ from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 
 from hypertrees.tree._semisupervised_classes import (
     DecisionTreeRegressorSS,
-    DecisionTreeRegressorDS,
     ExtraTreeRegressor2DSS,
+
+    DecisionTreeRegressorDS,
     ExtraTreeRegressor2DDS,
+
+    DecisionTreeRegressorSFSS,
+    ExtraTreeRegressor2DSFSS,
 )
 
 from hypertrees.ensemble._semisupervised_forest import (
@@ -19,12 +23,15 @@ from hypertrees.ensemble._semisupervised_forest import (
     ExtraTreesRegressorSS,
     RandomForestRegressor2DSS,
     ExtraTreesRegressor2DSS,
+
+    RandomForestRegressorSFSS,
+    ExtraTreesRegressorSFSS,
+    RandomForestRegressor2DSFSS,
+    ExtraTreesRegressor2DSFSS,
 )
 
-from hypertrees.melter import row_cartesian_product, MelterND
-from make_examples import make_interaction_data
 from test_utils import (
-    gen_mock_data, melt_2d_data, stopwatch, DEF_PARAMS, parse_args,
+    gen_mock_data, stopwatch, DEF_PARAMS, parse_args,
 )
 
 
@@ -115,13 +122,17 @@ def test_semisupervised_forests(forest_params=None, **PARAMS):
         'SSRF': RandomForestRegressorSS(**forest_params),
         'SSXT': ExtraTreesRegressorSS(**forest_params),
         'DSXT': ExtraTreesRegressorSS(
-            criterion='dynamic_ssmse', **forest_params),
+            ss_criterion='dynamic_ssmse', **forest_params),
+        'SFSSRF': RandomForestRegressorSFSS(**forest_params),
+        'SFSSXT': ExtraTreesRegressorSFSS(**forest_params),
     }
     estimators2d = {
         'SSRF2D': RandomForestRegressor2DSS(**forest_params),
         'SSXT2D': ExtraTreesRegressor2DSS(**forest_params),
         'DSXT2D': ExtraTreesRegressor2DSS(
             ss_criterion='dynamic_ssmse', **forest_params),
+        'SFSSRF2D': RandomForestRegressor2DSFSS(**forest_params),
+        'SFSSXT2D': ExtraTreesRegressor2DSFSS(**forest_params),
     }
     return compare_estimators(estimators1d, estimators2d, **PARAMS)
 

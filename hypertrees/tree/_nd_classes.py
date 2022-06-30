@@ -35,13 +35,13 @@ from sklearn.tree._splitter import Splitter
 from sklearn.tree._tree import Tree
 from sklearn.tree import _tree, _splitter, _criterion, DecisionTreeRegressor
 
-# ND new:
+# ND specific:
 from itertools import product
 from typing import Iterable
 from sklearn.tree._classes import BaseDecisionTree
 from ..base import RegressorMixinND
 from ._nd_tree import DepthFirstTreeBuilder2D
-from ._nd_criterion import MSE_Wrapper2D
+from ._nd_criterion import CriterionWrapper2D, MSE_Wrapper2D
 from ._nd_splitter import Splitter2D, make_2d_splitter
 from ..melter import row_cartesian_product
 
@@ -63,6 +63,9 @@ DOUBLE = _tree.DOUBLE
 CRITERIA_CLF = {}
 CRITERIA_REG = {
     "squared_error": _criterion.MSE,
+}
+CRITERIA_2D = {
+    "squared_error": MSE_Wrapper2D,
 }
 
 DENSE_SPLITTERS = {
@@ -97,17 +100,18 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         min_weight_fraction_leaf,
         max_features,
 
-        # 2D parameters:
-        # TODO: ax_min_samples_split,
-        ax_min_samples_leaf=1,
-        ax_min_weight_fraction_leaf=None,
-        ax_max_features=None,
-
         max_leaf_nodes,
         random_state,
         min_impurity_decrease,
         class_weight=None,
         ccp_alpha=0.0,
+
+        # 2D parameters:
+        # TODO: ax_min_samples_split,
+        ax_min_samples_leaf=1,
+        ax_min_weight_fraction_leaf=None,
+        ax_max_features=None,
+        criterion_wrapper=None,
     ):
         self.criterion = criterion
         self.splitter = splitter
@@ -118,9 +122,11 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         self.min_weight_fraction_leaf = min_weight_fraction_leaf
         self.max_features = max_features
 
+        # 2D parameters:
         self.ax_min_samples_leaf = ax_min_samples_leaf
         self.ax_min_weight_fraction_leaf = ax_min_weight_fraction_leaf
         self.ax_max_features = ax_max_features
+        self.criterion_wrapper = criterion_wrapper
 
         self.max_leaf_nodes = max_leaf_nodes
 
@@ -328,8 +334,11 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
         if isinstance(self.splitter, Splitter2D):
             return self.splitter
 
-        criterion = self.criterion
+        criterion_wrapper = self.criterion_wrapper
+        if isinstance(criterion_wrapper, str):
+            criterion_wrapper = CRITERIA_2D[criterion_wrapper]
 
+        criterion = self.criterion
         if not isinstance(criterion, (tuple, list)):
             criterion = [criterion, criterion]
         for ax in range(2):
@@ -364,6 +373,7 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
             ax_min_samples_leaf=ax_min_samples_leaf,
             ax_min_weight_leaf=ax_min_weight_leaf,
             random_state=random_state,
+            criterion_wrapper_class=criterion_wrapper,
         )
 
         return splitter
@@ -774,6 +784,7 @@ class DecisionTreeRegressor2D(
         ax_min_samples_leaf=1,
         ax_min_weight_fraction_leaf=None,
         ax_max_features=None,
+        criterion_wrapper="squared_error",
 
         random_state=None,
         max_leaf_nodes=None,
@@ -790,10 +801,11 @@ class DecisionTreeRegressor2D(
             max_features=max_features,
             max_leaf_nodes=max_leaf_nodes,
 
-            # New:
+            # 2D specific:
             ax_min_samples_leaf=ax_min_samples_leaf,
             ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf,
             ax_max_features=ax_max_features,
+            criterion_wrapper=criterion_wrapper,
 
             random_state=random_state,
             min_impurity_decrease=min_impurity_decrease,
@@ -1025,6 +1037,7 @@ class ExtraTreeRegressor2D(DecisionTreeRegressor2D):
         ax_min_samples_leaf=1,
         ax_min_weight_fraction_leaf=None,
         ax_max_features=None,
+        criterion_wrapper="squared_error",
 
         random_state=None,
         max_leaf_nodes=None,
@@ -1041,10 +1054,11 @@ class ExtraTreeRegressor2D(DecisionTreeRegressor2D):
             max_features=max_features,
             max_leaf_nodes=max_leaf_nodes,
 
-            # New:
+            # 2D specific:
             ax_min_samples_leaf=ax_min_samples_leaf,
             ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf,
             ax_max_features=ax_max_features,
+            criterion_wrapper=criterion_wrapper,
 
             random_state=random_state,
             min_impurity_decrease=min_impurity_decrease,

@@ -1,3 +1,4 @@
+# cython: boundscheck=False
 import copy, warnings
 from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion
@@ -852,18 +853,10 @@ def make_2dss_splitter(
         if isinstance(supervised_criteria[ax], type):
             if not issubclass(supervised_criteria[ax], Criterion):
                 raise ValueError
-            supervised_criteria[ax] = supervised_criteria[ax](
-                n_outputs=n_outputs[ax],
-                n_samples=n_samples[ax],
-            )
 
         if isinstance(unsupervised_criteria[ax], type):
             if not issubclass(unsupervised_criteria[ax], Criterion):
                 raise ValueError
-            unsupervised_criteria[ax] = unsupervised_criteria[ax](
-                n_outputs=n_features[ax],
-                n_samples=n_samples[ax],
-            )
 
         ss_criteria[ax] = ss_criteria[ax](
             supervision=supervision[ax],

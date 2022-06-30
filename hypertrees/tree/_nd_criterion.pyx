@@ -11,8 +11,10 @@ cimport numpy as np
 np.import_array()
 from copy import deepcopy
 
+cdef class CriterionWrapper2D:
+    """Abstract base class."""
 
-cdef class RegressionCriterionWrapper2D:
+cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     def __cinit__(self, Splitter splitter_rows, Splitter splitter_cols):
         self.splitter_rows = splitter_rows
         self.splitter_cols = splitter_cols
