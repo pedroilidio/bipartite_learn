@@ -53,9 +53,12 @@ from sklearn.tree._classes import (
 )
 from ._semisupervised_criterion import (
     SemisupervisedCriterion, SSCompositeCriterion, SSMSE, make_2dss_splitter,
-    DynamicSSMSE, SingleFeatureSSCompositeCriterion,
+    SingleFeatureSSCompositeCriterion, SFSSMSE,
     MSE_Wrapper2DSS, MSE2DSFSS,
 )
+
+from ._dynamic_supervision_criterion import DynamicSSMSE
+
 from ._nd_classes import (
     CRITERIA_2D,
     BaseDecisionTree2D, DecisionTreeRegressor2D, ExtraTreeRegressor2D
@@ -98,6 +101,7 @@ CRITERIA_SS = {
     "ss_squared_error": SSMSE,
     "dynamic_ssmse": DynamicSSMSE,
     "single_feature_ss": SingleFeatureSSCompositeCriterion,
+    "sfssmse": SFSSMSE,
 }
 
 # =============================================================================

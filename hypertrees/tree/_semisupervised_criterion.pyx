@@ -6,7 +6,6 @@ from sklearn.tree._criterion import MSE
 from sklearn.tree._tree cimport SIZE_t
 from libc.stdlib cimport malloc, free
 from libc.string cimport memset
-from libc.math cimport log2
 import numpy as np
 cimport numpy as cnp
 
@@ -61,13 +60,13 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     # TODO: We maybe should make __init__ simpler.
     def __init__(
         self,
-        double supervision=.5,
+        double supervision,
+        SIZE_t n_outputs,
+        SIZE_t n_features,
+        SIZE_t n_samples,
         criterion=None,
         supervised_criterion=None,
         unsupervised_criterion=None,
-        SIZE_t n_outputs=0,
-        SIZE_t n_features=0,
-        SIZE_t n_samples=0,
         *args, **kwargs,
     ):
         if not (0 <= supervision <= 1):
@@ -101,6 +100,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
             )
 
         self.supervision = supervision
+        self.original_supervision = supervision
         self.supervised_criterion = supervised_criterion
         self.unsupervised_criterion = unsupervised_criterion
         self.n_outputs = self.supervised_criterion.n_outputs
@@ -116,11 +116,10 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         self.X = y[:, :self.n_features]
         self.y = y[:, self.n_features:]
 
-    cdef int init(
-            self, const DOUBLE_t[:, ::1] y,
-            DOUBLE_t* sample_weight,
-            double weighted_n_samples, SIZE_t* samples, SIZE_t start,
-            SIZE_t end) nogil except -1:
+    cdef int init(self, const DOUBLE_t[:, ::1] y,
+                  DOUBLE_t* sample_weight,
+                  double weighted_n_samples, SIZE_t* samples, SIZE_t start,
+                  SIZE_t end) nogil except -1:
 
         self.unpack_y(y)
         self.sample_weight = sample_weight
@@ -148,7 +147,15 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         self.weighted_n_right = \
             self.supervised_criterion.weighted_n_right
 
+        self.update_supervision()
+
         return 0
+
+    cdef void update_supervision(self) nogil:
+        """Method to enable dynamic supervision.
+
+        Makes possible to change self.supervision at self.init().
+        """
 
     cdef int reset(self) nogil except -1:
         """Reset the criteria at pos=start."""
@@ -246,12 +253,39 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         The absolute impurity improvement is only computed by the
         impurity_improvement method once the best split has been found.
         """
+        cdef double out
         cdef double sup = self.supervision
-        return (
-            sup * self.supervised_criterion.proxy_impurity_improvement() +
-            (1-sup) * self.unsupervised_criterion.proxy_impurity_improvement()
+        # # FIXME: use proxies
+        # cdef double iu_parent, is_parent
+        # cdef double imp_s_left, imp_s_right
+        # cdef double imp_u_left, imp_u_right
+
+        # iu_parent = self.unsupervised_criterion.node_impurity()
+        # is_parent = self.supervised_criterion.node_impurity()
+
+        # self.supervised_criterion.children_impurity(&imp_s_left, &imp_s_right)
+        # self.unsupervised_criterion.children_impurity(&imp_u_left, &imp_u_right)
+
+        # out = (
+        #     sup * self.supervised_criterion.impurity_improvement(is_parent, imp_s_left, imp_s_right) +
+        #     (1-sup) * self.unsupervised_criterion.impurity_improvement(iu_parent, imp_u_left, imp_u_right)
+        # )
+
+        # FIXME: WHY WON'T THIS WORK?
+        out = (
+            sup * self.supervised_criterion.proxy_impurity_improvement() / 
+                  self.supervised_criterion.n_outputs +
+            (1-sup) * self.unsupervised_criterion.proxy_impurity_improvement() /
+                  self.unsupervised_criterion.n_outputs
         )
 
+        return out
+        # return (
+        #     sup * self.supervised_criterion.proxy_impurity_improvement() +
+        #     (1-sup) * self.unsupervised_criterion.proxy_impurity_improvement()
+        # )
+
+    # FIXME: not right!
     cdef double impurity_improvement(self, double impurity_parent,
                                      double impurity_left,
                                      double impurity_right) nogil:
@@ -294,67 +328,10 @@ cdef class SSMSE(SSCompositeCriterion):
 # TODO: cdef class DynamicSSCompositeCriterion(SSCompositeCriterion):
 
 
-cdef class DynamicSSMSE(SSMSE):
-    """ It's SSMSE, but changes its supervision value each run. 
-    
-    One criteria will receive y in its init() and the other will receive X.
-    Their calculated impurities will then be combined as the final impurity:
-
-        sup*supervised_impurity + (1-sup)*unsupervised_impurity
-
-    where sup is self.supervision.
-
-    Note that the splitter holding it should receive X and y concatenated
-    (horizontally stacked) as its y parameter (y=np.hstack((X, y))).
-    """
-    def __init__(
-        self,
-        SIZE_t n_outputs,
-        SIZE_t n_features,
-        SIZE_t n_samples,
-        double supervision=0.,
-        *args, **kwargs,
-    ):
-        super().__init__(
-            supervision=0.,  # Any value will work.
-            criterion=MSE,
-            n_outputs=n_outputs,
-            n_features=n_features,
-            n_samples=n_samples,
-        )
-        self.original_supervision = supervision
-
-    cdef int init(
-            self, const DOUBLE_t[:, ::1] y,
-            DOUBLE_t* sample_weight,
-            double weighted_n_samples, SIZE_t* samples, SIZE_t start,
-            SIZE_t end) nogil except -1:
-
-        if SSMSE.init(
-            self, y, sample_weight, weighted_n_samples, samples, start, end
-        ) == -1:
-            return -1
-        
-        with gil:
-            self.update_supervision(weighted_n_samples)
-    
-    def update_supervision(
-        self,
-        double weighted_n_samples,
-    ):
-        cdef double w, W
-
-        w = self.weighted_n_node_samples 
-        W = weighted_n_samples
-
-        self.supervision = 1/(1 + 2 ** (10*(.5 - log2(w)/log2(W))))
-        # self.weighted_n_node_samples / weighted_n_samples
-
-
 cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
     def __init__(
         self,
-        double supervision=.5,
+        double supervision,
         criterion=None,
         supervised_criterion=None,
         unsupervised_criterion=None,
@@ -396,7 +373,6 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
             start=self.start,
             end=self.end,
         )
-
         # TODO: no need to calculate y impurity again.
         self.current_node_impurity = self.node_impurity()
 
@@ -408,7 +384,8 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
         impurity every time.
         """
         return SSCompositeCriterion.impurity_improvement(
-            self, self.node_impurity(), impurity_left, impurity_right)
+            self, self.current_node_impurity, impurity_left, impurity_right)
+            # self, self.node_impurity(), impurity_left, impurity_right)
 
     cdef void unpack_y(self, const DOUBLE_t[:, ::1] y) nogil:
         self.full_X = y[:, :-self.n_outputs]
@@ -416,6 +393,30 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
         with gil:
             self.set_feature(self.current_feature)
 
+
+cdef class SFSSMSE(SingleFeatureSSCompositeCriterion):
+    def __init__(
+        self,
+        double supervision,
+        SIZE_t n_outputs,
+        SIZE_t n_features,
+        SIZE_t n_samples,
+        *args, **kwargs,
+    ):
+        super().__init__(
+            supervision=supervision,
+            criterion=MSE,
+            n_outputs=n_outputs,
+            n_features=1,
+            n_samples=n_samples,
+        )
+
+    # cdef double proxy_impurity_improvement(self) nogil:
+    #     cdef double sup = self.supervision
+    #     return (
+    #         sup * self.supervised_criterion.node_impurity() + \
+    #         (1-sup) * self.unsupervised_criterion.node_impurity()
+    #     )
 
 # =============================================================================
 # 2D Semi-supervised Criterion Wrapper
@@ -430,10 +431,17 @@ cdef class RegressionCriterionWrapper2DSS(RegressionCriterionWrapper2D):
     ):
         # FIXME: avoid using Python here.
         # TODO: only set y values after the first call.
+        # np.save(y, 'new_y.txt')
+        # np.save(splitter.y, 'before.txt')
         if splitter == self.splitter_rows:
             splitter.y = np.hstack((self.X_rows, y))
+            # assert (splitter.y == np.hstack((self.X_rows, y))).all()
+            # print('ok1')
         elif splitter == self.splitter_cols:
             splitter.y = np.hstack((self.X_cols, y))
+            # assert (splitter.y == np.hstack((self.X_cols, y))).all()
+            # print('ok2')
+        # np.save(splitter.y, 'after.txt')
 
     cdef int _node_reset_child_splitter(
             self,
@@ -451,10 +459,29 @@ cdef class RegressionCriterionWrapper2DSS(RegressionCriterionWrapper2D):
         with gil:
             self._set_splitter_y(child_splitter, y)
         # SIZE_t shape0, shape1 = y.shape[0], y.shape[1]
+        # SIZE_t shape0, shape1 = y.shape[0], y.shape[1]
+
         # if start == 0 and end ==
         # else:
         #     child_splitter.y[:, -self.n_outputs:] = y
+
+        # cdef DOUBLE_t[:, ::1] new_y
+
+        # # FIXME: copying everything every time.
+        # with gil:
+        #     print('start')
+        #     new_y = np.empty((child_splitter.y.shape[0], child_splitter.y.shape[1]), dtype=np.float64)
+        #     # new_y = np.hstack((child_splitter.y[:, :-self.n_outputs], y))
+
+        # with gil: print('*** 2')
+        # new_y[:, :] = child_splitter.y
+        # new_y[:, -self.n_outputs:] = y
+        # child_splitter.y = new_y
+        # with gil: print('*** 3')
+
+        # # child_splitter.y[:, -self.n_outputs:] = y
         child_splitter.sample_weight = sample_weight
+        # with gil: print('*** 4', child_splitter.y.shape)
         return child_splitter.node_reset(start, end, weighted_n_node_samples)
 
 
@@ -464,16 +491,33 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
             impurity_left, double impurity_right,
             SIZE_t axis,
     ) nogil:
-        cdef double ret
+        cdef double wnl, wnr, ret
 
-        if axis == 1:
-            ret = self.splitter_cols.criterion.impurity_improvement(
-                impurity_parent, impurity_left, impurity_right)
-        elif axis == 0:
-            ret = self.splitter_rows.criterion.impurity_improvement(
-                impurity_parent, impurity_left, impurity_right)
+        # if axis == 1:
+        #     ret = self.splitter_cols.criterion.impurity_improvement(
+        #         impurity_parent, impurity_left, impurity_right)
+        # elif axis == 0:
+        #     ret = self.splitter_rows.criterion.impurity_improvement(
+        #         impurity_parent, impurity_left, impurity_right)
 
-        return ret
+        with gil:  # HACK to allow Python local in nogil (crit)
+            pass
+
+        cdef Criterion crit
+
+        with gil:
+            crit = self._get_criterion(axis)
+
+        wnl = crit.weighted_n_left
+        wnr = crit.weighted_n_right
+        # assert wnr+wnl == self.weighted_n_node_samples
+
+        # From the base Criterion
+        return (
+            (self.weighted_n_node_samples / self.weighted_n_samples) * (
+            impurity_parent - (wnr/self.weighted_n_node_samples*impurity_right)
+                            - (wnl/self.weighted_n_node_samples*impurity_left)
+        ))
 
     cdef double ss_impurity(
         self,
@@ -571,6 +615,15 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
         u_crit.children_impurity(&u_impurity_left, &u_impurity_right)
 
         # FIXME: the following should substitute everything until the 3rd hline
+
+        # SystemError: Objects/object.c:736: bad argument to internal function
+        # Exception ignored in: 'hypertrees.tree._semisupervised_criterion.RegressionCriterionWrapper2DSS._set_splitter_y'
+        # Traceback (most recent call last):
+        # File "/home/pedro/mestrado/biomal_repo/scripts/predictors/hypertrees/hypertrees/tree/_nd_classes.py", line 313, in fit
+        #     builder.build(self.tree_, X, y, sample_weight)
+        # SystemError: Objects/object.c:736: bad argument to internal function
+        # Segmentation fault (core dumped)
+
         # =====================================================================
         # MSE_Wrapper2D.children_impurity(
         #     self, &s_impurity_left, &s_impurity_right, axis)
@@ -661,6 +714,7 @@ cdef class MSE2DSFSS(MSE_Wrapper2DSS):
             impurity_left, double impurity_right,
             SIZE_t axis,
     ) nogil:
+        # FIXME: use parent's.
         """Recalculate current node impurity for the current feature.
 
         We are considering one X column at a time so each time
@@ -690,6 +744,7 @@ cdef class MSE2DSFSS(MSE_Wrapper2DSS):
                 #       ignores impurity_parent.
                 return SSCompositeCriterion.impurity_improvement(
                     self.splitter_cols.criterion,
+                # return self.splitter_cols.impurity_improvement(
                     impurity_parent, impurity_left, impurity_right,
                 )
             elif axis == 0:
@@ -700,6 +755,7 @@ cdef class MSE2DSFSS(MSE_Wrapper2DSS):
 
                 return SSCompositeCriterion.impurity_improvement(
                     self.splitter_rows.criterion,
+                # return self.splitter_rows.impurity_improvement(
                     impurity_parent, impurity_left, impurity_right
                 )
 

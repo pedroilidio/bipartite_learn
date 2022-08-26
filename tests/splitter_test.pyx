@@ -1,6 +1,6 @@
 from sklearn.tree._criterion cimport Criterion
 from sklearn.tree._splitter cimport Splitter, SplitRecord
-from sklearn.tree._tree cimport SIZE_t
+from sklearn.tree._tree cimport SIZE_t, DOUBLE_t
 
 from hypertrees.tree._nd_splitter cimport SplitRecord as SplitRecordND, Splitter2D
 from libc.stdlib cimport malloc, free

@@ -27,16 +27,13 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     cdef const DOUBLE_t[:, ::1] X
     cdef public SIZE_t n_features
     cdef public double supervision
+    cdef public double original_supervision
     cdef void unpack_y(self, const DOUBLE_t[:, ::1] y) nogil
+    cdef void update_supervision(self) nogil
 
 cdef class SSMSE(SSCompositeCriterion):
     """Semi-supervised composite criterion with only MSE.
     """
-
-cdef class DynamicSSMSE(SSMSE):
-    """self.supervision value can with each split.
-    """
-    cdef public double original_supervision
 
 cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
     """Uses only the current feature as unsupervised data.

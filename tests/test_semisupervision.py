@@ -10,9 +10,10 @@ from sklearn.tree._splitter import BestSplitter
 from hypertrees.tree import DecisionTreeRegressor2D
 from hypertrees.tree._nd_splitter import make_2d_splitter
 from hypertrees.tree._semisupervised_criterion import (
-    SSMSE, SSCompositeCriterion, make_2dss_splitter, DynamicSSMSE,
+    SSMSE, SSCompositeCriterion, make_2dss_splitter,
     SingleFeatureSSCompositeCriterion, MSE2DSFSS,
 )
+
 from hypertrees.tree._semisupervised_classes import (
     DecisionTreeRegressorSS, DecisionTreeRegressor2DSS,
     DecisionTreeRegressorDS, DecisionTreeRegressor2DDS,
@@ -20,6 +21,8 @@ from hypertrees.tree._semisupervised_classes import (
 )
 
 from hypertrees.tree._semisupervised_splitter import BestSplitterSFSS
+from hypertrees.tree._dynamic_supervision_criterion import DynamicSSMSE
+
 from sklearn.tree._criterion import MSE
 from test_nd_classes import compare_trees, parse_args
 
@@ -260,11 +263,21 @@ def main(**PARAMS):
     test_unsupervised_component(**PARAMS)
     test_supervised_component_2d(**PARAMS)
     test_unsupervised_component_2d(**PARAMS)
-    # test_semisupervision_1d2d(**PARAMS)  # FIXME: seed=82; seed=3 nrules=3
+
+    # FIXME: seed=82; seed=3 nrules=3
+    # FIXME: --seed 2133 --supervision .03
+    # FIXME: --seed 82 --supervision .5
+    ## When actual impurity is used intead of the proxies
+    # --seed 8221324 --supervision .3
+    # --seed 31284009 --supervision .3
+    # --seed 1 --supervision .1
+    # --seed 2 --supervision .1
+    test_semisupervision_1d2d(**PARAMS)  
+
     test_dynamic_supervision_1d2d(**PARAMS)
-    test_single_feature_semisupervision_1d_sup(**PARAMS)
+    # test_single_feature_semisupervision_1d_sup(**PARAMS)
     # test_single_feature_semisupervision_1d2d(**PARAMS)  # FIXME
-    test_single_feature_semisupervision_1d2d_classes(**PARAMS)
+    # test_single_feature_semisupervision_1d2d_classes(**PARAMS)
 
 
 if __name__ == "__main__":

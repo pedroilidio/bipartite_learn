@@ -238,7 +238,7 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
             sample_weight,
             min_weight_leaf
         ) = self._check_parameters(
-            X, y, sample_weight, expanded_class_weight)
+            X, y, sample_weight, expanded_class_weight, n_samples)
 
         # TODO: move to _check_parameters.
         if self.ax_max_features is None:
@@ -378,7 +378,7 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
 
         return splitter
 
-    def _check_parameters(self, X, y, sample_weight, expanded_class_weight):
+    def _check_parameters(self, X, y, sample_weight, expanded_class_weight, n_samples):
         if self.max_depth is not None:
             check_scalar(
                 self.max_depth,

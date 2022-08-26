@@ -2,7 +2,6 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 from sklearn.base import RegressorMixin
 import numpy as np
 
-
 class RegressorMixinND(RegressorMixin):
     def score(self, X, y, sample_weight=None):
         # TODO: multi-output.

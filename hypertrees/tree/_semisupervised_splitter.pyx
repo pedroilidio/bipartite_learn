@@ -1,7 +1,7 @@
 # cython: boundscheck=False
 #
 # Since splitter objects are not exported from sklearn.tree._splitter,
-# this module must exist to introduce a **single line** to BestSplitter.
+# this module must exist to introduce a few lines to BestSplitter.
 # 
 # Author: Pedro Ilidio
 # Adapted from https://github.com/scikit-learn/scikit-learn/blob/1.1.1/sklearn/tree/_splitter.pyx
@@ -160,14 +160,6 @@ cdef class BestSplitterSFSS(BaseDenseSplitter):
 
               # ===============================================
               # HYPERTREES NOTE:                              
-              # ===============================================
-              # One of the two lines that we added.
-              # ===============================================
-              # TODO: Release GIL.                            
-              # ===============================================
-                with gil:
-                    self.criterion.set_feature(current.feature)
-              # ===============================================
 
                 # Sort samples along that feature; by
                 # copying the values into an array and
@@ -187,6 +179,15 @@ cdef class BestSplitterSFSS(BaseDenseSplitter):
                 else:
                     f_i -= 1
                     features[f_i], features[f_j] = features[f_j], features[f_i]
+
+                # ===============================================
+                # One of the two lines that we added.
+                # ===============================================
+                # TODO: Release GIL.                            
+                # ===============================================
+                    with gil:
+                        self.criterion.set_feature(current.feature)
+                # ===============================================
 
                     # Evaluate all splits
                     self.criterion.reset()
