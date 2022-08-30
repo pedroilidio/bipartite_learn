@@ -35,6 +35,7 @@ logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 # Default test params
 DEF_PARAMS = dict(
     seed=7,
+    seed_end=-1,
     shape=(50, 60),
     nattrs=(10, 9),
     nrules=10,
@@ -282,4 +283,20 @@ def main(**PARAMS):
 
 if __name__ == "__main__":
     args = parse_args(**DEF_PARAMS)
-    main(**vars(args))
+    params = vars(args)
+
+    if params['seed_end'] == -1:
+        main(**params)
+    else:
+        unsuccessful = []
+        nseeds = 100
+
+        for s in range(params['seed'], params['seed_end']):
+            params['seed'] = s
+            try:
+                main(**params)
+            except AssertionError:
+                unsuccessful.append(s)
+        
+        print(f'Success rate: {len(unsuccessful)}/{nseeds} = {100*len(unsuccessful)/nseeds:.3f}%')
+        print('Failed seeds:', *unsuccessful)

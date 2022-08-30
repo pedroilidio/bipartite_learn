@@ -253,39 +253,15 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         The absolute impurity improvement is only computed by the
         impurity_improvement method once the best split has been found.
         """
-        cdef double out
         cdef double sup = self.supervision
-        # # FIXME: use proxies
-        # cdef double iu_parent, is_parent
-        # cdef double imp_s_left, imp_s_right
-        # cdef double imp_u_left, imp_u_right
 
-        # iu_parent = self.unsupervised_criterion.node_impurity()
-        # is_parent = self.supervised_criterion.node_impurity()
-
-        # self.supervised_criterion.children_impurity(&imp_s_left, &imp_s_right)
-        # self.unsupervised_criterion.children_impurity(&imp_u_left, &imp_u_right)
-
-        # out = (
-        #     sup * self.supervised_criterion.impurity_improvement(is_parent, imp_s_left, imp_s_right) +
-        #     (1-sup) * self.unsupervised_criterion.impurity_improvement(iu_parent, imp_u_left, imp_u_right)
-        # )
-
-        # FIXME: WHY WON'T THIS WORK?
-        out = (
+        return (
             sup * self.supervised_criterion.proxy_impurity_improvement() / 
                   self.supervised_criterion.n_outputs +
             (1-sup) * self.unsupervised_criterion.proxy_impurity_improvement() /
                   self.unsupervised_criterion.n_outputs
         )
 
-        return out
-        # return (
-        #     sup * self.supervised_criterion.proxy_impurity_improvement() +
-        #     (1-sup) * self.unsupervised_criterion.proxy_impurity_improvement()
-        # )
-
-    # FIXME: not right!
     cdef double impurity_improvement(self, double impurity_parent,
                                      double impurity_left,
                                      double impurity_right) nogil:
@@ -294,6 +270,9 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
             impurity_parent, impurity_left, impurity_right)
         cdef double u_imp = self.unsupervised_criterion.impurity_improvement(
             impurity_parent, impurity_left, impurity_right)
+        
+        # Note: both s_imp and u_imp impurities would actually be equal, unless
+        # the two criteria calculates them in different ways.
 
         return sup*s_imp + (1-sup)*u_imp
 
@@ -569,7 +548,8 @@ cdef class MSE_Wrapper2DSS(RegressionCriterionWrapper2DSS):
         u_imp_rows = ur_criterion.node_impurity()
         u_imp_cols = uc_criterion.node_impurity()
 
-        return self.ss_impurity(u_imp_rows, u_imp_cols, s_imp)
+        out = self.ss_impurity(u_imp_rows, u_imp_cols, s_imp)
+        return out
 
     cdef double node_impurity(self) nogil:
         with gil:

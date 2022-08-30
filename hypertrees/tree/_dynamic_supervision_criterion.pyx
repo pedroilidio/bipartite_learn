@@ -82,5 +82,3 @@ cdef class HyperbolicSSCriterion(SSCompositeCriterion):
         beta = log2(unsup) / log2(W)
 
         self.supervision = 1 - (unsup / w ** beta) ** 2
-        with gil:
-            print("*** SUP", self.supervision)

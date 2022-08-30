@@ -688,13 +688,13 @@ def main(**PARAMS):
     test_ss_1d2d_unsup(**vars(args))
     test_ss_1d2d(**vars(args))
     test_ss_1d2d_ideal_split(**vars(args))
-    test_sfss_1d_sup(**vars(args))
-    test_sfss_1d_unsup(**vars(args))
-    test_sfss_2d_sup(**vars(args))
-    test_sfss_2d_unsup(**vars(args))
-    test_sfss_1d2d(**vars(args))
-    test_sfssmse_1d(**vars(args))
-    test_sfssmse_1d2d(**vars(args))
+    # test_sfss_1d_sup(**vars(args))
+    # test_sfss_1d_unsup(**vars(args))
+    # test_sfss_2d_sup(**vars(args))
+    # test_sfss_2d_unsup(**vars(args))
+    # test_sfss_1d2d(**vars(args))
+    # test_sfssmse_1d(**vars(args))
+    # test_sfssmse_1d2d(**vars(args))
     # test_ud3_1d2d_unsup(**vars(args))  # FIXME
     # test_ud35_1d2d_unsup(**vars(args))  # FIXME
 
