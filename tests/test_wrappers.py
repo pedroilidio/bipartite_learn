@@ -5,7 +5,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.base import clone
 from sklearn.model_selection._validation import _score
 from sklearn.metrics import check_scoring
-from hypertrees.wrappers import PU_WrapperND, ClassPUWrapperND, melt_Xy
+from hypertrees.wrappers import PU_WrapperND, melt_Xy
 from test_utils import gen_mock_data, parse_args
 
 # Default test params
@@ -84,30 +84,6 @@ def test_pu_wrapper_nd_neg_subsamples(**PARAMS):
     assert export_text(tree_nd.estimator) == export_text(tree)
 
 
-def test_pu_wrapper_nd_metaclass(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS | {'noise': 0}
-    XX, Y, X, y, _ = gen_mock_data(melt=True, **PARAMS)
-    Y = (Y == 1).astype(int)
-    y = (y == 1).astype(int)
-
-    tree = DecisionTreeRegressor(
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        random_state=PARAMS['seed'],
-    )
-    tree_nd_class = ClassPUWrapperND(DecisionTreeRegressor)
-    
-    tree_nd = tree_nd_class(
-        subsample_negatives=False,
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        random_state=PARAMS['seed'],
-    )
-
-    tree_nd.fit(XX, Y)
-    tree.fit(X, y)
-
-    assert export_text(tree_nd) == export_text(tree)
-
-
 def _test_pickling(obj):
     joblib.dump(obj, 'test.pickle')
     obj_loaded = joblib.load('test.pickle')
@@ -137,22 +113,6 @@ def test_wrapped_forest_pickling():
 
     _test_pickling(forest)
     _test_pickling(forest_nd)
-
-
-def _test_wrapped_tree_pickling_metaclass():
-    tree = DecisionTreeRegressor(
-        min_samples_leaf=30,
-        random_state=6,
-    )
-    tree_nd_class = ClassPUWrapperND(DecisionTreeRegressor)
-    
-    tree_nd = tree_nd_class(
-        subsample_negatives=False,
-        min_samples_leaf=30,
-        random_state=6,
-    )
-    _test_pickling(tree)
-    _test_pickling(tree_nd)
 
 
 def test_score(**PARAMS):
