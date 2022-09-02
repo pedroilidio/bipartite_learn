@@ -554,7 +554,7 @@ def _fit_and_score_nd(
         fit_time = time.time() - start_time
         test_scores = {}
         for ttc_name, (X_test, y_test) in test_splits.items():
-            test_scores[ttc_name+'_scores'] = _score(estimator, X_test, y_test.flatten(),
+            test_scores[ttc_name+'_scores'] = _score(estimator, X_test, y_test.reshape(-1),
                                                      scorer, error_score)
         score_time = time.time() - start_time - fit_time
 
