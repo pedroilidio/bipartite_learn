@@ -1,6 +1,6 @@
 """Set of tools to apply standard estimators to bipartite datasets.
 
-TODO: Docs.
+TODO: rewrite docs, it's still based on sklearn.pipeline.Pipeline
 """
 from __future__ import annotations
 from random import random
@@ -39,6 +39,28 @@ def melt_Xy(X, y=None, subsample_negatives=False, random_state=None):
         X, y = X[mask], y[mask]
     
     return X, y
+
+
+# TODO: Could simplify code, but currently not using.
+def melt_Xy_before(method, subsample_negatives=False, random_state=None):
+
+    def new_method(self, X, y=None, **kwargs):
+        Xm, ym = melt_Xy(X, y=y, subsample_negatives=subsample_negatives,
+                         random_state=random_state)
+        return method(self, X=Xm, y=ym, **kwargs)
+
+    return new_method
+
+
+# TODO: Could simplify code, but currently not using.
+def melt_Xy_before_use_self(method):
+
+    def new_method(self, X, y=None, **kwargs):
+        Xm, ym = melt_Xy(X, y=y, subsample_negatives=self.subsample_negatives,
+                         random_state=self.random_state)
+        return method(self, X=Xm, y=ym, **kwargs)
+
+    return new_method
      
 
 def _estimator_has(attr):
@@ -151,7 +173,7 @@ class PU_WrapperND(BaseEstimator):
         X, _ = melt_Xy(Xt, y=None,
                        subsample_negatives=self.subsample_negatives,
                        random_state=self.random_state)
-        return self.estimator.inverse_transform(X)
+        return self.estimator.inverse_transform(Xt)
 
     @available_if(_estimator_has("score"))
     def score(self, X, y=None, sample_weight=None):
@@ -191,3 +213,33 @@ class PU_WrapperND(BaseEstimator):
             return True
         except NotFittedError:
             return False
+
+
+# Metaclass black wizardry method.
+class ClassPUWrapperND(type):
+    """Patches an sklearn class to receive ND data."""
+
+    def __new__(cls, estimator_class):
+        new_name = "ND__" + estimator_class.__name__
+        attrs = dict(vars(estimator_class))
+        old_init = attrs["__init__"]
+
+        def new_init(self, *, subsample_negatives=False,
+                     random_state=None, **kwargs):
+            self.subsample_negatives = subsample_negatives
+            self.random_state = random_state
+            return old_init(self, **kwargs)
+
+        attrs["__init__"] = new_init
+        methods_to_patch = ("fit", "transform", "fit_transform",
+                            "inverse_transform")
+        
+        for method in methods_to_patch:
+            if method in attrs:
+                attrs[method] = melt_Xy_before_use_self(attrs[method])
+        
+        return type(
+            new_name,
+            (estimator_class, *estimator_class.__bases__),
+            attrs,
+        ) 
