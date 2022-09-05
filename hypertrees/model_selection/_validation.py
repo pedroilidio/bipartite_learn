@@ -10,10 +10,16 @@ functions to validate the model.
 # ND adapted by Pedro Ilídio.
 # License: BSD 3 clause
 
+import warnings
+import numbers
+import time
+from traceback import format_exc
+
+import numpy as np
+from joblib import Parallel, logger
+
 # New imports:
 import sklearn.utils
-import copy
-import itertools
 from sklearn.model_selection._validation import (
     _score,
     _normalize_score_results,
@@ -21,33 +27,15 @@ from sklearn.model_selection._validation import (
     _aggregate_score_dicts,
 )
 from sklearn.utils.validation import (
-    _check_fit_params,
     _make_indexable,
-    _num_samples,
 )
 from sklearn.utils._tags import _safe_tags
-from ._split import check_cv_nd, _check_train_test_combinations
-
-import warnings
-import numbers
-import time
-from traceback import format_exc
-from contextlib import suppress
-from collections import Counter
-
-import numpy as np
-import scipy.sparse as sp
-from joblib import Parallel, logger
-
 from sklearn.base import is_classifier, clone
-from sklearn.utils import indexable, check_random_state, _safe_indexing
 from sklearn.utils.fixes import delayed
-from sklearn.utils.metaestimators import _safe_split
 from sklearn.metrics import check_scoring
-from sklearn.metrics._scorer import _check_multimetric_scoring, _MultimetricScorer
-from sklearn.exceptions import FitFailedWarning
-from sklearn.model_selection._split import check_cv
-from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics._scorer import _check_multimetric_scoring
+
+from ._split import check_cv_nd, _check_train_test_combinations
 
 
 __all__ = [
@@ -637,6 +625,10 @@ def _safe_split_nd(
     if not (len(X) == len(indices) == n_dim):
         raise ValueError("Incompatible dimensions. One must ensure "
                          "len(X) == len(indices) == y.ndim")
+
+    if pairwise and not _safe_tags(estimator, key="pairwise"):
+        warnings.warn("Setting pairwise=True, overriding estimator's "
+                      "pairwise=False tag.")
 
     if pairwise or _safe_tags(estimator, key="pairwise"):
         X_subset = []
