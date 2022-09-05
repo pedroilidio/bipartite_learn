@@ -70,9 +70,11 @@ def cross_validate_nd(
     return_train_score=False,
     return_estimator=False,
     error_score=np.nan,
+
     # ND specific:
     diagonal=False,
     train_test_combinations=None,
+    pairwise=False,  # possibility to override estimator._more_tags['pairwise']
 ):
     # TODO: ND adapt docs.
     """Evaluate metric(s) by cross-validation and also record fit/score times.
@@ -325,6 +327,7 @@ def cross_validate_nd(
             error_score=error_score,
             train_test_combinations=train_test_combinations,
             train_test_names=train_test_names,
+            pairwise=pairwise,
         )
         for train_test in splits_iter
     )
@@ -374,8 +377,11 @@ def _fit_and_score_nd(
     split_progress=None,
     candidate_progress=None,
     error_score=np.nan,
+
+    # ND specific:
     train_test_combinations=None,
     train_test_names=None,
+    pairwise=False,  # possibility to override estimator._more_tags['pairwise']
 ):
 
     """Fit estimator and compute scores for a given dataset split.
@@ -516,10 +522,10 @@ def _fit_and_score_nd(
         test_indices = [ax_train_test[is_test] for is_test, ax_train_test in
                         zip(is_test_tuple, train_test)]
         test_splits[ttc_name] = _safe_split_nd(
-            estimator, X, y, test_indices, train_indices)
+            estimator, X, y, test_indices, train_indices, pairwise)
 
 
-    X_train, y_train = _safe_split_nd(estimator, X, y, train_indices)
+    X_train, y_train = _safe_split_nd(estimator, X, y, train_indices, pairwise)
 
     result = {}
     try:
@@ -590,7 +596,14 @@ def _fit_and_score_nd(
 
 
 # NOTE: Originally in sklearn.utils.metaestimators
-def _safe_split_nd(estimator, X, y, indices, train_indices=None):
+def _safe_split_nd(
+    estimator,
+    X,
+    y,
+    indices,
+    train_indices=None,
+    pairwise=False, # possibility to override estimator._more_tags['pairwise']
+):
     """Create subset of n-dimensional dataset.
 
     Slice X, y according to indices for n-dimensional cross-validation.
@@ -625,7 +638,7 @@ def _safe_split_nd(estimator, X, y, indices, train_indices=None):
         raise ValueError("Incompatible dimensions. One must ensure "
                          "len(X) == len(indices) == y.ndim")
 
-    if _safe_tags(estimator, key="pairwise"):
+    if pairwise or _safe_tags(estimator, key="pairwise"):
         X_subset = []
         for i in range(n_dim):
             Xi, ind = X[i], indices[i]
