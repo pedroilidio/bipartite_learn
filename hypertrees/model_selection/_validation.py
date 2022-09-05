@@ -7,7 +7,7 @@ functions to validate the model.
 #         Olivier Grisel <olivier.grisel@ensta.org>
 #         Raghav RV <rvraghav93@gmail.com>
 #         Michal Karbownik <michakarbownik@gmail.com>
-# ND adapted by Pedro Ilídio.
+# ND adapted by Pedro Ilídio <ilidio@alumni.usp.br>.
 # License: BSD 3 clause
 
 import warnings
@@ -510,11 +510,10 @@ def _fit_and_score_nd(
         test_indices = [ax_train_test[is_test] for is_test, ax_train_test in
                         zip(is_test_tuple, train_test)]
         test_splits[ttc_name] = _safe_split_nd(
-            estimator, X, y, test_indices, train_indices, pairwise)
+            estimator, X, y, test_indices, train_indices, pairwise=pairwise)
 
-
-    X_train, y_train = _safe_split_nd(estimator, X, y, train_indices, pairwise)
-
+    X_train, y_train = _safe_split_nd(estimator, X, y, train_indices,
+                                      pairwise=pairwise)
     result = {}
     try:
         if y_train is None:
