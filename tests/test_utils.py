@@ -63,7 +63,7 @@ def gen_mock_data(melt=False, **PARAMS):
     with stopwatch("Generating mock interaction data with the following "
                    f"params:\n{pformat(PARAMS)}"):
 
-        XX, Y, strfunc = make_interaction_data(
+        XX, Y = make_interaction_data(
             PARAMS['shape'], PARAMS['nattrs'], nrules=PARAMS['nrules'],
             noise=PARAMS['noise'], random_state=PARAMS['seed']
         )
@@ -83,9 +83,9 @@ def gen_mock_data(melt=False, **PARAMS):
     print('=' * 50)
 
     if melt:
-        return XX, Y, *melt_2d_data(XX, Y), strfunc
+        return XX, Y, *melt_2d_data(XX, Y)
     else:
-        return XX, Y, strfunc
+        return XX, Y
 
 
 def melt_2d_data(XX, Y):

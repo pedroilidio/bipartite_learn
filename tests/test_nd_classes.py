@@ -88,7 +88,7 @@ def compare_trees(
     pprint(PARAMS)
 
     with stopwatch():
-        XX, Y, _ = gen_mock_data(**PARAMS)
+        XX, Y = gen_mock_data(**PARAMS)
         x, y = melt_2d_data(XX, Y)
 
     # ######### Instantiate trees
@@ -168,11 +168,16 @@ def main(
     tree2=DecisionTreeRegressor2D,
     **PARAMS,
 ):
+    PARAMS = DEF_PARAMS | PARAMS
     return compare_trees(
         tree1=DecisionTreeRegressor,
         tree2=DecisionTreeRegressor2D,
         **PARAMS,
     )
+
+
+def test_simple_tree_1d2d():
+    main()
 
 
 if __name__ == "__main__":

@@ -1,8 +1,10 @@
 from copy import deepcopy
-from sklearn.base import TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.gaussian_process.kernels import RBF
+from imblearn.base import BaseSampler
 
 
-class TransformerWrapperND(TransformerMixin):
+class TransformerWrapperND(BaseEstimator, TransformerMixin):
     def __init__(self, transformers, ndim=2) -> None:
         if isinstance(transformers, (list, tuple)):
             self.ndim = len(transformers)

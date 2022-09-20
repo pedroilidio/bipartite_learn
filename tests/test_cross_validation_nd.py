@@ -1,12 +1,10 @@
 from pprint import pprint
 from typing import Sequence
-import numpy as np
 from sklearn.utils._tags import _safe_tags
 
 from hypertrees.model_selection import cross_validate_nd
-from hypertrees.tree import DecisionTreeRegressor2D, ExtraTreeRegressor2D
+from hypertrees.tree import ExtraTreeRegressor2D
 from hypertrees.ensemble import ExtraTreesRegressor2D
-from hypertrees.model_selection._split import check_cv_nd
 
 from test_utils import gen_mock_data, stopwatch, DEF_PARAMS, parse_args
 

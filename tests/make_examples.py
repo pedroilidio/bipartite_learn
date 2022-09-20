@@ -1,8 +1,18 @@
 from argparse import ArgumentParser
+from itertools import product, pairwise
 from pathlib import Path
+from pprint import pprint
 import numpy as np
+from collections import defaultdict
+from hypertrees.melter import row_cartesian_product
 
 DIR_HERE = Path(__file__).resolve().parent
+
+
+def _check_random_state(random_state):
+    if not isinstance(random_state, np.random.Generator):
+        return np.random.default_rng(random_state)
+    return random_state
 
 
 def parse_args(args=None):
@@ -20,96 +30,94 @@ def make_interaction_data(
          shape, nattrs, func=None, nrules=5, quiet=False, noise=0.,
          random_state=None,
  ):
-    if not isinstance(random_state, np.random.Generator):
-        random_state = np.random.default_rng(random_state)
+    random_state = _check_random_state(random_state)
+
     if func is None:
-        func, strfunc = make_interaction_func(
-            nattrs, nrules, random_state=random_state)
-        if not quiet:
-            print('Generated interaction function \n\t', strfunc)
+        func = make_binary_interaction_func(
+            np.sum(nattrs), nrules, random_state=random_state)
+
     # shape contains the number of instances in each axis database, i.e.
     # its number of rows. nattrs contains their numbers of columns, i.e.
     # how many attributes per axis.
+    print("Generating X...")
     XX = [random_state.random((ni, nj), dtype=np.float32)
           for ni, nj in zip(shape, nattrs)]
-    # Create index tuples such as (np.newaxis, np.newaxis, :, np.newaxis).
-    # That's because Y will be made usin numpy's broadcasting to explore
-    # all combinations of x.
-    ndim = len(shape)
-    slices = np.tile(np.newaxis, (ndim, ndim)).astype(object)
-    np.fill_diagonal(slices, slice(None))
-    XXnewax = [X[tuple(s)] for X, s in zip(XX, slices)]
-    # To ensure it is row-wise, not element-wise.
-    # (a0),(a1),...,(a{ndim-1})->()
-    sig = ','.join(f'(a{i})' for i in range(ndim)) + '->()'
-    vfunc = np.vectorize(func, signature=sig)
-    y = vfunc(*XXnewax).astype(int)
+    X = row_cartesian_product(XX)
+    
+    print("Generating y...")
+    y = np.apply_along_axis(func, -1, X)
+
     if noise:
         y = y.astype(float)
-        y += noise * random_state.random(y.shape)
-    return XX, y, strfunc
+        y += noise * random_state.random(y.size)
+
+    return XX, y.reshape(shape)
 
 
-def make_interaction_func(
-        nattrs, nrules=10, popen=.5, pclose=.2, pand=.5,
-        random_state=None,
+def make_intervals(
+    nattrs, n_rules, random_state=None,
 ):
-    if not isinstance(random_state, np.random.Generator):
-        random_state = np.random.default_rng(random_state)
-    axes = random_state.choice(len(nattrs), nrules)
-    attrs = [random_state.integers(nattrs[ax]) for ax in axes]
-    cutoffs = random_state.random(nrules)
-    orands = ['and ' if i else 'or '
-              for i in random_state.random(nrules-1) < pand]
-    orands.append('')
+    rng = _check_random_state(random_state)
+    boundaries = defaultdict(lambda: [0, 1])
 
-    strf = ''
-    nopen = 0
-    for ax, attr, cutoff, orand in zip(axes, attrs, cutoffs, orands):
-       if random_state.random() < popen:
-           strf += '( '
-           nopen += 1
-       strf += f'xx[{ax}][{attr}] < {cutoff} '
-       if nopen and (random_state.random() < pclose):
-           strf += ') '
-           nopen -= 1
-       strf += orand
+    for _ in range(n_rules):
+        boundaries[rng.integers(nattrs)].append(rng.random())
+    
+    intervals = {}
+    for attr, bounds in boundaries.items():
+        intervals[attr] = list(pairwise(sorted(bounds)))
 
-    strf += ')' * nopen
-    return eval('lambda *xx: ' + strf), strf
+    print("Generated decision boundaries:")
+    pprint(dict(boundaries))
+    
+    return intervals
 
+    
+def make_binary_interaction_func(
+    nattrs, n_rules, random_state=None,
+):
+    rng = _check_random_state(random_state)
+    intervals = make_intervals(nattrs, n_rules, random_state)
 
-def main(shape, nattrs, nrules, outdir, seed):
-    outdir.mkdir(exist_ok=True, parents=True)
+    attrs = list(intervals.keys())
+    interv = list(intervals.values())
+    invert = rng.choice(2)
+    
+    def interaction_func(x):
+        indices = (range(len(i)) for i in interv)
 
-    XX, Y, strfunc = make_interaction_data(
-        shape, nattrs, func=func, random_state=seed
-    )
-    X1, X2 = XX
+        for ii, region in zip(product(*indices), product(*interv)):
+            for attr, interval in zip(attrs, region):
+                if not (interval[0] <= x[attr] < interval[1]):
+                    break
+            else:
+                return (sum(ii) + invert) % 2
 
-    with (outdir/'interaction_function.txt').open('w') as f:
-        f.write(strfunc)
-
-    print(f'Saving to {outdir.resolve()}...')
-    np.savetxt(outdir/'X1.csv', X1, delimiter=',')
-    np.savetxt(outdir/'X2.csv', X2, delimiter=',')
-    np.savetxt(outdir/'Y.csv', Y, delimiter=',', fmt='%d')
-
-    print('Generating labels...')
-    X1_instance_labels = 'X1_instance_' + np.arange(shape[0]).astype(str).astype(object)
-    X2_instance_labels = 'X2_instance_' + np.arange(shape[1]).astype(str).astype(object)
-    X1_column_labels = 'X1_attr_' + np.arange(nattrs[0]).astype(str).astype(object)
-    X2_column_labels = 'X2_attr_' + np.arange(nattrs[1]).astype(str).astype(object)
-
-    print('Saving...')
-    np.savetxt(outdir/'X1_names.txt', X1_instance_labels, fmt='%s')
-    np.savetxt(outdir/'X2_names.txt', X2_instance_labels, fmt='%s')
-    np.savetxt(outdir/'X1_col_names.txt', X1_column_labels, fmt='%s')
-    np.savetxt(outdir/'X2_col_names.txt', X2_column_labels, fmt='%s')
-
-    print('Done.')
+        raise ValueError("x values must be between 0 and 1")
+    
+    return interaction_func
 
 
-if __name__ == '__main__':
-    args = parse_args()
-    main(**vars(args))
+def make_dense_interaction_func(
+    nattrs, n_boundaries, random_state=None,
+):
+    rng = _check_random_state(random_state)
+    intervals = make_intervals(nattrs, n_rules, random_state)
+    features = list(intervals.keys())
+    seed = rng.random()
+    
+    def interaction_func(x):
+        inner_rng = np.random.default_rng(seed)
+
+        for region in product(*intervals.values()):
+            return_value = inner_rng.random()
+
+            for attr, interval in zip(features, region):
+                if not (interval[0] <= x[attr] < interval[1]):
+                    break
+            else:
+                return return_value
+
+        raise ValueError("x values must be between 0 and 1")
+    
+    return interaction_func
