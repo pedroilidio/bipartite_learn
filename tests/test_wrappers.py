@@ -5,7 +5,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.base import clone
 from sklearn.model_selection._validation import _score
 from sklearn.metrics import check_scoring
-from hypertrees.wrappers import PU_WrapperND, melt_Xy
+from hypertrees.wrappers import GlobalSingleOutputWrapper, melt_Xy
 from test_utils import gen_mock_data, parse_args
 
 # Default test params
@@ -34,7 +34,7 @@ def test_pu_wrapper_nd_no_neg_subsamples(**PARAMS):
         min_samples_leaf=PARAMS['min_samples_leaf'],
         random_state=PARAMS['seed'],
     )
-    tree_nd = PU_WrapperND(clone(tree), subsample_negatives=False)
+    tree_nd = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=False)
 
     tree_nd.fit(XX, Y)
     tree.fit(X, y)
@@ -63,7 +63,7 @@ def test_pu_wrapper_nd_neg_subsamples(**PARAMS):
         min_samples_leaf=PARAMS['min_samples_leaf'],
         random_state=PARAMS['seed'],
     )
-    tree_nd = PU_WrapperND(clone(tree), subsample_negatives=True)
+    tree_nd = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=True)
     Xs, ys = melt_Xy(XX, Y, subsample_negatives=True,
                      random_state=PARAMS["seed"])
 
@@ -98,7 +98,7 @@ def test_wrapped_tree_pickling():
         min_samples_leaf=30,
         random_state=6,
     )
-    tree_nd = PU_WrapperND(clone(tree), subsample_negatives=True)
+    tree_nd = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=True)
 
     _test_pickling(tree)
     _test_pickling(tree_nd)
@@ -109,7 +109,7 @@ def test_wrapped_forest_pickling():
         min_samples_leaf=30,
         random_state=6,
     )
-    forest_nd = PU_WrapperND(clone(forest), subsample_negatives=True)
+    forest_nd = GlobalSingleOutputWrapper(clone(forest), subsample_negatives=True)
 
     _test_pickling(forest)
     _test_pickling(forest_nd)
@@ -121,7 +121,7 @@ def test_score(**PARAMS):
         min_samples_leaf=30,
         random_state=6,
     )
-    forest_nd = PU_WrapperND(clone(forest), subsample_negatives=True)
+    forest_nd = GlobalSingleOutputWrapper(clone(forest), subsample_negatives=True)
     XX, Y, X, y, _ = gen_mock_data(melt=True, **PARAMS)
     forest_nd.fit(XX, Y)
 

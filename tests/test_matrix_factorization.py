@@ -1,11 +1,12 @@
+# TODO: rename
 import numpy as np
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.linear_model import Ridge
 from imblearn.pipeline import make_pipeline
 
 from hypertrees.matrix_factorization._nrlmf import NRLMF
-from hypertrees.preprocessing.bipartite_samplers import (
-    DTHybrid, BipartiteRBFSampler,
+from hypertrees.preprocessing.multipartite_samplers import (
+    DTHybridSampler, GaussianInteractionProfileSampler,
 )
 from hypertrees.wrappers import BipartiteLocalWrapper
 from test_utils import gen_mock_data, DEF_PARAMS, parse_args
@@ -40,7 +41,7 @@ def test_dthybrid(**params):
     ]
     Y = rng.choice((0., 1.), size=shape)
 
-    dthybrid = DTHybrid()
+    dthybrid = DTHybridSampler()
     XXt, Yt = dthybrid.fit_resample(XX, Y)
     Y_positive = Y.astype(bool)
 
@@ -55,12 +56,10 @@ def test_blmnii(**params):
     XX, Y, = gen_mock_data(**params, melt=False)
 
     blmnii = make_pipeline(
-        BipartiteRBFSampler(),
+        GaussianInteractionProfileSampler(),
         BipartiteLocalWrapper(
-            estimator_rows=KNeighborsRegressor(),
-            estimator_cols=KNeighborsRegressor(),
-            secondary_estimator_rows=Ridge(),
-            secondary_estimator_cols=Ridge(),
+            primary_estimator=KNeighborsRegressor(),
+            secondary_estimator=Ridge(),
         ),
     )
 

@@ -40,7 +40,7 @@ from sklearn.tree import _tree, _splitter, _criterion, DecisionTreeRegressor
 # Hypertree-specific:
 from itertools import product
 from typing import Iterable
-from ..base import RegressorMixinND
+from ..base import MultipartiteRegressorMixin
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import MSE_Wrapper2D
 from ._nd_splitter import Splitter2D, make_2d_splitter

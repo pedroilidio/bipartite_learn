@@ -39,7 +39,7 @@ from sklearn.tree import _tree, _splitter, _criterion, DecisionTreeRegressor
 from itertools import product
 from typing import Iterable
 from sklearn.tree._classes import BaseDecisionTree
-from ..base import RegressorMixinND
+from ..base import MultipartiteRegressorMixin
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import CriterionWrapper2D, MSE_Wrapper2D
 from ._nd_splitter import Splitter2D, make_2d_splitter
@@ -567,7 +567,7 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
 # =============================================================================
 
 class DecisionTreeRegressor2D(
-     RegressorMixinND, BaseDecisionTree2D, DecisionTreeRegressor
+     MultipartiteRegressorMixin, BaseDecisionTree2D, DecisionTreeRegressor
  ):
     """Adaptarion of sklearn's decision tree regressor to 2D input data.
 

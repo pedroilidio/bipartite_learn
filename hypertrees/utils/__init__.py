@@ -1,18 +1,95 @@
 """
 The :mod:`hypertrees.utils` module includes various utilities.
 """
-import sklearn
-from sklearn.utils import IS_PYPY
-import pkgutil
+# TODO: reallocate as much as we can.
+
+from __future__ import annotations
 import inspect
+import pkgutil
+import numpy as np
 from importlib import import_module
 from operator import itemgetter
 from pathlib import Path
-import warnings
+from typing import Callable, Sequence
+from sklearn.utils import IS_PYPY
 
 __all__ = [
     "all_estimators",
+    "check_multipartite_params",
 ]
+
+
+def lazy_knn_weights(
+    distances: np.ndarray[float],
+    min_distance: float = 0.,
+    func: Callable = lambda x: 1/x,
+    **func_kwargs,
+):
+    """Return learned instance if KNN estimator finds one during predict.
+    
+    Intended to be used as the `weights` parameter of KNN estimators such as
+    `sklearn.neighbors.KNeighborsRegressor`. If an instance given to predict
+    is identical to an instance of the training set, the KNN estimator will
+    not average its neighbors' labels, as usual, but will simply return the
+    known instance's labels.
+
+    Parameters
+    ----------
+    distances : np.ndarray[float]
+        The distance matrix to calculate weights on.
+    min_distance : float, default=0.
+        Minimum distance to consider samples identical.
+    func : Callable, optional, default=lambda x: 1/x
+        Function to apply on remaining instances, not found in the training set.
+    **func_kwargs : dict
+        Other keyword arguments will be forwarded to func.
+
+    Returns
+    -------
+    np.ndarray with same shape as `distances`
+        Weight matrix, with known instances only having weight on the columns
+        corresponding to its positions (if repeated) on the training set. The
+        remaining weights of known instances are set to zero.
+    """
+    is_known = (distances <= min_distance).any(axis=1)
+    weights = np.empty_like(distances)
+
+    # Only the known instance's column has non-zero weight.
+    weights[is_known] = (distances[is_known] <= min_distance)
+
+    # Remaing weights are calculated by `func`.
+    weights[~is_known] = func(distances[~is_known], **func_kwargs)
+
+    return weights
+
+
+def lazy_knn_weights_min_one(*args, **kwargs):
+    """Return learned instance if KNN estimator finds one during predict.
+
+    Convenience partial function to call `lazy_knn_weights()` with
+    `min_distace=1`, since it's so common when dealing with inverses of
+    similarities in the 0 to 1 interval.
+
+    See also
+    --------
+    lazy_knn_weights
+    """
+    return lazy_knn_weights(*args, min_distance=1., **kwargs)
+
+
+def check_multipartite_params(*params, k=2):
+    new_params = []
+
+    for p in params:
+        if isinstance(p, Sequence) and not isinstance(p, str):
+            if len(p) != k:
+                raise ValueError(
+                    f"Parameter {p} was required to have length={k}")
+            new_params.append(p)
+        else:
+            new_params.append([p for _ in range(k)])
+    
+    return new_params[0] if len(params) == 1 else new_params
 
 
 def all_estimators(type_filter=None):

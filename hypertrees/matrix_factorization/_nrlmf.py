@@ -1,15 +1,8 @@
-# TODO: lazy knn
-# TODO: docs
-from typing import Sequence
-from random import random
 import numpy as np
-from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
-from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
-from sklearn.utils.multiclass import unique_labels
-from sklearn.metrics import euclidean_distances
 from sklearn.utils import check_random_state
 from sklearn.neighbors import KNeighborsRegressor
-from ..base import BaseNPartiteSampler
+from ..base import BaseMultipartiteSampler, MultipartiteRegressorMixin
+from ..utils import check_multipartite_params, lazy_knn_weights_min_one
 
 __all__ = ["NRLMF"]
 
@@ -17,27 +10,25 @@ __all__ = ["NRLMF"]
 DEF_KNN_PARAMS = dict(
     n_neighbors=5,
     metric="precomputed",
-    weights=lambda x: -x,  # Use similarities instead of distances.
+    weights=lazy_knn_weights_min_one,
     algorithm="brute",
 )
 
 
-def check_n_partite_params(*params, n=2):
-    new_params = []
-
-    for p in params:
-        if isinstance(p, Sequence) and not isinstance(p, str):
-            if len(p) != n:
-                raise ValueError
-            new_params.append(p)
-        else:
-            new_params.append([p] * n)
-
-    return new_params
-
-
-class NRLMF(BaseNPartiteSampler):
+class NRLMF(
+    BaseMultipartiteSampler,
+    MultipartiteRegressorMixin,
+):
     """Neighborhood Regularized Logistic Matrix Factorization.
+
+    Important note: contrary to the original paper's definition, this estimator
+    must receive **distance** matrices, not similarity matrices as the X
+    parameter for fit(). One can just invert similarity matrices to use this
+    class, for example, utilizing
+
+    :module:preprocessing.bipartite_samplers.SimilarityToDistanceTransformer
+
+    in an `imblearn.pipeline.Pipeline`.
 
     [1] Yong Liu, Min Wu, Chunyan Miao, Peilin Zhao, Xiao-Li Li, "Neighborhood
     Regularized Logistic Matrix Factorization for Drug-target Interaction
@@ -82,7 +73,7 @@ class NRLMF(BaseNPartiteSampler):
         Defaults are:
             - n_neighbors=5,
             - metric="precomputed",
-            - weights=lambda x: -x,  (Use similarities instead of distances)
+            - weights=lazy_knn_weights_min_one,  # Reuse known instances
             - algorithm="brute",
 
     max_iter : int, default=100
@@ -102,6 +93,10 @@ class NRLMF(BaseNPartiteSampler):
         results across multiple function calls.
         See :term:`Glossary <random_state>`.
     """
+    # FIXME:
+    # We need this for other scikit-learn stuff to not look for predict_proba()
+    # however, NRLMF is primarily a Xy transformer (i.e. sampler).
+    _estimator_type = "regressor"  
 
     def __init__(
         self,
@@ -148,7 +143,7 @@ class NRLMF(BaseNPartiteSampler):
         yt = self._logistic_output(self.U, self.V)
 
         if not self.change_positives:
-            # Transform y only where it was zero.
+            # Transform y only where it had zero similarity (distance == 1).
             yt[y == 1] = 1
 
         if self.resample_X:
@@ -156,24 +151,25 @@ class NRLMF(BaseNPartiteSampler):
 
         return X, yt
 
-    def fit_predict(X, y):
-        # FIXME: should be equal to calling fit() and then predict()
-        #       (implement lazy KNN)
+    def fit_predict(self, X, y):
+        # NOTE: should be equal to calling fit() and then predict(), but that's
+        #       only true with weights=lazy_knn_weights_min_one in knn_params.
         _, yt = self.fit_resample(X, y)
-        return yt
+        return yt.reshape(-1)
 
-    def predict(X):
-        # FIXME: they use all neighbors in the paper.
+    def predict(self, X):
         U = self.knn_rows_.predict(X[0])
         V = self.knn_cols_.predict(X[1])
         yt = self._logistic_output(U, V)
-        return yt
+        return yt.reshape(-1)
 
     def fit(self, X, y):
-        # TODO: Use sklearn.metrics.pairwise.check_pairwise_array or similar.
-        # FIXME: improve input checking.
+        # NOTE: Fit must receive distance matrices, not similarity matrices,
+        #       contrary to the paper's description of the problem [1].
+        # FIXME: Improve input checking.
+        #        Use sklearn.metrics.pairwise.check_pairwise_array or similar.
         random_state = check_random_state(self.random_state)
-        alpha, inverse_prior_var, knn_params = check_n_partite_params(
+        alpha, inverse_prior_var, knn_params = check_multipartite_params(
             self.alpha, self.inverse_prior_var, self.knn_params,
         )
 
@@ -224,12 +220,21 @@ class NRLMF(BaseNPartiteSampler):
         \\lambda \\mathbf{I} + \\alpha \mathbf{L},
 
         according to the paper's definition, in order to facilitate usage on
-        Equations 13. `lambda_` will be \\lambda_d or \\lambda_t. `const` will
-        be \\alpha or \\beta.
+        Equations 13. `inverse_prior_var` will be \\lambda_d or \\lambda_t.
+        `alpha` will be \\alpha or \\beta.
 
         Note: knn must already be fitted by `self.fit()`.
         """
-        S_knn = (alpha * knn.kneighbors_graph(mode="distance")).toarray()
+        S_knn = knn.kneighbors_graph(mode="distance")
+        nonzero_idx = S_knn.nonzero()
+
+        # We need similarities but fit() needs to provide a distance matrix to
+        # the KNeighborsRegressor at `knn`. So S_knn will initially have
+        # distances that we must to convert to similarities. Thus, invert it.
+        S_knn[nonzero_idx] = alpha / S_knn[nonzero_idx]
+
+        S_knn = S_knn.toarray()
+
         DD = np.sum(S_knn, axis=0) + np.sum(S_knn, axis=1)
         DD += inverse_prior_var
 
@@ -245,7 +250,7 @@ class NRLMF(BaseNPartiteSampler):
         further we travel on the error landscape, the smaller our steps get.
         This sum will actually be the square root of the sum of squared steps.
         """
-        # FIXME: Is this really AdaGrad?
+        # TODO: Is this really AdaGrad?
         # See [Duchi et al., 2011](https://jmlr.org/papers/v12/duchi11a.html)
         step_sq_sum_rows = np.zeros_like(U)
         step_sq_sum_cols = np.zeros_like(V)
@@ -297,7 +302,7 @@ class NRLMF(BaseNPartiteSampler):
 
         # NOTE: the following is the negative gradient, so that it already
         #       climbs down the loss function and must be added to,
-        #       not subtracted from, W.
+        #       not subtracted from W.
         return (y*self.positive_importance - y_scaled*P) @ otherW - L @ W
 
     def _log_likelihood(self, y, U, V, L_rows, L_cols):

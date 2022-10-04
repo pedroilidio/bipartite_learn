@@ -1,10 +1,13 @@
-# TODO: BaseBipartiteEstimator
-from abc import ABCMeta, abstractmethod, abstractproperty
-from sklearn.base import BaseEstimator, RegressorMixin
-from imblearn.base import BaseSampler
 import numpy as np
+from abc import ABCMeta, abstractmethod, abstractproperty
 
-class BaseNPartiteEstimator(BaseEstimator):
+from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin
+from imblearn.base import BaseSampler, SamplerMixin
+
+
+class BaseMultipartiteEstimator(BaseEstimator):
+    """Base class for multipartite estimators.
+    """
     def _validate_data(
         self,
         X="no_validation",
@@ -18,13 +21,26 @@ class BaseNPartiteEstimator(BaseEstimator):
         return X, y
 
 
-class RegressorMixinND(RegressorMixin):
+class MultipartiteRegressorMixin(RegressorMixin):
+    """Mixin for multipartite regressors.
+    """
+
     def score(self, X, y, sample_weight=None):
         # TODO: multi-output.
         return super().score(X, y.reshape(-1), sample_weight)
 
 
-class BaseNPartiteSampler(BaseNPartiteEstimator, BaseSampler):
+class MultipartiteTransformerMixin(TransformerMixin):
+    """Mixin for multipartite transformers."""
+
+
+class MultipartiteSamplerMixin(BaseMultipartiteEstimator, SamplerMixin):
+    pass
+
+
+class BaseMultipartiteSampler(MultipartiteSamplerMixin):
+    """Base class for multipartite samplers.
+    """
     sampling_strategy = "auto"
     _sampling_type = "clean-sampling"
 
@@ -41,6 +57,11 @@ class BaseNPartiteSampler(BaseNPartiteEstimator, BaseSampler):
 
     def _more_tags(self):
         return {"X_types": ["n_partite", "2darray", "sparse", "dataframe"]}
+
+
+# =============================================================================
+# FIXME: The following classes should not be used. They are just a prototype.
+# =============================================================================
 
 
 class BaseData(metaclass=ABCMeta):
