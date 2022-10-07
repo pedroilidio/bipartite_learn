@@ -46,16 +46,37 @@ class DTHybridSampler(BaseMultipartiteSampler):
     
 
 class GaussianInteractionProfileSampler(BaseMultipartiteSampler):
-    def __init__(self, alpha=0.5, length_scale=1.0, length_scale_bounds=1.0):
+    """GIP kernel as described by van Laarhoven _et al._, 2011.
+
+    DOI: https://doi.org/10.1093/bioinformatics/btr500
+
+    Parameters
+    ----------
+    alpha : float, default=0.5
+        Controls the fraction of the GIP in the linear combination with
+        the provided similarities.
+    length_scale : float, nd.array[float], None, default=None
+        The length scale of the kernel. If a float, an isotropic kernel is
+        used. If an array, an anisotropic kernel is used where each
+        dimension of l defines the length-scale of the respective feature
+        dimension. If None, row/column averages are used.
+    length_scale_bounds : float, default=(1e-5, 1e5)
+        The lower and upper bound on `length_scale`. If set to “fixed”,
+        `length_scale` cannot be changed during hyperparameter tuning.
+    """
+    def __init__(self, alpha=0.5, length_scale=None, length_scale_bounds=1.0):
         self.alpha = alpha
         self.length_scale = length_scale
         self.length_scale_bounds = length_scale_bounds
 
     def _fit_resample(self, X, y, **fit_params):
-        rbf_kernel = RBF(length_scale=self.length_scale,
-                         length_scale_bounds=self.length_scale_bounds)
-        net_similarity_rows = rbf_kernel(y)
-        net_similarity_cols = rbf_kernel(y.T)
+        # TODO: pass list of length_scale and length_scale_bounds for each
+        #       axis.
+        l_rows = self.length_scale or np.sqrt(np.mean(y**2, axis=1)/2)
+        l_cols = self.length_scale or np.sqrt(np.mean(y**2, axis=0)/2)
+
+        net_similarity_rows = RBF(l_rows, self.length_scale_bounds)(y)
+        net_similarity_cols = RBF(l_cols, self.length_scale_bounds)(y.T)
 
         new_X = [
             self.alpha*X[0] + (1-self.alpha)*net_similarity_rows,
