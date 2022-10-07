@@ -47,9 +47,12 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     """
     def __reduce__(self):
         return (
-            SSCompositeCriterion,
+            type(self),
             (
                 self.supervision,
+                self.n_outputs,
+                self.n_features,
+                self.n_samples,
                 None,
                 self.supervised_criterion,
                 self.unsupervised_criterion,
@@ -182,7 +185,6 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         new_pos : SIZE_t
             New starting index position of the samples in the right child
         """
-        cdef int rc
         if self.supervised_criterion.update(new_pos) == -1:
             return -1
         if self.unsupervised_criterion.update(new_pos) == -1:
@@ -242,6 +244,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         dest : double pointer
             The memory address where the node value should be stored.
         """
+        # TODO: no unsupervised data needed?
         self.supervised_criterion.node_value(dest)
 
     cdef double proxy_impurity_improvement(self) nogil:
@@ -302,9 +305,6 @@ cdef class SSMSE(SSCompositeCriterion):
             n_features=n_features,
             n_samples=n_samples,
         )
-
-
-# TODO: cdef class DynamicSSCompositeCriterion(SSCompositeCriterion):
 
 
 cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
@@ -396,6 +396,66 @@ cdef class SFSSMSE(SingleFeatureSSCompositeCriterion):
     #         sup * self.supervised_criterion.node_impurity() + \
     #         (1-sup) * self.unsupervised_criterion.node_impurity()
     #     )
+
+
+cdef class SSCompositeCriterionAlves(SSCompositeCriterion):
+    """Unsupervised impurity is only used to decide between rows or columns.
+
+    The split search takes into consideration only the labels, as usual, but
+    after the rows splitter and the columns splitter defines each one's split,
+    unsupervised information is used to decide between them, i.e. the final
+    impurity is semisupervised as in MSE_wrapper2DSS, but the proxy improvement
+    only uses supervised data.
+    """
+
+    cdef double proxy_impurity_improvement(self) nogil:
+        """Compute a proxy of the impurity reduction.
+
+        This method is used to speed up the search for the best split.
+        It is a proxy quantity such that the split that maximizes this value
+        also maximizes the impurity improvement. It neglects all constant terms
+        of the impurity decrease for a given split.
+        The absolute impurity improvement is only computed by the
+        impurity_improvement method once the best split has been found.
+        """
+        return self.supervised_criterion.proxy_impurity_improvement()
+
+    cdef int update(self, SIZE_t new_pos) nogil except -1:
+        """Updated statistics by moving samples[pos:new_pos] to the left child.
+        This updates the collected statistics by moving samples[pos:new_pos]
+        from the right child to the left child.
+        Parameters
+        ----------
+        new_pos : SIZE_t
+            New starting index position of the samples in the right child
+        """
+        if self.supervised_criterion.update(new_pos) == -1:
+            return -1
+        self.pos = new_pos
+        return 0
+
+    cdef void children_impurity(self, double* impurity_left,
+                                double* impurity_right) nogil:
+        """Calculate the impurity of children.
+        Evaluate the impurity in children nodes, i.e. the impurity of
+        samples[start:pos] + the impurity of samples[pos:end].
+
+        Parameters
+        ----------
+        impurity_left : double pointer
+            The memory address where the impurity of the left child should be
+            stored.
+        impurity_right : double pointer
+            The memory address where the impurity of the right child should be
+            stored
+        """
+        # unsupervised criterion is not updated during search.
+        if self.unsupervised_criterion.update(self.pos) == -1:
+            with gil: raise RuntimeError
+
+        SSCompositeCriterion.children_impurity(self, impurity_left,
+                                               impurity_right)
+
 
 # =============================================================================
 # 2D Semi-supervised Criterion Wrapper
@@ -820,6 +880,7 @@ cdef class MSE2DSFSS(MSE_Wrapper2DSS):
 
         impurity_left[0] = u_impurity_left*(1-sup) + s_impurity_left * sup
         impurity_right[0] = u_impurity_right*(1-sup) + s_impurity_right * sup
+        
 
 # =============================================================================
 # Splitter factory function

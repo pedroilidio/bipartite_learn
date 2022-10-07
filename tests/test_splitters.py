@@ -1,3 +1,4 @@
+from pytest import raises
 from typing import Callable
 import numpy as np
 from functools import partial
@@ -8,6 +9,7 @@ from sklearn.tree._splitter import BestSplitter
 from hypertrees.tree._nd_splitter import make_2d_splitter
 from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
+    SSCompositeCriterionAlves,
     make_2dss_splitter,
     SingleFeatureSSCompositeCriterion,
     MSE2DSFSS,
@@ -87,7 +89,7 @@ def compare_splitters_1d2d(
         random_state = np.random.RandomState(PARAMS['seed'])
 
     # XX, Y, x, y, _ = gen_mock_data(**PARAMS, melt=True)
-    XX, Y, _ = gen_mock_data(**PARAMS)
+    XX, Y = gen_mock_data(**PARAMS)
     n_samples_0 = PARAMS['shape'][0]
 
     # Artificially set XX[0][:, 0] to be the best (most separable)
@@ -99,7 +101,7 @@ def compare_splitters_1d2d(
     x, y = melt_2d_data(XX, Y)
 
     if Y.var() == 0:
-        raise RuntimeError(f"Bad seed ({PARAMS['seed']}), y is homogeneus."
+        raise RuntimeError(f"Bad seed ({PARAMS['seed']}), y is homogeneous."
                            " Try another one or reduce nrules.")
 
     start = PARAMS['start'] or 0
@@ -156,10 +158,17 @@ def compare_splitters_1d2d(
     assert result1['improvement'] >= 0, \
         'Negative reference improvement, input seems wrong.'
 
-    if not semisupervised_1d and manual_impurity:
+    if manual_impurity:
         x_ = x[start*Y.shape[1] : end*Y.shape[1]]
         y_ = y[start*Y.shape[1] : end*Y.shape[1]]
         pos = result1['pos'] - start*Y.shape[1]
+
+        if semisupervised_1d:
+            # NOTE: only single-output
+            x_, y_ = x_.copy(), y_.copy()
+            sup = splitter1.criterion.supervision
+            y_[:, -1] *= np.sqrt(sup * y_.shape[1])
+            y_[:, :-1] *= np.sqrt((1-sup) * y_.shape[1] / (y_.shape[1]-1))
 
         sorted_indices = x_[:, result1['feature']].argsort()
         manual_impurity_left = y_[sorted_indices][:pos].var(0).mean()
@@ -678,6 +687,84 @@ def test_sfssmse_1d2d(**PARAMS):
     )
 
 
+def test_ss_alves_1d2d(**PARAMS):
+    print('*** test_ss_alves_1d')
+    PARAMS = DEF_PARAMS | PARAMS
+    random_state = np.random.RandomState(PARAMS['seed'])
+    supervision = PARAMS.get('supervision', -1.)
+    if supervision == -1.:
+        supervision = random_state.random()
+    print(f"* Set supervision={supervision}")
+
+    splitter1 = BestSplitter(
+        criterion=SSCompositeCriterionAlves(
+            supervision=supervision,
+            criterion=MSE,
+            n_features=sum(PARAMS['nattrs']),
+            n_samples=np.prod(PARAMS['shape']),
+            n_outputs=1,
+        ),
+        max_features=np.sum(PARAMS['nattrs']),
+        min_samples_leaf=PARAMS['min_samples_leaf'],
+        min_weight_leaf=0.,
+        random_state=random_state,
+    )
+
+    splitter2d = make_2dss_splitter(
+        splitters=BestSplitter,
+        ss_criteria=SSCompositeCriterionAlves,
+        criteria=MSE,
+        supervision=supervision,
+        max_features=PARAMS['nattrs'],
+        n_features=PARAMS['nattrs'],
+        n_samples=PARAMS['shape'],
+        n_outputs=1,
+        random_state=random_state,
+        min_samples_leaf=PARAMS['min_samples_leaf'],
+        min_weight_leaf=0.,
+    )
+
+    return compare_splitters_1d2d(
+        splitter1=splitter1,
+        splitter2=splitter2d,
+        semisupervised_1d=True,
+        **PARAMS,
+    )
+
+
+def test_ss_alves_1d(**PARAMS):
+    print('*** test_ss_alves_1d')
+    PARAMS = DEF_PARAMS | PARAMS
+    random_state = np.random.RandomState(PARAMS['seed'])
+    supervision = PARAMS.get('supervision', -1.)
+    if supervision == -1.:
+        # The supervised impurity should not dominate.
+        supervision = random_state.random() / 10000
+    print(f"* Set supervision={supervision}")
+
+    splitter2d = make_2dss_splitter(
+        splitters=BestSplitter,
+        ss_criteria=SSCompositeCriterionAlves,
+        criteria=MSE,
+        supervision=supervision,
+        max_features=PARAMS['nattrs'],
+        n_features=PARAMS['nattrs'],
+        n_samples=PARAMS['shape'],
+        n_outputs=1,
+        random_state=random_state,
+        min_samples_leaf=PARAMS['min_samples_leaf'],
+        min_weight_leaf=0.,
+    )
+
+    # The equal thresholds will still be asserted.
+    with raises(AssertionError, match=r'improvement differs from reference\.'):
+        compare_splitters_1d2d(
+            splitter1=BestSplitter,
+            splitter2=splitter2d,
+            **PARAMS,
+        )
+
+
 # TODO: test with different axis supervisions. sscrit2d.impurity_improvement()
 #       may fail.
 def main(**PARAMS):
@@ -686,8 +773,9 @@ def main(**PARAMS):
     test_1d2d(**vars(args))
     test_ss_1d2d_sup(**vars(args))
     test_ss_1d2d_unsup(**vars(args))
-    test_ss_1d2d(**vars(args))
     test_ss_1d2d_ideal_split(**vars(args))
+    test_ss_alves_1d(**vars(args))
+    test_ss_alves_1d2d(**vars(args))
     # test_sfss_1d_sup(**vars(args))
     # test_sfss_1d_unsup(**vars(args))
     # test_sfss_2d_sup(**vars(args))

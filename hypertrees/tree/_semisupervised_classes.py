@@ -52,9 +52,15 @@ from sklearn.tree._classes import (
     DENSE_SPLITTERS, SPARSE_SPLITTERS,
 )
 from ._semisupervised_criterion import (
-    SemisupervisedCriterion, SSCompositeCriterion, SSMSE, make_2dss_splitter,
-    SingleFeatureSSCompositeCriterion, SFSSMSE,
-    MSE_Wrapper2DSS, MSE2DSFSS,
+    SemisupervisedCriterion,
+    SSCompositeCriterion,
+    SingleFeatureSSCompositeCriterion,
+    SSCompositeCriterionAlves,
+    SSMSE,
+    SFSSMSE,
+    MSE_Wrapper2DSS,
+    MSE2DSFSS,
+    make_2dss_splitter,
 )
 
 from ._dynamic_supervision_criterion import DynamicSSMSE
@@ -98,6 +104,7 @@ CRITERIA_2D |= {
 
 CRITERIA_SS = {
     "ss_composite": SSCompositeCriterion,
+    "ss_composite_alves": SSCompositeCriterionAlves,
     "ss_squared_error": SSMSE,
     "dynamic_ssmse": DynamicSSMSE,
     "single_feature_ss": SingleFeatureSSCompositeCriterion,
