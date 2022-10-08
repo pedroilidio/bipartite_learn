@@ -54,12 +54,15 @@ class GaussianInteractionProfileSampler(BaseMultipartiteSampler):
     ----------
     alpha : float, default=0.5
         Controls the fraction of the GIP in the linear combination with
-        the provided similarities.
+        the provided similarities. alpha=1 means no change, alpha=0 means no
+        original X data will remain.
+
     length_scale : float, nd.array[float], None, default=None
         The length scale of the kernel. If a float, an isotropic kernel is
         used. If an array, an anisotropic kernel is used where each
         dimension of l defines the length-scale of the respective feature
         dimension. If None, row/column averages are used.
+
     length_scale_bounds : float, default=(1e-5, 1e5)
         The lower and upper bound on `length_scale`. If set to “fixed”,
         `length_scale` cannot be changed during hyperparameter tuning.

@@ -131,6 +131,10 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         self.end = end
         self.n_node_samples = end-start
         self.weighted_n_samples = weighted_n_samples
+        
+        # FIXME: HACK: allows for dynamically changing n_outputs
+        self.supervised_criterion.n_outputs = self.n_outputs
+        self.unsupervised_criterion.n_outputs = self.n_features
 
         self.supervised_criterion.init(
             self.y, sample_weight, weighted_n_samples, samples, start, end,

@@ -11,15 +11,12 @@ from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 
 cdef class CriterionWrapper2D:
     """Abstract base class."""
+    cdef Splitter splitter_rows
+    cdef Splitter splitter_cols
 
-
-cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
-    # FIXME: We need X here because BaseDenseSplitter.X is not accessible.
     cdef const DOUBLE_t[:, ::1] X_rows
     cdef const DOUBLE_t[:, ::1] X_cols
     cdef const DOUBLE_t[:, ::1] y_2D
-    cdef DOUBLE_t[:, ::1] y_row_sums
-    cdef DOUBLE_t[:, ::1] y_col_sums
 
     cdef DOUBLE_t* row_sample_weight
     cdef DOUBLE_t* col_sample_weight
@@ -27,7 +24,6 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     cdef SIZE_t* col_samples
     cdef SIZE_t[2] start
     cdef SIZE_t[2] end
-
     cdef SIZE_t n_outputs
     cdef SIZE_t n_rows
     cdef SIZE_t n_cols
@@ -35,21 +31,17 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     cdef double[::1] sum_total
     cdef double weighted_n_node_samples
     cdef double weighted_n_samples
-    cdef DOUBLE_t* total_row_sample_weight
-    cdef DOUBLE_t* total_col_sample_weight
 
     cdef double weighted_n_row_samples
     cdef double weighted_n_col_samples
-    cdef Splitter splitter_rows
-    cdef Splitter splitter_cols
 
     cdef int init(
-            self, const DOUBLE_t[:, ::1] y_2D,
-            DOUBLE_t* row_sample_weight,
-            DOUBLE_t* col_sample_weight,
-            double weighted_n_samples,
-            SIZE_t[2] start, SIZE_t[2] end,
-        ) nogil except -1
+        self, const DOUBLE_t[:, ::1] y_2D,
+        DOUBLE_t* row_sample_weight,
+        DOUBLE_t* col_sample_weight,
+        double weighted_n_samples,
+        SIZE_t[2] start, SIZE_t[2] end,
+    ) nogil except -1
 
     cdef int _node_reset_child_splitter(
             self,
@@ -77,6 +69,25 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
             impurity_left, double impurity_right,
             SIZE_t axis,
     ) nogil
+
+
+cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
+    # FIXME: We need X here because BaseDenseSplitter.X is not accessible.
+    cdef DOUBLE_t[:, ::1] y_row_sums
+    cdef DOUBLE_t[:, ::1] y_col_sums
+
+    cdef DOUBLE_t* total_row_sample_weight
+    cdef DOUBLE_t* total_col_sample_weight
+
+
+cdef class PBCTCriterionWrapper(CriterionWrapper2D):
+    """Applies Predictive Bi-Clustering Trees method.
+
+    See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
+    """
+    cdef double* _node_value_aux  # Temporary storage to use in node_value()
+    cdef SIZE_t _aux_len
+
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
     cdef Criterion _get_criterion(self, SIZE_t axis)

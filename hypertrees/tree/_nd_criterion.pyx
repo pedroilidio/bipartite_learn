@@ -6,13 +6,57 @@ from libc.stdlib cimport malloc, calloc, free, realloc
 from libc.string cimport memset
 
 import numpy as np
-cimport numpy as np
+cimport numpy as cnp
+
+cdef DOUBLE_t NAN = np.nan
 
 np.import_array()
 from copy import deepcopy
 
 cdef class CriterionWrapper2D:
     """Abstract base class."""
+
+    cdef int init(
+        self, const DOUBLE_t[:, ::1] y_2D,
+        DOUBLE_t* row_sample_weight,
+        DOUBLE_t* col_sample_weight,
+        double weighted_n_samples,
+        SIZE_t[2] start, SIZE_t[2] end,
+    ) nogil except -1:
+        pass
+
+    cdef int _node_reset_child_splitter(
+            self,
+            Splitter child_splitter,
+            const DOUBLE_t[:, ::1] y,
+            DOUBLE_t* sample_weight,
+            SIZE_t start,
+            SIZE_t end,
+            DOUBLE_t* weighted_n_node_samples,
+    ) nogil except -1:
+        pass
+
+    cdef void node_value(self, double* dest) nogil:
+        pass
+
+    cdef double node_impurity(self) nogil:
+        pass
+
+    cdef void children_impurity(
+            self,
+            double* impurity_left,
+            double* impurity_right,
+            SIZE_t axis,
+    ):
+        pass
+
+    cdef double impurity_improvement(
+            self, double impurity_parent, double
+            impurity_left, double impurity_right,
+            SIZE_t axis,
+    ) nogil:
+        pass
+
 
 cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     def __cinit__(self, Splitter splitter_rows, Splitter splitter_cols):
@@ -91,8 +135,10 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         ) nogil except -1:
         """This function adapts RegressionCriterion.init to 2D data."""
         # NOTE: A problem is sometimes n_outputs is actually treated the
-        # number of outputs, but sometimes it is just an alias for y.shape[1].
-        # In 1D, they have the same value, but now we have to discern them.
+        #       number of outputs, but sometimes it is just an alias for y.shape[1].
+        #       In 1D, they have the same value, but now we have to discern them.
+        #
+        # FIXME: the way we deal with sample weights seems MSE-specific.
 
         cdef SIZE_t i
         cdef SIZE_t j
@@ -100,7 +146,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         cdef SIZE_t q
         cdef DOUBLE_t y_ij
         cdef DOUBLE_t w_y_ij
-        cdef DOUBLE_t w=1.0, wi=1.0, wj=1.0
+        cdef DOUBLE_t w, wi, wj
 
         # Initialize fields
         self.y_2D = y_2D
@@ -120,7 +166,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         # TODO: implement multi-output.
         memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
 
-        # Reset y axis means only where is needed.
+        # Reset y axis means only where needed.
         for p in range(start[0], end[0]):
             i = self.row_samples[p]
             for q in range(start[1], end[1]):
@@ -128,7 +174,9 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
                 self.y_row_sums[i, 0] = 0
                 self.y_col_sums[j, 0] = 0
 
+
         # Compute y axis means.
+        w = wi = wj = 1.0
         for p in range(start[0], end[0]):
             i = self.row_samples[p]
 
@@ -236,10 +284,15 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     ) nogil except -1:
         """Substitutes splitter.node_reset() setting child splitter on 2D data.
         """
-        # TODO: It is done in Splitter2D.init(). Should we do it here?
-        # child_splitter.weighted_n_samples = self.weighted_n_samples
         child_splitter.y = y
         child_splitter.sample_weight = sample_weight
+
+        # TODO: it was being done in Splitter2D.init(), but it's now here for
+        #       being criterion-specific. However, often there is no need for
+        #       setting this on every node, and splitter.init is only called
+        #       once, conveniently.
+        child_splitter.weighted_n_samples = self.weighted_n_samples
+
         return child_splitter.node_reset(start, end, weighted_n_node_samples)
 
     cdef void node_value(self, double* dest) nogil:
@@ -261,7 +314,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         if axis == 0:
             self.splitter_rows.criterion.children_impurity(
                 impurity_left, impurity_right)
-        if axis == 1:
+        elif axis == 1:
             self.splitter_cols.criterion.children_impurity(
                 impurity_left, impurity_right)
 
@@ -270,11 +323,11 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
             impurity_left, double impurity_right,
             SIZE_t axis,
     ) nogil:
-        if axis == 1:
-            return self.splitter_cols.criterion.impurity_improvement(
-                impurity_parent, impurity_left, impurity_right)
-        else:  # axis == 0
+        if axis == 0:
             return self.splitter_rows.criterion.impurity_improvement(
+                impurity_parent, impurity_left, impurity_right)
+        elif axis == 1:
+            return self.splitter_cols.criterion.impurity_improvement(
                 impurity_parent, impurity_left, impurity_right)
 
 
@@ -367,3 +420,234 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
             return self.splitter_cols.criterion
         if axis == 0:
             return self.splitter_rows.criterion
+
+
+# TODO: should work for classification as well.
+cdef class PBCTCriterionWrapper(CriterionWrapper2D):
+    """Applies Predictive Bi-Clustering Trees method.
+
+    See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
+    """
+
+    def __cinit__(self, Splitter splitter_rows, Splitter splitter_cols):
+        self.splitter_rows = splitter_rows
+        self.splitter_cols = splitter_cols
+        self.n_rows = self.splitter_rows.criterion.n_samples
+        self.n_cols = self.splitter_cols.criterion.n_samples
+        self.row_samples = NULL
+        self.col_samples = NULL
+
+        self._aux_len = max(self.n_rows, self.n_cols)
+        # Temporary storage to use in node_value()
+        self._node_value_aux = <double*> malloc(
+            sizeof(double) * self._aux_len
+        )
+        self.n_outputs = self.n_rows + self.n_cols
+
+        # Default values
+        self.row_sample_weight = NULL
+        self.col_sample_weight = NULL
+        self.sq_sum_total = 0.0
+
+        self.start[0] = 0
+        self.start[1] = 0
+        self.end[0] = 0
+        self.end[1] = 0
+
+        self.weighted_n_node_samples = 0.0
+        self.weighted_n_row_samples = 0.0
+        self.weighted_n_col_samples = 0.0
+
+        self.sum_total = np.zeros(self.n_outputs, dtype=np.float64)
+
+    def __dealloc__(self):
+        free(self._node_value_aux)
+
+    def __reduce__(self):
+        return (type(self),
+                (self.splitter_rows, self.splitter_cols),
+                self.__getstate__())
+
+    def __getstate__(self):
+        return {}
+
+    cdef int init(
+            self, const DOUBLE_t[:, ::1] y_2D,
+            DOUBLE_t* row_sample_weight,
+            DOUBLE_t* col_sample_weight,
+            double weighted_n_samples,
+            SIZE_t[2] start, SIZE_t[2] end,
+        ) nogil except -1:
+        """This function adapts RegressionCriterion.init to 2D data."""
+        # NOTE: A problem is sometimes n_outputs is actually treated the
+        # number of outputs, but sometimes it is just an alias for y.shape[1].
+        # In 1D, they have the same value, but now we have to discern them.
+        cdef SIZE_t i, j, p, q
+        cdef DOUBLE_t wi, wj
+
+        # Initialize fields
+        self.y_2D = y_2D
+        self.row_sample_weight = row_sample_weight
+        self.col_sample_weight = col_sample_weight
+        self.weighted_n_samples = weighted_n_samples
+        self.row_samples = &self.splitter_rows.samples[0]
+        self.col_samples = &self.splitter_cols.samples[0]
+        self.start[0], self.start[1] = start[0], start[1]
+        self.end[0], self.end[1] = end[0], end[1]
+        self.sq_sum_total = 0.0
+
+        # FIXME what to do with this? Get self.weighted_n_samples from it?
+        cdef double[2] wnns  # will be discarded
+
+        cdef SIZE_t[::1] row_samples_view
+        cdef SIZE_t[::1] col_samples_view
+        cdef DOUBLE_t[:, ::1] y_2D_rows
+        cdef DOUBLE_t[:, ::1] y_2D_cols
+        cdef SIZE_t n_node_rows = end[0] - start[0]
+        cdef SIZE_t n_node_cols = end[1] - start[1]
+
+        with gil:
+            # FIXME: how to access composite semisupervised criterion?
+            #        a gambiarra is used for now.
+            # HACK
+            self.splitter_rows.criterion.n_outputs = n_node_cols
+            self.splitter_cols.criterion.n_outputs = n_node_rows
+
+            row_samples_view = (<SIZE_t[:self.n_rows]> self.row_samples)[start[0]:end[0]]
+            col_samples_view = (<SIZE_t[:self.n_cols]> self.col_samples)[start[1]:end[1]]
+
+            # TODO: avoid copying if no sample weights provided
+            y_2D_rows = np.asarray(self.y_2D)[:, col_samples_view].copy()
+            y_2D_cols = np.asarray(self.y_2D.T)[:, row_samples_view].copy()
+
+        # FIXME: this is actually MSE specific.
+        if (self.row_sample_weight!=NULL) or (self.row_sample_weight!=NULL):
+            wi = wj = 1.
+
+            for p in range(start[0], end[0]):
+                i = self.row_samples[p]
+
+                if row_sample_weight != NULL:
+                    wi = row_sample_weight[i]
+
+                for q in range(start[1], end[1]):
+                    j = self.col_samples[q]
+
+                    if col_sample_weight != NULL:
+                        wj = col_sample_weight[j]
+
+                    y_2D_rows[i, q] *= wj ** .5
+                    y_2D_cols[j, p] *= wi ** .5
+
+        if -1 == self._node_reset_child_splitter(
+            child_splitter=self.splitter_rows,
+            y=y_2D_rows,
+            sample_weight=self.row_sample_weight,
+            start=start[0],
+            end=end[0],
+            weighted_n_node_samples=wnns,
+        ):
+            return -1
+
+        if -1 == self._node_reset_child_splitter(
+            child_splitter=self.splitter_cols,
+            y=y_2D_cols,
+            sample_weight=self.col_sample_weight,
+            start=start[1],
+            end=end[1],
+            weighted_n_node_samples=wnns+1,
+        ):
+            return -1
+
+        # FIXME: do we need self.sum_total?
+        self.weighted_n_row_samples = wnns[0]
+        self.weighted_n_col_samples = wnns[1]
+        self.weighted_n_node_samples = wnns[0] * wnns[1]
+
+        return 0
+
+    cdef int _node_reset_child_splitter(
+            self,
+            Splitter child_splitter,
+            const DOUBLE_t[:, ::1] y,
+            DOUBLE_t* sample_weight,
+            SIZE_t start,
+            SIZE_t end,
+            DOUBLE_t* weighted_n_node_samples,
+    ) nogil except -1:
+        """Substitutes splitter.node_reset() setting child splitter on 2D data.
+        """
+        child_splitter.y = y
+        return child_splitter.node_reset(start, end, weighted_n_node_samples)
+
+    cdef void node_value(self, double* dest) nogil:
+        """Copy the value (prototype) of node samples into dest.
+        """
+        cdef SIZE_t i, j, p, q
+
+        for i in range(self._aux_len):
+            dest[i] = NAN
+
+        self.splitter_rows.node_value(self._node_value_aux)
+
+        for p in range(self.start[0], self.end[0]):
+            i = self.row_samples[p]
+            dest[i] = self._node_value_aux[p]
+
+        self.splitter_cols.node_value(self._node_value_aux)
+
+        for q in range(self.start[1], self.end[1]):
+            j = self.col_samples[q]
+            dest[j + self.n_rows] = self._node_value_aux[q]
+
+    cdef double node_impurity(self) nogil:
+        """Return the impurity of the current node.
+
+        In scikit-learn trees it is only used at the root node.
+        """
+        # TODO: any better alternative?
+        return (self.splitter_rows.node_impurity()
+                + self.splitter_cols.node_impurity()) / 2
+
+    cdef void children_impurity(
+            self,
+            double* impurity_left,
+            double* impurity_right,
+            SIZE_t axis,
+    ):
+        if axis == 0:
+            self.splitter_rows.criterion.children_impurity(
+                impurity_left, impurity_right)
+        elif axis == 1:
+            self.splitter_cols.criterion.children_impurity(
+                impurity_left, impurity_right)
+
+    cdef double impurity_improvement(
+            self, double impurity_parent, double
+            impurity_left, double impurity_right,
+            SIZE_t axis,
+    ) nogil:
+        """The final value to express the split quality. 
+
+        Since row/col criteria calculates impurity differently (along rows) or
+        columns, we recompute the node impurity here, differently from what
+        sklearn does (it uses children impurity from the parent node).
+        """
+        # TODO: We do not need to calculate parent impurity again if the last
+        #       split occurred in the same axis (proceed like sklearn in this
+        #       case, using children impurity from the parent node).
+        
+        # TODO: Another option to consider is to always get the mean impurity
+        #       among the two axis, yielding a symmetric and apparently more
+        #       consistent and reasonable metric.
+        cdef double impimp
+
+        if axis == 0:
+            impurity_parent = self.splitter_rows.criterion.node_impurity()
+            return self.splitter_rows.criterion.impurity_improvement(
+                impurity_parent, impurity_left, impurity_right)
+
+        elif axis == 1:
+            impurity_parent = self.splitter_cols.criterion.node_impurity()
+            return self.splitter_cols.criterion.impurity_improvement(
+                impurity_parent, impurity_left, impurity_right)

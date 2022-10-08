@@ -1,3 +1,4 @@
+# cython: boundscheck=False
 import copy
 import warnings
 from sklearn.tree._splitter cimport Splitter
@@ -32,7 +33,7 @@ cdef class Splitter2D:
     """
     def __cinit__(
             self, Splitter splitter_rows, Splitter splitter_cols,
-            RegressionCriterionWrapper2D criterion_wrapper,
+            CriterionWrapper2D criterion_wrapper,
             min_samples_leaf, min_weight_leaf,
     ):
         """Store each axis' splitter."""
@@ -118,10 +119,6 @@ cdef class Splitter2D:
                          self.splitter_cols.n_samples
         self.weighted_n_samples = self.splitter_rows.weighted_n_samples * \
                                   self.splitter_cols.weighted_n_samples
-
-        # TODO: Do it in criterion_wrapper.init()
-        self.splitter_rows.weighted_n_samples = self.weighted_n_samples
-        self.splitter_cols.weighted_n_samples = self.weighted_n_samples
 
         return 0
 
@@ -222,10 +219,10 @@ cdef class Splitter2D:
                 best_split.impurity_right = imp_right
                 best_split.axis = 0
 
+        # FIXME: shouldn't need this if.
         if (self.splitter_cols.end - self.splitter_cols.start) >= 2:
             self.splitter_cols.node_split(impurity, &current_split,
                                           n_constant_features+1)
-            # # FIXME: shouldn't need this if.
 
             # NOTE: When no nice split have been  found, the child splitter sets
             # the split position at the end.
