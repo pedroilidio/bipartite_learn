@@ -728,10 +728,15 @@ def test_ss_alves_1d2d(**params):
     print('*** test_ss_alves_1d2d')
     params = DEF_PARAMS | params
     random_state = np.random.RandomState(params['seed'])
-    supervision = params.get('supervision', -1.)
-    if supervision == -1.:
-        supervision = random_state.random()
+
+    # supervision = params.get('supervision', -1.)
+    # if supervision == -1.:
+    #     supervision = random_state.random()
+
+    supervision = params["supervision"] = 0
     print(f"* Set supervision={supervision}")
+    params["noise"] = 0
+    print(f"* Set noise={params['noise']}")
 
     splitter1 = BestSplitter(
         criterion=SSCompositeCriterionAlves(
@@ -770,14 +775,24 @@ def test_ss_alves_1d2d(**params):
 
 
 def test_ss_alves_1d(**params):
+    """Test axis decision-semisupervision
+
+    Assert that axis decision semisupervision chooses the split based only on
+    supervised data, integrating unsupervised score after it is found.
+    """
     print('*** test_ss_alves_1d')
     params = DEF_PARAMS | params
     random_state = np.random.RandomState(params['seed'])
-    supervision = params.get('supervision', -1.)
-    if supervision == -1.:
-        # The supervised impurity should not dominate.
-        supervision = random_state.random() / 10000
+
+    # supervision = params.get('supervision', -1.)
+    # if supervision == -1.:
+    #     # The supervised impurity should not dominate, otherwise.
+    #     supervision = random_state.random() / 100000
+
+    supervision = params["supervision"] = 0
     print(f"* Set supervision={supervision}")
+    params["noise"] = 0
+    print(f"* Set noise={params['noise']}")
 
     splitter2d = make_2dss_splitter(
         splitters=BestSplitter,
