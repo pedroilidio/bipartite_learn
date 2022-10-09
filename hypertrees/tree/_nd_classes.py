@@ -14,7 +14,9 @@ import warnings
 import copy
 from abc import ABCMeta
 from abc import abstractmethod
+from itertools import product
 from math import ceil
+from typing import Iterable, Callable
 
 import numpy as np
 from scipy.sparse import issparse
@@ -33,23 +35,28 @@ from sklearn.utils.multiclass import check_classification_targets
 from sklearn.tree._criterion import Criterion
 from sklearn.tree._splitter import Splitter
 from sklearn.tree._tree import Tree
-from sklearn.tree import _tree, _splitter, _criterion, DecisionTreeRegressor
+from sklearn.tree._classes import (
+    DENSE_SPLITTERS, CRITERIA_CLF, CRITERIA_REG, DecisionTreeRegressor,
+    DecisionTreeClassifier,
+)
+from sklearn.tree._tree import DTYPE, DOUBLE
 
-# ND specific:
-from itertools import product
-from typing import Iterable
 from sklearn.tree._classes import BaseDecisionTree
-from ..base import MultipartiteRegressorMixin
+from ..base import BaseMultipartiteEstimator, MultipartiteRegressorMixin
 from ._nd_tree import DepthFirstTreeBuilder2D
-from ._nd_criterion import CriterionWrapper2D, MSE_Wrapper2D
+from ._nd_criterion import (
+    CriterionWrapper2D, MSE_Wrapper2D, PBCTCriterionWrapper,
+)
 from ._nd_splitter import Splitter2D, make_2d_splitter
 from ..melter import row_cartesian_product
 
 
 __all__ = [
     "DecisionTreeRegressor2D",
-    "PBCT",  # Alias to DecisionTreeRegressor2D.
     "ExtraTreeRegressor2D",
+    "BiclusteringTreeRegressor",
+    "BiclusteringTreeClassifier",
+    "PBCT",
 ]
 
 
@@ -57,20 +64,9 @@ __all__ = [
 # Types and constants
 # =============================================================================
 
-DTYPE = _tree.DTYPE
-DOUBLE = _tree.DOUBLE
-
-CRITERIA_CLF = {}
-CRITERIA_REG = {
-    "squared_error": _criterion.MSE,
-}
 CRITERIA_2D = {
     "squared_error": MSE_Wrapper2D,
-}
-
-DENSE_SPLITTERS = {
-    "best": _splitter.BestSplitter,
-    "random": _splitter.RandomSplitter,
+    "local_multioutput": PBCTCriterionWrapper,
 }
 
 SPARSE_SPLITTERS = {}
@@ -81,7 +77,8 @@ SPARSE_SPLITTERS = {}
 # =============================================================================
 
 
-class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
+class BaseDecisionTree2D(BaseMultipartiteEstimator, BaseDecisionTree,
+                         metaclass=ABCMeta):
     """Base class for ND trees, 2D adapted.
 
     Warning: This class should not be used directly.
@@ -156,9 +153,9 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
             check_y_params = dict(multi_output=True)
 
             y = self._validate_data(X="no_validation", y=y, **check_y_params)
+            X = self._validate_data(X, **check_X_params)
 
             for ax in range(len(X)):
-                X[ax] = self._validate_data(X[ax], **check_X_params)
                 if issparse(X[ax]):
                     X[ax].sort_indices()
 
@@ -196,8 +193,8 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
             # [:, np.newaxis] that does not.
             y = np.reshape(y, (-1, 1))
 
-        # self.n_outputs_ = y.shape[-1]  # TODO: implement.
-        self.n_outputs_ = 1
+        # self.n_outputs_ = y.shape[-1]  # TODO: implement multi-output (3D y).
+        self.n_outputs_ = self._get_n_outputs(X, y)
 
         if is_classification:
             raise NotImplementedError(
@@ -258,6 +255,7 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
                 zip(self.ax_min_weight_fraction_leaf, y.shape)
             ]
         else:
+            warnings.warn("sample_weights is still an experimental feature.")
             split_indices = np.cumsum(y.shape)
             ax_sample_weight = np.split(sample_weight, split_indices)[:-1]
             weighted_n_samples = np.prod([
@@ -535,31 +533,18 @@ class BaseDecisionTree2D(BaseDecisionTree, metaclass=ABCMeta):
             min_weight_leaf,
         )
 
+    def _get_n_outputs(self, X, y):
+        # TODO: Multi-output is not yet implemented for bipartite trees.
+        return 1
+
     def _validate_X_predict(self, X, check_input):
         """Validate the training data on predict (probabilities)."""
         # FIXME: storing a whole matrix unnecessarily.
         if isinstance(X, (tuple, list)):  # FIXME: better criteria.
             X = row_cartesian_product(X)
 
-        return super()._validate_X_predict(X, check_input)
-
-#     # FIXME: reshape after?
-#     def predict(self, X, check_input=True):
-#         # Identify if each axis instances are provided separately.
-#         # FIXME: better criteria.
-#         axes_format = type(X) in (tuple, list) and len(X) == 2
-# 
-#         if axes_format:
-#             X = np.fromiter(
-#                 (np.hstack(x) for x in itertools.product(*X)),
-#                 dtype=X[0].dtype)
-#             original_shape = (len(Xax) for Xax in X)
-# 
-#         pred = super().predict(X, check_input)
-# 
-#         if axes_format:
-#             pred = pred.reshape(*original_shape)
-#         return pred
+        X = super()._validate_X_predict(X, check_input)
+        return X
 
 
 # =============================================================================
@@ -854,9 +839,6 @@ class DecisionTreeRegressor2D(
         return self
 
 
-PBCT = DecisionTreeRegressor2D  # Alias.
-
-
 class ExtraTreeRegressor2D(DecisionTreeRegressor2D):
     """An extremely randomized tree regressor.
     Extra-trees differ from classic decision trees in the way they are built.
@@ -1064,3 +1046,372 @@ class ExtraTreeRegressor2D(DecisionTreeRegressor2D):
             min_impurity_decrease=min_impurity_decrease,
             ccp_alpha=ccp_alpha,
         )
+
+
+# TODO: docs
+class BiclusteringTreeRegressor(DecisionTreeRegressor2D):
+    """Implementation of Predictive Bi-Clustering Trees.
+
+    Based on the original paper by Pliakos _et al._, 2018.
+    DOI: 10.1007/s10994-018-5700-x
+
+    By default, it used the GMO_{sa} approach, as described by the paper.
+    if X are similarity kernels with 1 meaning equality, set
+    `prediction_weights=1.` to employ pure GMO.
+
+    Parameters
+    ----------
+    criterion : {"squared_error", "friedman_mse", "absolute_error", \
+            "poisson"}, default="squared_error"
+        The function to measure the quality of a split. Supported criteria
+        are "squared_error" for the mean squared error, which is equal to
+        variance reduction as feature selection criterion and minimizes the L2
+        loss using the mean of each terminal node, "friedman_mse", which uses
+        mean squared error with Friedman's improvement score for potential
+        splits, "absolute_error" for the mean absolute error, which minimizes
+        the L1 loss using the median of each terminal node, and "poisson" which
+        uses reduction in Poisson deviance to find splits.
+
+    splitter : {"best", "random"}, default="best"
+        The strategy used to choose the split at each node. Supported
+        strategies are "best" to choose the best split and "random" to choose
+        the best random split.
+
+    max_depth : int, default=None
+        The maximum depth of the tree. If None, then nodes are expanded until
+        all leaves are pure or until all leaves contain less than
+        min_samples_split samples.
+
+    min_samples_split : int or float, default=2
+        The minimum number of samples required to split an internal node:
+
+        - If int, then consider `min_samples_split` as the minimum number.
+        - If float, then `min_samples_split` is a fraction and
+          `ceil(min_samples_split * n_samples)` are the minimum
+          number of samples for each split.
+
+        .. versionchanged:: 0.18
+           Added float values for fractions.
+
+    min_samples_leaf : int or float, default=1
+        The minimum number of samples required to be at a leaf node.
+        A split point at any depth will only be considered if it leaves at
+        least ``min_samples_leaf`` training samples in each of the left and
+        right branches.  This may have the effect of smoothing the model,
+        especially in regression.
+
+        - If int, then consider `min_samples_leaf` as the minimum number.
+        - If float, then `min_samples_leaf` is a fraction and
+          `ceil(min_samples_leaf * n_samples)` are the minimum
+          number of samples for each node.
+
+        .. versionchanged:: 0.18
+           Added float values for fractions.
+
+    min_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of weights (of all
+        the input samples) required to be at a leaf node. Samples have
+        equal weight when sample_weight is not provided.
+
+    max_features : int, float or {"auto", "sqrt", "log2"}, default=None
+        The number of features to consider when looking for the best split:
+
+        - If int, then consider `max_features` features at each split.
+        - If float, then `max_features` is a fraction and
+          `int(max_features * n_features)` features are considered at each
+          split.
+        - If "auto", then `max_features=n_features`.
+        - If "sqrt", then `max_features=sqrt(n_features)`.
+        - If "log2", then `max_features=log2(n_features)`.
+        - If None, then `max_features=n_features`.
+
+        Note: the search for a split does not stop until at least one
+        valid partition of the node samples is found, even if it requires to
+        effectively inspect more than ``max_features`` features.
+
+    random_state : int, RandomState instance or None, default=None
+        Controls the randomness of the estimator. The features are always
+        randomly permuted at each split, even if ``splitter`` is set to
+        ``"best"``. When ``max_features < n_features``, the algorithm will
+        select ``max_features`` at random at each split before finding the best
+        split among them. But the best found split may vary across different
+        runs, even if ``max_features=n_features``. That is the case, if the
+        improvement of the criterion is identical for several splits and one
+        split has to be selected at random. To obtain a deterministic behaviour
+        during fitting, ``random_state`` has to be fixed to an integer.
+        See :term:`Glossary <random_state>` for details.
+
+    max_leaf_nodes : int, default=None
+        Grow a tree with ``max_leaf_nodes`` in best-first fashion.
+        Best nodes are defined as relative reduction in impurity.
+        If None then unlimited number of leaf nodes.
+
+    min_impurity_decrease : float, default=0.0
+        A node will be split if this split induces a decrease of the impurity
+        greater than or equal to this value.
+
+        The weighted impurity decrease equation is the following::
+
+            N_t / N * (impurity - N_t_R / N_t * right_impurity
+                                - N_t_L / N_t * left_impurity)
+
+        where ``N`` is the total number of samples, ``N_t`` is the number of
+        samples at the current node, ``N_t_L`` is the number of samples in the
+        left child, and ``N_t_R`` is the number of samples in the right child.
+
+        ``N``, ``N_t``, ``N_t_R`` and ``N_t_L`` all refer to the weighted sum,
+        if ``sample_weight`` is passed.
+
+        .. versionadded:: 0.19
+
+    ccp_alpha : non-negative float, default=0.0
+        Complexity parameter used for Minimal Cost-Complexity Pruning. The
+        subtree with the largest cost complexity that is smaller than
+        ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
+        :ref:`minimal_cost_complexity_pruning` for details.
+
+        .. versionadded:: 0.22
+    
+    prediction_weights : {"uniform", "x", "raw"}, float, 1D-array or callable,
+                         default="uniform"
+        Determines how to compute the final predicted value. Initially, all
+        predictions for each row and column instance from the training set that
+        share the leaf node with the predicting sample are obtained.
+
+        - "raw" instructs to return this vector, with a value for each training
+          row and training column, and `np.nan` for instances not in the same
+          leaf.
+        - "uniform" returns the mean value of the leaf.
+
+        Other options return the weighted average of the leaf values:
+
+        - A 1D-array may be provided to specify training sample weights
+          explicitly, with weights for training row samples followed by weights
+          for training column samples (size=`sum(y_train.shape)`).
+        - "x" instructs the estimator to consider x values as similarities to
+          each row and column sample in the training set (row distances
+          followed by column distances), so that the weights are `x`.
+        - A callable, if provided, takes all the X being predicted and must
+          return an array of weights for each predicting sample.
+        - A `float` defines a similarity threshold from which a predicted
+          value will be considered, also considering x as similarities to the
+          training samples (Xs are kernel matrices). If no training instance is
+          found to reach the theshold for a given predicting sample, the
+          predicted value falls back to weight all training samples in the leaf
+          as in the case where `prediction_weights`="x".
+
+    Attributes
+    ----------
+    feature_importances_ : ndarray of shape (n_features,)
+        The feature importances.
+        The higher, the more important the feature.
+        The importance of a feature is computed as the
+        (normalized) total reduction of the criterion brought
+        by that feature. It is also known as the Gini importance [4]_.
+
+        Warning: impurity-based feature importances can be misleading for
+        high cardinality features (many unique values). See
+        :func:`sklearn.inspection.permutation_importance` as an alternative.
+
+    max_features_ : int
+        The inferred value of max_features.
+
+    n_features_ : int
+        The number of features when ``fit`` is performed.
+
+        .. deprecated:: 1.0
+           `n_features_` is deprecated in 1.0 and will be removed in
+           1.2. Use `n_features_in_` instead.
+
+    n_features_in_ : int
+        Number of features seen during :term:`fit`.
+
+        .. versionadded:: 0.24
+
+    feature_names_in_ : ndarray of shape (`n_features_in_`,)
+        Names of features seen during :term:`fit`. Defined only when `X`
+        has feature names that are all strings.
+
+        .. versionadded:: 1.0
+
+    n_outputs_ : int
+        The number of outputs when ``fit`` is performed.
+
+    tree_ : Tree instance
+        The underlying Tree object. Please refer to
+        ``help(sklearn.tree._tree.Tree)`` for attributes of Tree object and
+        :ref:`sphx_glr_auto_examples_tree_plot_unveil_tree_structure.py`
+        for basic usage of these attributes.
+
+    See Also
+    --------
+    DecisionTreeClassifier : A decision tree classifier.
+
+    Notes
+    -----
+    The default values for the parameters controlling the size of the trees
+    (e.g. ``max_depth``, ``min_samples_leaf``, etc.) lead to fully grown and
+    unpruned trees which can potentially be very large on some data sets. To
+    reduce memory consumption, the complexity and size of the trees should be
+    controlled by setting those parameter values.
+
+    References
+    ----------
+
+    .. [1] https://en.wikipedia.org/wiki/Decision_tree_learning
+
+    .. [2] L. Breiman, J. Friedman, R. Olshen, and C. Stone, "Classification
+           and Regression Trees", Wadsworth, Belmont, CA, 1984.
+
+    .. [3] T. Hastie, R. Tibshirani and J. Friedman. "Elements of Statistical
+           Learning", Springer, 2009.
+
+    .. [4] L. Breiman, and A. Cutler, "Random Forests",
+           https://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm
+
+    Examples
+    --------
+    >>> from sklearn.datasets import load_diabetes
+    >>> from sklearn.model_selection import cross_val_score
+    >>> from sklearn.tree import DecisionTreeRegressor
+    >>> X, y = load_diabetes(return_X_y=True)
+    >>> regressor = DecisionTreeRegressor(random_state=0)
+    >>> cross_val_score(regressor, X, y, cv=10)
+    ...                    # doctest: +SKIP
+    ...
+    array([-0.39..., -0.46...,  0.02...,  0.06..., -0.50...,
+           0.16...,  0.11..., -0.73..., -0.30..., -0.00...])
+    """
+
+    def __init__(
+        self,
+        *,
+        criterion="squared_error",
+        splitter="best",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=None,
+
+        # 2D specific:
+        ax_min_samples_leaf=1,
+        ax_min_weight_fraction_leaf=None,
+        ax_max_features=None,
+        criterion_wrapper="local_multioutput",
+
+        random_state=None,
+        max_leaf_nodes=None,
+        min_impurity_decrease=0.0,
+        ccp_alpha=0.0,
+
+        # PBCT-specific:
+        prediction_weights="uniform",
+    ):
+        self.prediction_weights=prediction_weights
+        super().__init__(
+            criterion=criterion,
+            splitter=splitter,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+
+            # 2D specific:
+            ax_min_samples_leaf=ax_min_samples_leaf,
+            ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf,
+            ax_max_features=ax_max_features,
+            criterion_wrapper=criterion_wrapper,
+
+            random_state=random_state,
+            min_impurity_decrease=min_impurity_decrease,
+            ccp_alpha=ccp_alpha,
+        )
+    
+    def fit(self, X, y, sample_weight=None, check_input=True):
+        # Validate prediction_weights.
+        pw = self.prediction_weights
+
+        if not isinstance(pw, (str, float, np.ndarray, Callable)):
+            raise TypeError("prediction_weights must be"
+                            "a string, float, array, or callable object.")
+        if isinstance(pw, str):
+            if pw not in ("uniform", "x", "raw"):
+                raise ValueError("Valid string values for prediction_weights"
+                                 "are 'uniform', 'x' or 'raw'.")
+        if (
+            (isinstance(pw, str) and pw == "x") or
+            isinstance(pw, (float, Callable))
+        ):
+            # TODO: properly check pairwise or set more_tags()
+            for ax in range(len(X)):
+                if X[ax].shape[0] != X[ax].shape[1]:
+                    raise ValueError("X matrices must be square (pairwise) if "
+                                     "prediction_weights is a float, callable "
+                                     " or 'x'")
+        elif isinstance(pw, np.ndarray):
+            if pw.ndim != 1:
+                raise ValueError("If an array, prediction_weights must be one-"
+                                 f"dimensional.")
+            n_outputs = self._get_n_outputs(X, y)
+            if pw.size != n_outputs:
+                raise ValueError("If an array, prediction_weights must be of "
+                                 f"length self.n_outputs = {n_outputs}")
+
+        super().fit(X, y, sample_weight, check_input)
+
+    def _get_n_outputs(self, X, y):
+        # The Criterion initially generates one output for each y row and
+        # y column, with a bunch of np.nan to indicate samples not in the node.
+        # These values are then processed by predict to yield a single output.
+        # FIXME: can broke other code expecting n_outputs values from predict.
+        return sum(y.shape)
+    
+    def predict(self, X, check_input=True):
+        # TODO: use sample_weights?
+        # TODO: normalize by n_rows and n_cols? The original paper does not.
+        # TODO: use some sort of KNN object from sklearn
+        # TODO: kernel parameters
+        X = self._validate_X_predict(X, check_input)
+        pred = super().predict(X, check_input=False)
+
+        if isinstance(self.prediction_weights, str):
+            if self.prediction_weights == "raw":
+                return pred
+            elif self.prediction_weights == "uniform":
+                return np.nanmean(pred, axis=1)
+            elif self.prediction_weights == "x":
+                weights = X
+
+        elif isinstance(self.prediction_weights, float):
+            # prediction_weights is a similarity threshold in this case
+            weights = X >= self.prediction_weights
+            zeroed_samples = ~weights.any(axis=1)
+            # Fall back to use X as weights if no feature reaches the threshold
+            weights[zeroed_samples] = X[zeroed_samples]
+
+        elif isinstance(self.prediction_weights, np.ndarray):
+            weights = self.prediction_weights
+
+        elif isinstance(self.prediction_weights, Callable):
+            weights = self.prediction_weights(X)
+            n_samples = X.shape[0]
+            if (
+                weights.ndim != 2 or
+                weights.shape[0] != n_samples or
+                weights.shape[1] != self.n_outputs_
+            ):
+                raise ValueError(
+                    "Callable prediction_weights must take a 2D array as input"
+                    " and return another 2D array with the same number of rows"
+                    " and `self.n_outputs_` columns (output shape was "
+                    f"{weights.shape}, expected {(n_samples, self.n_outputs_)})"
+                )
+
+        weight_sum = np.sum(weights * ~np.isnan(pred), axis=-1)
+        return np.nansum(weights*pred, axis=1) / weight_sum
+
+
+PBCT = BiclusteringTreeRegressor

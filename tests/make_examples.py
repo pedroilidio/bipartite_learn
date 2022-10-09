@@ -28,12 +28,12 @@ def parse_args(args=None):
 
 def make_interaction_data(
          shape, nattrs, func=None, nrules=5, quiet=False, noise=0.,
-         random_state=None,
+         random_state=None, return_intervals=False,
  ):
     random_state = _check_random_state(random_state)
 
     if func is None:
-        func = make_binary_interaction_func(
+        func, intervals = make_binary_interaction_func(
             np.sum(nattrs), nrules, random_state=random_state)
 
     # shape contains the number of instances in each axis database, i.e.
@@ -51,6 +51,8 @@ def make_interaction_data(
         y = y.astype(float)
         y += noise * random_state.random(y.size)
 
+    if func is not None and return_intervals:
+        return XX, y.reshape(shape), intervals
     return XX, y.reshape(shape)
 
 
@@ -95,7 +97,7 @@ def make_binary_interaction_func(
 
         raise ValueError("x values must be between 0 and 1")
     
-    return interaction_func
+    return interaction_func, intervals
 
 
 def make_dense_interaction_func(
@@ -120,4 +122,4 @@ def make_dense_interaction_func(
 
         raise ValueError("x values must be between 0 and 1")
     
-    return interaction_func
+    return interaction_func, intervals

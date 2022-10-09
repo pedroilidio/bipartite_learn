@@ -2,6 +2,9 @@ import numpy as np
 from abc import ABCMeta, abstractmethod, abstractproperty
 
 from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin
+from sklearn.utils.validation import check_X_y
+from sklearn.utils.validation import check_array
+from sklearn.utils.validation import _check_y
 from imblearn.base import BaseSampler, SamplerMixin
 
 
@@ -16,9 +19,62 @@ class BaseMultipartiteEstimator(BaseEstimator):
         validate_separately=False,
         **check_params,
     ):
-        """Skip input validation."""
-        # TODO: properly validate bipartite input.
-        return X, y
+        for Xax in X:
+            self._check_feature_names(Xax, reset=reset)
+
+        if y is None and self._get_tags()["requires_y"]:
+            raise ValueError(
+                f"This {self.__class__.__name__} estimator "
+                "requires y to be passed, but the target y is None."
+            )
+
+        no_val_X = isinstance(X, str) and X == "no_validation"
+        no_val_y = y is None or isinstance(y, str) and y == "no_validation"
+
+        default_check_params = {"estimator": self}
+        check_params = {**default_check_params, **check_params}
+
+        if no_val_X and no_val_y:
+            raise ValueError("Validation should be done on X, y or both.")
+        elif not no_val_X and no_val_y:
+            if isinstance(X, (list, tuple)):  # TODO: better way of deciding.
+                for ax in range(len(X)):
+                    X[ax] = check_array(X[ax], input_name="X", **check_params)
+            else:
+                X = check_array(X, input_name="X", **check_params)
+            out = X
+        elif no_val_X and not no_val_y:
+            y = _check_y(y, **check_params)
+            out = y
+        else:
+            if validate_separately:
+                # We need this because some estimators validate X and y
+                # separately, and in general, separately calling check_array()
+                # on X and y isn't equivalent to just calling check_X_y()
+                # :(
+                check_X_params, check_y_params = validate_separately
+                if "estimator" not in check_X_params:
+                    check_X_params = {**default_check_params, **check_X_params}
+
+                if isinstance(X, (list, tuple)):
+                    for ax in range(len(X)):
+                        X[ax] = check_array(X[ax], input_name="X", **check_params)
+                else:
+                    X = check_array(X, input_name="X", **check_params)
+
+                if "estimator" not in check_y_params:
+                    check_y_params = {**default_check_params, **check_y_params}
+                y = check_array(y, input_name="y", **check_y_params)
+            else:
+                raise NotImplementedError("set validate_separately=True")
+                X, y = check_X_y(X, y, **check_params)
+            out = X, y
+
+        if not no_val_X and check_params.get("ensure_2d", True):
+            pass  # TODO
+            # self._check_n_features(X, reset=reset)
+
+        return out
 
 
 class MultipartiteRegressorMixin(RegressorMixin):

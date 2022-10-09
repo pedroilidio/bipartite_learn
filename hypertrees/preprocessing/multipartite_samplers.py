@@ -115,6 +115,8 @@ class KernelSymmetryEnforcerSampler(BaseMultipartiteSampler):
 
 
 class SimilarityToDistanceTransformer(BaseMultipartiteEstimator):
+    """Transforms x into 1/x
+    """
     def __init__(self, epsilon: float = 1e-10):
         self.epsilon = epsilon
 

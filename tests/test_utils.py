@@ -59,13 +59,14 @@ def parse_args(**PARAMS):
     return argparser.parse_args()
 
 
-def gen_mock_data(melt=False, **PARAMS):
+def gen_mock_data(melt=False, return_intervals=False, **PARAMS):
     with stopwatch("Generating mock interaction data with the following "
                    f"params:\n{pformat(PARAMS)}"):
 
-        XX, Y = make_interaction_data(
+        XX, Y, intervals = make_interaction_data(
             PARAMS['shape'], PARAMS['nattrs'], nrules=PARAMS['nrules'],
-            noise=PARAMS['noise'], random_state=PARAMS['seed']
+            noise=PARAMS['noise'], random_state=PARAMS['seed'],
+            return_intervals=True,
         )
 
         if PARAMS['transpose_test']:
@@ -82,10 +83,14 @@ def gen_mock_data(melt=False, **PARAMS):
     print('Data variance:', Y.var())
     print('=' * 50)
 
+    ret = XX, Y
+
     if melt:
-        return XX, Y, *melt_2d_data(XX, Y)
-    else:
-        return XX, Y
+        ret += melt_2d_data(XX, Y)
+    if return_intervals:
+        ret += (intervals,)
+
+    return ret
 
 
 def melt_2d_data(XX, Y):

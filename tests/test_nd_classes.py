@@ -4,10 +4,14 @@ from itertools import product
 from pprint import pprint
 from typing import Callable
 
+import pytest
 from sklearn.tree import DecisionTreeRegressor
 import sklearn.tree
 
-from hypertrees.tree._nd_classes import DecisionTreeRegressor2D
+from hypertrees.tree._nd_classes import (
+    DecisionTreeRegressor2D,
+    BiclusteringTreeRegressor,
+)
 from hypertrees.melter import row_cartesian_product
 from hypertrees.melter import row_cartesian_product
 
@@ -53,6 +57,8 @@ def print_n_samples_in_leaves(tree):
     n_samples_per_leaf = wn_samples[ch_left == ch_right]
 
     print('==> Class name:', tree.__class__.__name__)
+    print('Estimator params:')
+    pprint(tree.get_params())
     print('n_nodes:', tree.tree_.node_count)
     print('n_leaves:', n_samples_per_leaf.shape[0])
     print('weighted_n_node_samples:', n_samples_per_leaf)
@@ -65,7 +71,7 @@ def compare_trees(
     tree2=DecisionTreeRegressor2D,
     tree2_is_2d=True,
     tree1_is_unsupervised=False,
-    **PARAMS,
+    **params,
 ):
     """Test hypertreesDecisionTreeRegressor2D
 
@@ -85,23 +91,22 @@ def compare_trees(
         plot : bool
     """
     print('Starting with settings:')
-    pprint(PARAMS)
+    pprint(params)
 
     with stopwatch():
-        XX, Y = gen_mock_data(**PARAMS)
-        x, y = melt_2d_data(XX, Y)
+        XX, Y, x, y = gen_mock_data(melt=True, **params)
 
     # ######### Instantiate trees
     if isinstance(tree2, Callable):
         tree2 = tree2(
-            min_samples_leaf=PARAMS['min_samples_leaf'],
-            random_state=PARAMS['seed'],
+            min_samples_leaf=params['min_samples_leaf'],
+            random_state=params['seed'],
         )
 
     if isinstance(tree1, Callable):
         tree1 = tree1(
-            min_samples_leaf=PARAMS['min_samples_leaf'],
-            random_state=PARAMS['seed'],
+            min_samples_leaf=params['min_samples_leaf'],
+            random_state=params['seed'],
         )
     # NOTE on ExtraTrees:
     # Even with the same random_state, the way 2d splitter uses this random
@@ -126,7 +131,7 @@ def compare_trees(
     tree1_n_samples_in_leaves = print_n_samples_in_leaves(tree1)
     tree2_n_samples_in_leaves = print_n_samples_in_leaves(tree2)
 
-    if PARAMS['inspect']:
+    if params['inspect']:
         breakpoint()
 
     # =========================================================================
@@ -143,7 +148,7 @@ def compare_trees(
     stree1 = sklearn.tree.export_text(tree1)
     stree2 = sklearn.tree.export_text(tree2)
 
-    if PARAMS['plot'] or not comparison_test:
+    if params['plot']:
         with open('tree1.txt', 'w') as f:
             f.write(stree1)
         with open('tree2.txt', 'w') as f:
@@ -163,21 +168,52 @@ def compare_trees(
         f"!= {tree2_n_samples_in_leaves[~leaves_comparison]}")
 
 
-def main(
+def test_simple_tree_1d2d(
     tree1=DecisionTreeRegressor,
     tree2=DecisionTreeRegressor2D,
-    **PARAMS,
+    **params,
 ):
-    PARAMS = DEF_PARAMS | PARAMS
+    params = DEF_PARAMS | params
     return compare_trees(
         tree1=DecisionTreeRegressor,
         tree2=DecisionTreeRegressor2D,
-        **PARAMS,
+        **params,
     )
 
 
-def test_simple_tree_1d2d():
-    main()
+def test_pbct_regressor(**params):
+    params = DEF_PARAMS | params
+
+    print('Starting with settings:')
+    pprint(params)
+
+    with stopwatch():
+        XX, Y = gen_mock_data(**params)
+
+    for pred_weight in (
+        "uniform",
+        np.random.rand(sum(Y.shape)),
+    ):
+        pbct = BiclusteringTreeRegressor(prediction_weights=pred_weight)
+        pbct.fit(XX, Y)
+        print_n_samples_in_leaves(pbct)
+        print(pbct.predict(np.hstack([XX[0][:3], XX[1][:3]])))
+
+    with stopwatch():
+        XX_sim, Y_sim = gen_mock_data(**(params|dict(nattrs=params['shape'])))
+
+    for pred_weight in ("x", 3., lambda A: A**2):
+        pbct = BiclusteringTreeRegressor(prediction_weights=pred_weight)
+        with pytest.raises(ValueError, match=r"square \(pairwise\)"):
+            pbct.fit(XX, Y)
+        pbct.fit(XX_sim, Y_sim)
+        print_n_samples_in_leaves(pbct)
+        print(pbct.predict(np.hstack([XX_sim[0][:3], XX_sim[1][:3]])))
+
+
+def main(**params):
+    test_simple_tree_1d2d(**params)
+    test_pbct_regressor(**params)
 
 
 if __name__ == "__main__":

@@ -51,10 +51,17 @@ cpdef test_splitter(
     if verbose:
         print('[SPLITTER_TEST] splitter.node_impurity():', impurity)
         print('[SPLITTER_TEST] y.var():', y.var())
+        print('[SPLITTER_TEST] y.var(axis=0).mean():', y.var(axis=0).mean())
         print('[SPLITTER_TEST] splitter.criterion.pos:', splitter.criterion.pos)
         print('[SPLITTER_TEST] calling splitter.node_split(impurity, &split, &ncf)')
 
     splitter.node_split(impurity, &split, &ncf)
+
+    if verbose:
+        print('[SPLITTER_TEST] weighted_n_samples', splitter.criterion.weighted_n_samples)
+        print('[SPLITTER_TEST] weighted_n_node_samples', splitter.criterion.weighted_n_node_samples)
+        print('[SPLITTER_TEST] weighted_n_right', splitter.criterion.weighted_n_right)
+        print('[SPLITTER_TEST] weighted_n_left', splitter.criterion.weighted_n_left)
 
     return split
 
@@ -67,6 +74,8 @@ cpdef test_splitter_nd(
         ndim=None,
         verbose=False,
 ):
+    if verbose:
+        print('[SPLITTER_TEST] starting splitter_nd test')
     ndim = ndim or y.ndim
     cdef SIZE_t* end_ = <SIZE_t*> malloc(ndim * sizeof(SIZE_t))
     cdef SIZE_t* start_ = <SIZE_t*> malloc(ndim * sizeof(SIZE_t))
@@ -99,9 +108,20 @@ cpdef test_splitter_nd(
     if verbose:
         print('[SPLITTER_TEST] splitter.node_impurity():', impurity)
         print('[SPLITTER_TEST] y.var():', y.var())
+        print('[SPLITTER_TEST] y.var(axis=0).mean():', y.var(axis=0).mean())
         print('[SPLITTER_TEST] calling splitter.node_split(impurity, &split, &ncf)')
 
     splitter.node_split(impurity, &split, ncf)
+
+    if verbose:
+        print('[SPLITTER_TEST] (rows) weighted_n_samples',
+              splitter.splitter_rows.criterion.weighted_n_samples)
+        print('[SPLITTER_TEST] (rows) weighted_n_node_samples',
+              splitter.splitter_rows.criterion.weighted_n_node_samples)
+        print('[SPLITTER_TEST] (rows) weighted_n_right',
+              splitter.splitter_rows.criterion.weighted_n_right)
+        print('[SPLITTER_TEST] (rows) weighted_n_left',
+              splitter.splitter_rows.criterion.weighted_n_left)
 
     free(start_)
     free(end_)

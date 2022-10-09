@@ -120,7 +120,7 @@ def test_unsupervised_component_2d(**PARAMS):
 def test_semisupervision_1d2d(supervision=None, **PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
     rstate = np.random.RandomState(PARAMS['seed'])
-    if supervision is None:
+    if supervision in (None, -1):
         supervision = rstate.random()
     print('Supervision level:', supervision)
 
