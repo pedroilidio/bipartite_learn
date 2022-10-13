@@ -6,6 +6,7 @@ from typing import Callable
 
 import pytest
 from sklearn.tree import DecisionTreeRegressor
+from sklearn.base import clone
 import sklearn.tree
 
 from hypertrees.tree._nd_classes import (
@@ -195,6 +196,8 @@ def test_pbct_regressor(**params):
         np.random.rand(sum(Y.shape)),
     ):
         pbct = BiclusteringTreeRegressor(prediction_weights=pred_weight)
+        pbct = clone(pbct)
+        print("*** Passed cloning test.")
         pbct.fit(XX, Y)
         print_n_samples_in_leaves(pbct)
         print(pbct.predict(np.hstack([XX[0][:3], XX[1][:3]])))
@@ -206,6 +209,8 @@ def test_pbct_regressor(**params):
         pbct = BiclusteringTreeRegressor(prediction_weights=pred_weight)
         with pytest.raises(ValueError, match=r"square \(pairwise\)"):
             pbct.fit(XX, Y)
+        pbct = clone(pbct)
+        print("*** Passed cloning test.")
         pbct.fit(XX_sim, Y_sim)
         print_n_samples_in_leaves(pbct)
         print(pbct.predict(np.hstack([XX_sim[0][:3], XX_sim[1][:3]])))

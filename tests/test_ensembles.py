@@ -4,7 +4,12 @@ import numpy as np
 from hypertrees.tree import DecisionTreeRegressor2D, ExtraTreeRegressor2D
 from sklearn.tree import DecisionTreeRegressor, ExtraTreeRegressor
 
-from hypertrees.ensemble import ExtraTreesRegressor2D, RandomForestRegressor2D
+from hypertrees.ensemble import (
+    ExtraTreesRegressor2D,
+    RandomForestRegressor2D,
+    BiclusteringExtraTreesRegressor,
+    BiclusteringRandomForestRegressor,
+)
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 
 from hypertrees.tree._semisupervised_classes import (
@@ -34,6 +39,8 @@ from test_utils import (
     gen_mock_data, stopwatch, DEF_PARAMS, parse_args,
 )
 
+DEF_PARAMS = DEF_PARAMS | dict(n_estimators=10)
+
 
 def eval_model(model, X, y):
     pred = model.predict(X)
@@ -45,7 +52,7 @@ def eval_model(model, X, y):
 def compare_estimators(estimators1d, estimators2d, **PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
 
-    X, y, X1d, y1d, _ = gen_mock_data(melt=True, **PARAMS)
+    X, y, X1d, y1d = gen_mock_data(melt=True, **PARAMS)
     y1d = y1d.reshape(-1)
 
     for name in estimators1d.keys():
@@ -96,6 +103,7 @@ def test_forests(forest_params=None, **PARAMS):
     forest_params = dict(
         min_samples_leaf=PARAMS['min_samples_leaf'],
         random_state=PARAMS['seed'],
+        n_estimators=PARAMS['n_estimators'],
     ) | forest_params
 
     estimators1d = {
@@ -105,6 +113,8 @@ def test_forests(forest_params=None, **PARAMS):
     estimators2d = {
         'RF2D': RandomForestRegressor2D(**forest_params),
         'XT2D': ExtraTreesRegressor2D(**forest_params),
+        'BRF': BiclusteringRandomForestRegressor(**forest_params),
+        'BXT': BiclusteringExtraTreesRegressor(**forest_params),
     }
     return compare_estimators(estimators1d, estimators2d, **PARAMS)
 
@@ -116,7 +126,9 @@ def test_semisupervised_forests(forest_params=None, **PARAMS):
     forest_params = dict(
         min_samples_leaf=PARAMS['min_samples_leaf'],
         random_state=PARAMS['seed'],
+        n_estimators=1#PARAMS['n_estimators'],
     ) | forest_params
+    pprint(forest_params)
 
     estimators1d = {
         'SSRF': RandomForestRegressorSS(**forest_params),

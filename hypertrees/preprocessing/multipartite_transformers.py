@@ -2,10 +2,12 @@
 from __future__ import annotations
 from typing import Sequence
 from sklearn.base import BaseEstimator, TransformerMixin, clone
+from hypertrees.base import BaseMultipartiteEstimator
 
 
 # FIXME: test get_params()
-class MultipartiteTransformerWrapper(BaseEstimator, TransformerMixin):
+class MultipartiteTransformerWrapper(BaseMultipartiteEstimator,
+                                     TransformerMixin):
     """Manages a transformer for each feature matrix (X) in bipartite sets.
     """
     def __init__(

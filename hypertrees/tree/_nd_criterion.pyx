@@ -461,7 +461,9 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         self.sum_total = np.zeros(self.n_outputs, dtype=np.float64)
 
     def __dealloc__(self):
+        print("*** STOP INI dealloc")
         free(self._node_value_aux)
+        print("*** STOP END dealloc")
 
     def __reduce__(self):
         return (type(self),
@@ -516,9 +518,11 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
             row_samples_view = (<SIZE_t[:self.n_rows]> self.row_samples)[start[0]:end[0]]
             col_samples_view = (<SIZE_t[:self.n_cols]> self.col_samples)[start[1]:end[1]]
 
+            print("*** STOP INI")
             # TODO: avoid copying if no sample weights provided
             y_2D_rows = np.asarray(self.y_2D)[:, col_samples_view].copy()
             y_2D_cols = np.asarray(self.y_2D.T)[:, row_samples_view].copy()
+            print("*** STOP END")
 
         # FIXME: this is actually MSE specific.
         if (self.row_sample_weight!=NULL) or (self.row_sample_weight!=NULL):
@@ -539,6 +543,7 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
                     y_2D_rows[i, q] *= wj ** .5
                     y_2D_cols[j, p] *= wi ** .5
 
+        with gil: print("*** STOP1")
         if -1 == self._node_reset_child_splitter(
             child_splitter=self.splitter_rows,
             y=y_2D_rows,
@@ -549,6 +554,7 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         ):
             return -1
 
+        with gil: print("*** STOP2")
         if -1 == self._node_reset_child_splitter(
             child_splitter=self.splitter_cols,
             y=y_2D_cols,
@@ -559,11 +565,13 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         ):
             return -1
 
+        with gil: print("*** STOP3")
         # FIXME: do we need self.sum_total?
         self.weighted_n_row_samples = wnns[0]
         self.weighted_n_col_samples = wnns[1]
         self.weighted_n_node_samples = wnns[0] * wnns[1]
 
+        with gil: print("*** STOP end init")
         return 0
 
     cdef int _node_reset_child_splitter(
@@ -577,8 +585,14 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
     ) nogil except -1:
         """Substitutes splitter.node_reset() setting child splitter on 2D data.
         """
+        cdef int ret
+        with gil: print("*** RESET1")
         child_splitter.y = y
-        return child_splitter.node_reset(start, end, weighted_n_node_samples)
+        with gil: print("*** RESET2")
+        with gil: print(f"{start:=} {end:=}")
+        ret = child_splitter.node_reset(start, end, weighted_n_node_samples)
+        with gil: print("*** RESET3")
+        return ret
 
     cdef void node_value(self, double* dest) nogil:
         """Copy the value (prototype) of node samples into dest.
