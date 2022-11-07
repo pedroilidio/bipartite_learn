@@ -87,6 +87,8 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
     """
     cdef double* _node_value_aux  # Temporary storage to use in node_value()
     cdef SIZE_t _aux_len
+    cdef DOUBLE_t[:, ::1] y_2D_rows
+    cdef DOUBLE_t[:, ::1] y_2D_cols
 
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):

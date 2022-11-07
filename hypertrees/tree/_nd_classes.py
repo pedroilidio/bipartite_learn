@@ -1336,12 +1336,13 @@ class BiclusteringTreeRegressor(DecisionTreeRegressor2D):
         # Validate prediction_weights.
         pw = self.prediction_weights
 
-        if not isinstance(pw, (str, float, np.ndarray, Callable)):
-            raise TypeError("prediction_weights must be"
-                            "a string, float, array, or callable object.")
+        if not isinstance(pw, (str, numbers.Number, np.ndarray, Callable)):
+            raise TypeError("prediction_weights must be "
+                            "a string, number, array, or callable object "
+                            f"({pw} provided)")
         if isinstance(pw, str):
             if pw not in ("uniform", "x", "raw"):
-                raise ValueError("Valid string values for prediction_weights"
+                raise ValueError("Valid string values for prediction_weights "
                                  "are 'uniform', 'x' or 'raw'.")
         if (
             (isinstance(pw, str) and pw == "x") or
@@ -1387,7 +1388,7 @@ class BiclusteringTreeRegressor(DecisionTreeRegressor2D):
             elif self.prediction_weights == "x":
                 weights = X
 
-        elif isinstance(self.prediction_weights, float):
+        elif isinstance(self.prediction_weights, numbers.Number):
             # prediction_weights is a similarity threshold in this case
             weights = X >= self.prediction_weights
             zeroed_samples = ~weights.any(axis=1)
@@ -1412,7 +1413,9 @@ class BiclusteringTreeRegressor(DecisionTreeRegressor2D):
                     f"{weights.shape}, expected {(n_samples, self.n_outputs_)})"
                 )
 
-        weight_sum = np.sum(weights * ~np.isnan(pred), axis=-1)
+        weight_sum = np.sum(weights * ~np.isnan(pred), axis=-1, dtype=float)
+        # Set predictions to zero if weight sum is zero
+        weight_sum[weight_sum == 0] = np.inf
         return np.nansum(weights*pred, axis=1) / weight_sum
 
 
