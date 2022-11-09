@@ -2,43 +2,35 @@ import numpy as np
 from sklearn.utils import check_random_state
 from sklearn.neighbors import KNeighborsRegressor
 from ..base import BaseMultipartiteSampler, MultipartiteRegressorMixin
-from ..utils import check_multipartite_params
+from ..utils import check_multipartite_params, lazy_knn_weights_min_one
 
-__all__ = ["NRLMF"]
+__all__ = ["DNILMF"]
 
 
 DEF_KNN_PARAMS = dict(
-    n_neighbors=5,
+    n_neighbors=2,
     metric="precomputed",
     algorithm="brute",
 )
 
 
-class NRLMF(
+class DNILMF(
     BaseMultipartiteSampler,
     MultipartiteRegressorMixin,
 ):
-    # TODO: do not allow list of dicts to 'knn_params' parameter. Maybe pass
-    #       a KNeighbors object instead of dict, allowing grid search.
-    """Neighborhood Regularized Logistic Matrix Factorization.
+    # TODO: fix documentation, KNN.
+    """Dual-Network Integrated Logistic Matrix Factorization
 
-    Important note: contrary to the original paper's definition, this estimator
-    must receive **distance** matrices, not similarity matrices as the X
-    parameter for fit(). One can just invert similarity matrices to use this
-    class, for example, utilizing both
+    Note: the kernel fusion pre-processing procedure described by [1] is
+    implemented as
 
-    :module:wrappers.MultipartiteTransformerWrapper
-    :module:preprocessing.monopartite_transformers.ReciprocalTransformer
+    :module:preprocessing.monopartite_transformers.TargetKernelDiffuser
 
-    in an `imblearn.pipeline.Pipeline`.
-
-    [1] Yong Liu, Min Wu, Chunyan Miao, Peilin Zhao, Xiao-Li Li, "Neighborhood
-    Regularized Logistic Matrix Factorization for Drug-target Interaction
-    Prediction" DOI: 10.1371/journal.pcbi.1004760
+    and can be applyied together with DNILMF in a pipeline.
 
     Parameters
     ----------
-    positive_importance : int, default=5
+    positive_importance : int, default=6
         The multiplier factor to apply to positive (known) interactions.
         Each positive interaction (y == 1) will weight `positive_importance`
         times more than a negative, as if we have `positive_importance`
@@ -47,7 +39,7 @@ class NRLMF(
         (oversampled) `positive_importance` times. Called c in the original
         paper [1].
 
-    n_components_rows : int, default=10
+    n_components_rows : int, default=90
         Number of components of X[0] latent vectors, the number of columns of
         U.
 
@@ -55,15 +47,25 @@ class NRLMF(
         Number of components of X[0] latent vectors, the number of columns of
         U. If "same", it takes the same value of `n_components_rows`
 
-    alpha_rows : float, default=1.0
-        Constant that multiplies the local similarity matrix of row instances,
-        weighting their neighborhood information when calculating the loss.
+    learning_rate : float or sequence of floats, default=1.0
+        Multiplicative factor for each gradient step.
 
-    alpha_cols : float or "same", default="same"
-        Constant that multiplies the local similarity matrix of column instances,
-        weighting their neighborhood information when calculating the loss.
-        Originally called :math:`\\beta` by [1].  If "same", it takes the same
-        value of `alpha_rows`.
+    alpha : float, default=0.4
+        Constant that multiplies the y matrix when computing the loss function.
+        The greater it is, the more supervised is the algorithm. Must satisfy
+        `alpha + beta + gamma == 1`.
+
+    beta : float, default=0.3
+        Constant that multiplies the row similarity matrix when computing the
+        loss function. Thus, it controls the importance given by the
+        algorithm to the rows's unsupervised information. Must satisfy
+        `alpha + beta + gamma == 1`.
+
+    gamma : float, default=0.3
+        Constant that multiplies the column similarity matrix when computing
+        the loss function. Thus, it controls the importance given by the
+        algorithm to the column's unsupervised information. Must satisfy
+        `alpha + beta + gamma == 1`.
 
     lambda_rows : float, default=0.625
         Corresponds to the inverse of the assumed prior variance of U. It
@@ -82,12 +84,9 @@ class NRLMF(
         can also be provided in a sequence (usually list or tuple).
 
         Defaults are:
-            - n_neighbors=5,
+            - n_neighbors=2,
             - metric="precomputed",
             - algorithm="brute",
-
-    learning_rate : float, default=1.0
-        Multiplicative factor for each gradient step.
 
     max_iter : int, default=100
         Maximum number of iterations.
@@ -100,7 +99,7 @@ class NRLMF(
 
     resample_X : bool, default=False
         If `True`, return [U, V] as resampled X in `fit_resample`.
-    
+
     verbose : bool, default=False
         Wether to display or not training status information.
 
@@ -108,23 +107,34 @@ class NRLMF(
         Used for initialisation of U and V. Pass an int for reproducible
         results across multiple function calls.
         See :term:`Glossary <random_state>`.
+
+    References
+    ----------
+    .. [1] :doi:`"Predicting drug-target interactions by dual-network integrated
+    logistic matrix factorization" <https://doi.org/10.1038/srep40376>`
+    Hao, M., Bryant, S. & Wang, Y. Sci Rep 7, 40376 (2017). 
+
+    .. [2] :doi:`"Neighborhood Regularized Logistic Matrix Factorization for
+    Drug-target Interaction Prediction" <10.1371/journal.pcbi.1004760>`
+    Yong Liu, Min Wu, Chunyan Miao, Peilin Zhao, Xiao-Li Li, (2016)
     """
     # FIXME:
     # We need this for other scikit-learn stuff to not look for predict_proba()
     # however, NRLMF is primarily a Xy transformer (i.e. sampler).
-    _estimator_type = "regressor"  
+    _estimator_type = "regressor"
 
     def __init__(
         self,
-        positive_importance=5,
-        n_components_rows=10,
+        positive_importance=6,
+        n_components_rows=90,
         n_components_cols="same",
-        alpha_rows=0.1,
-        alpha_cols="same",
-        lambda_rows=0.625,
+        learning_rate=1.0,
+        alpha=0.4,
+        beta=0.3,
+        gamma=0.3,
+        lambda_rows=2,
         lambda_cols="same",
         knn_params=None,
-        learning_rate=1.0,
         max_iter=100,
         tol=1e-5,
         change_positives=False,
@@ -133,42 +143,48 @@ class NRLMF(
         random_state=None,
     ):
         self.positive_importance = positive_importance
+        self.learning_rate = learning_rate
         self.n_components_rows = n_components_rows
         self.n_components_cols = n_components_cols
         self.lambda_rows = lambda_rows
         self.lambda_cols = lambda_cols
-        self.alpha_rows = alpha_rows
-        self.alpha_cols = alpha_cols
-        self.learning_rate = learning_rate
-        self.max_iter = max_iter
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
         self.change_positives = change_positives
         self.knn_params = knn_params
+        self.max_iter = max_iter
         self.tol = tol
         self.resample_X = resample_X
         self.verbose = verbose
         self.random_state = random_state
 
     def _more_tags(self):
-        def_metric = DEF_KNN_PARAMS['metric']
+        return dict(pairwise=True)
 
-        pw = self.knn_params and \
-            self.knn_params.get('metric', def_metric) == 'precomputed'
+    def _merge_similarities(self, M, L_rows, L_cols):
+        return (
+            self.alpha * M
+            + self.beta * L_rows @ M
+            + self.gamma * M @ L_cols
+        )
 
-        return dict(pairwise=pw)
-
-    @staticmethod
-    def _logistic_output(U, V):
+    def _logistic_output(self, U, V, L_rows, L_cols):
         """Compute probabilities of interaction.
         
         Calculate interaction probabilities (y predictions) based on the given
         U and V latent feature vectors.
+
+        L_rows and L_cols are kernels (similarities) among row instances and
+        column instances, respectively.
         """
-        P = np.exp(U @ V.T)
+        UV = U @ V.T
+        P = np.exp(self._merge_similarities(UV, L_rows, L_cols))
         return P / (P + 1)
 
     def _fit_resample(self, X, y):
         self.fit(X, y)
-        yt = self._logistic_output(self.U, self.V)
+        yt = self._logistic_output(self.U, self.V, *X)
 
         if not self.change_positives:
             # Transform y only where it had zero similarity (distance == 1).
@@ -179,30 +195,20 @@ class NRLMF(
 
         return X, yt
 
-    def fit_predict(self, X, y):
-        # NOTE: should be equal to calling fit() and then predict(), but that's
-        #       only true with weights=lazy_knn_weights_min_one in knn_params.
-        _, yt = self.fit_resample(X, y)
-        return yt.reshape(-1)
-
     def predict(self, X):
         U = self.knn_rows_.predict(X[0])
         V = self.knn_cols_.predict(X[1])
-        yt = self._logistic_output(U, V)
+        yt = self._logistic_output(U, V, *X)
         return yt.reshape(-1)
 
     def fit(self, X, y):
-        # NOTE: Fit must receive distance matrices, not similarity matrices,
-        #       contrary to the paper's description of the problem [1].
+        # NOTE: Fit must receive similarity matrices, contrary to NRLMF.
         # FIXME: Improve input checking.
         #        Use sklearn.metrics.pairwise.check_pairwise_array or similar.
+        if (self.alpha + self.beta + self.gamma) != 1:
+            raise ValueError("alpha, beta and gamma must sum to 1.")
 
-        lambda_rows = self.lambda_rows
-        alpha_rows = self.alpha_rows
         n_components_rows = self.n_components_rows
-
-        alpha_cols = alpha_rows if self.alpha_cols == "same" else self.alpha_cols
-        lambda_cols = lambda_rows if self.lambda_cols == "same" else self.lambda_cols
 
         if self.n_components_cols == "same":
             n_components_cols = n_components_rows
@@ -228,55 +234,12 @@ class NRLMF(
 
         self.n_features_in_ = X[0].shape[1] + X[1].shape[1]
 
-        # To be used in gradient calculation.
-        self.y_scaled_ = 1 + (self.positive_importance-1) * y
-
-        # Build regularized K Nearest Neighbors similarity matrices.
-        L_rows = self._laplacian_matrix(
-            alpha=alpha_rows, knn=self.knn_rows_,
-            inverse_prior_var=lambda_rows,
-        )
-        L_cols = self._laplacian_matrix(
-            alpha=alpha_cols, knn=self.knn_cols_,
-            inverse_prior_var=lambda_cols,
-        )
-
         # Optimize U and V latent vectors for X[0] and X[1].
         self._AGD_optimization(
-            U=self.U, V=self.V, L_rows=L_rows, L_cols=L_cols, y=y,
+            U=self.U, V=self.V, L_rows=X[0], L_cols=X[1], y=y,
         )
 
         return self
-
-    def _laplacian_matrix(self, alpha, inverse_prior_var, knn):
-        """Calculate the neighborhood regularization matrix.
-
-        We deviate from the definition in Liu _et al._'s Eq. 11 by including
-        the constants to be used in gradient calculation.  The return value
-        thus actually corresponds to 
-        
-        \\lambda \\mathbf{I} + \\alpha \mathbf{L},
-
-        according to the paper's definition, in order to facilitate usage on
-        Equations 13. `inverse_prior_var` will be \\lambda_d or \\lambda_t.
-        `alpha` will be \\alpha or \\beta.
-
-        Note: knn must already be fitted by `self.fit()`.
-        """
-        S_knn = knn.kneighbors_graph(mode="distance")
-        nonzero_idx = S_knn.nonzero()
-
-        # We need similarities but fit() needs to provide a distance matrix to
-        # the KNeighborsRegressor at `knn`. So S_knn will initially have
-        # distances that we must to convert to similarities. Thus, invert it.
-        S_knn[nonzero_idx] = alpha / S_knn[nonzero_idx]
-
-        S_knn = S_knn.toarray()  # sparse slows matrix multiplication
-
-        DD = np.sum(S_knn, axis=0) + np.sum(S_knn, axis=1)
-        DD += inverse_prior_var
-
-        return np.diag(DD) - (S_knn + S_knn.T)
 
     def _AGD_optimization(self, U, V, L_rows, L_cols, y):
         """Find U and V values to minimize the loss function.
@@ -287,28 +250,51 @@ class NRLMF(
         Each step will be divided by the sum of all previous steps, so that the
         further we travel on the error landscape, the smaller our steps get.
         This sum will actually be the square root of the sum of squared steps.
+
+        The loss function is the log-likelihood of U an V given y, as defined
+        by [1] and [2].
         """
+        lambda_rows = self.lambda_rows
+        lambda_cols = lambda_rows if self.lambda_cols == "same" else self.lambda_cols
+
         # TODO: Is this really AdaGrad?
         # See [Duchi et al., 2011](https://jmlr.org/papers/v12/duchi11a.html)
         step_sq_sum_rows = np.zeros_like(U)
         step_sq_sum_cols = np.zeros_like(V)
-        last_loss = self._loss_function(y, U, V, L_rows, L_cols)
 
-        # TODO: optimize. step_rows and step_cols should be stored in the same
+        # y_scaled[i, j] = positive_importance if y[i, j] == 1 else 1
+        y_scaled = 1 + (self.positive_importance-1) * y
+
+        last_loss = self._loss_function(
+            y, y_scaled, U, V, L_rows, L_cols, lambda_rows, lambda_cols,
+        )
+
+        # TODO: optimize. step_rows and step_cols could be stored in the same
         #       matrix, not a new matrix every time.
         for i in range(self.max_iter):
-            # Update U.
-            step_rows = self._gradient_step(y, self.y_scaled_, U, V, L_rows)
+            P = self._logistic_output(U, V, L_rows, L_cols)
+            # In the paper [1] notation, yP is now cY - Q
+            yP = y*self.positive_importance - y_scaled*P  
+            yP = self._merge_similarities(yP, L_rows.T, L_cols.T)
+            # TODO: Check if it transposing is correct
+
+            # Update U (derived from Eq. 7 of [1], see the class's docstring).
+            step_rows = yP @ V - lambda_rows * U
             step_sq_sum_rows += step_rows ** 2
             U += self.learning_rate * step_rows / np.sqrt(step_sq_sum_rows)
 
-            # Update V.
-            step_cols = self._gradient_step(y.T, self.y_scaled_.T, V, U, L_cols)
+            P = self._logistic_output(U, V, L_rows, L_cols)
+            yP = y*self.positive_importance - y_scaled*P
+            yP = self._merge_similarities(yP, L_rows.T, L_cols.T)
+
+            # Update V (derived from Eq. 8 of [1], see the class's docstring).
+            step_cols = yP.T @ U - lambda_cols * V
             step_sq_sum_cols += step_cols ** 2
             V += self.learning_rate * step_cols / np.sqrt(step_sq_sum_cols)
 
-            # Calculate loss.
-            curr_loss = self._loss_function(y, U, V, L_rows, L_cols)
+            curr_loss = self._loss_function(
+                y, y_scaled, U, V, L_rows, L_cols, lambda_rows, lambda_cols,
+            )
             delta_loss = abs(1 - curr_loss/last_loss)
 
             if self.verbose:
@@ -320,48 +306,21 @@ class NRLMF(
 
             last_loss = curr_loss
 
-    def _gradient_step(self, y, y_scaled, W, otherW, L):
-        """Calculate a step against the loss function gradient.
-
-        Implements equations 13 from Liu _et al._[1]. Note that we redefine L
-        in `self._laplacian_matrix()` to include alpha and lambda constants.
-
-        Parameters
-        ----------
-        y: array of 0s and 1s
-            The original binary interaction matrix.
-        W: array of floats
-            Can be U or V. If W = U, otherW is V, and vice-versa.
-        otherW: array of floats
-            The other set of latent vectors.
-        L: array of floats
-            Neighborhood regularized matrix (See Eq. 11 of [1]), but with
-            lambda and alpha constants included, as returned by
-            `self._laplacian_matrix()`.
-        """
-        # Current predictions for probability of interaction.
-        P = self._logistic_output(W, otherW)
-
-        # NOTE: the following is the negative gradient, so that it already
-        #       climbs down the loss function and must be added to,
-        #       not subtracted from W.
-        # TODO: parenthesized expression can be calculated once for U and V
-        return (y*self.positive_importance - y_scaled*P) @ otherW - L @ W
-
-    def _loss_function(self, y, U, V, L_rows, L_cols):
+    def _loss_function(
+        self, y, y_scaled, U, V, L_rows, L_cols, lambda_rows, lambda_cols,
+    ):
         """Return the loss, based on the log-likelihood of U an V given y.
 
-        Implements Eq. 12 of [1]. Notice that we defined L to include the
-        \\alpha and \\lambda constants (see docs for `self._laplacian_matrix`).
-
-        We also used that np.trace(A.T @ B) == np.sum(A * B).
+        Implements Eq. 6 of [1], multiplied by -1 to minimize instead of
+        maximize. L_rows and L_cols were originally called S_d and S_t in the
+        paper, being rows' and columns' similarity matrices, respectively.
         """
-        UV = U @ V.T
+        UV = self._merge_similarities(U @ V.T, L_rows, L_cols)
         return (
             np.sum(
-                self.y_scaled_ * np.log(1 + np.exp(UV))
+                y_scaled * np.log(1 + np.exp(UV))
                 - y * UV * self.positive_importance
             )
-            + np.sum(U * (L_rows @ U)) / 2
-            + np.sum(V * (L_cols @ V)) / 2
+            + lambda_rows/2 * (U**2).sum()
+            + lambda_cols/2 * (V**2).sum()
         )

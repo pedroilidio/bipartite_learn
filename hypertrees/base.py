@@ -11,6 +11,11 @@ from imblearn.base import BaseSampler, SamplerMixin
 class BaseMultipartiteEstimator(BaseEstimator):
     """Base class for multipartite estimators.
     """
+    def _more_tags(self):
+        # Determines that it can receive X as a list of Xs, one for each y axis,
+        # that is, a list of objects of any type in self._get_tags()["X_types"]
+        return dict(multipartite=True)  
+
     def _validate_data(
         self,
         X="no_validation",

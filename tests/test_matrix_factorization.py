@@ -5,10 +5,12 @@ from sklearn.linear_model import Ridge
 from imblearn.pipeline import make_pipeline
 
 from hypertrees.matrix_factorization._nrlmf import NRLMF
-from hypertrees.preprocessing.multipartite_samplers import (
-    DTHybridSampler, GaussianInteractionProfileSampler,
+from hypertrees.matrix_factorization._dnilmf import DNILMF
+from hypertrees.preprocessing.multipartite import DTHybridSampler
+from hypertrees.preprocessing.monopartite import TargetKernelLinearCombiner
+from hypertrees.wrappers import (
+    BipartiteLocalWrapper, MultipartiteTransformerWrapper,
 )
-from hypertrees.wrappers import BipartiteLocalWrapper
 from test_utils import gen_mock_data, DEF_PARAMS, parse_args
 
 
@@ -19,8 +21,24 @@ def test_nrlmf(**params):
 
     XX, Y, = gen_mock_data(**params, melt=False)
 
-    nrlmf = NRLMF()
+    nrlmf = NRLMF(verbose=True)
     XXt, Yt = nrlmf.fit_resample(XX, Y)
+    Y_positive = Y.astype(bool)
+
+    assert Yt[Y_positive].mean() > Yt[~Y_positive].mean()
+
+    return XXt
+
+
+def test_dnilmf(**params):
+    params = DEF_PARAMS | params
+    params['noise'] = 0
+    params["shape"] = params["nattrs"]  # X must be kernel matrices
+
+    XX, Y, = gen_mock_data(**params, melt=False)
+
+    dnilmf = DNILMF(verbose=True)
+    XXt, Yt = dnilmf.fit_resample(XX, Y)
     Y_positive = Y.astype(bool)
 
     assert Yt[Y_positive].mean() > Yt[~Y_positive].mean()
@@ -53,10 +71,13 @@ def test_blmnii(**params):
     params["noise"] = 0
     params["shape"] = params["nattrs"]  # X must be kernel matrices
 
+    # Gaussian interaction profile
+    gip_transformer = MultipartiteTransformerWrapper(TargetKernelLinearCombiner())
+
     XX, Y, = gen_mock_data(**params, melt=False)
 
     blmnii = make_pipeline(
-        GaussianInteractionProfileSampler(),
+        gip_transformer,
         BipartiteLocalWrapper(
             primary_estimator=KNeighborsRegressor(),
             secondary_estimator=Ridge(),
@@ -70,8 +91,9 @@ def test_blmnii(**params):
 
 
 def main(**params):
-    # test_nrlmf(**params)
-    # test_dthybrid(**params)
+    test_nrlmf(**params)
+    test_dnilmf(**params)
+    test_dthybrid(**params)
     test_blmnii(**params)
 
 

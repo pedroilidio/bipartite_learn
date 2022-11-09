@@ -6,7 +6,7 @@ TODO: check fit inputs.
 from __future__ import annotations
 from typing import Callable, Sequence
 import numpy as np
-from sklearn.base import BaseEstimator, MetaEstimatorMixin, clone
+from sklearn.base import BaseEstimator, TransformerMixin, MetaEstimatorMixin, clone
 from sklearn.utils.metaestimators import available_if
 from sklearn.utils._tags import _safe_tags
 from sklearn.utils.validation import check_is_fitted
@@ -14,6 +14,7 @@ from sklearn.exceptions import NotFittedError
 from sklearn.utils import check_random_state
 from .melter import row_cartesian_product
 from .utils import check_multipartite_params
+from hypertrees.base import BaseMultipartiteEstimator
 
 
 def _estimator_has(attr):
@@ -61,11 +62,11 @@ class IncompatibleEstimatorsError(ValueError):
     """Raised when user tries to wrap incompatible estimators."""
 
 
-class GlobalSingleOutputWrapper(BaseEstimator, MetaEstimatorMixin):
+class GlobalSingleOutputWrapper(BaseMultipartiteEstimator, MetaEstimatorMixin):
     def __init__(
         self,
         estimator: BaseEstimator,
-        random_state: int|np.random.RandomState|None = None,
+        random_state: int | np.random.RandomState | None = None,
         subsample_negatives: bool = False,
     ):
         """Wraps a standard estimator/transformer to work on PU n-partite data.
@@ -230,7 +231,7 @@ class GlobalSingleOutputWrapper(BaseEstimator, MetaEstimatorMixin):
 
 
 # TODO: docs.
-class BipartiteLocalWrapper(BaseEstimator):
+class BipartiteLocalWrapper(BaseMultipartiteEstimator):
     def __init__(
         self,
         primary_estimator: BaseEstimator | Sequence[BaseEstimator],
@@ -502,4 +503,92 @@ class BipartiteLocalWrapper(BaseEstimator):
             check_is_fitted(self.primary_cols_estimator_)
             return True
         except NotFittedError:
+            # Let the caller check_is_fitted() raise the error
+            return False
+
+
+# FIXME: test get_params()
+class MultipartiteTransformerWrapper(BaseMultipartiteEstimator,
+                                     TransformerMixin):
+    """Manages a transformer for each feature space in multipartite datasets.
+    """
+    def __init__(
+        self,
+        transformers: BaseEstimator | Sequence[BaseEstimator],
+        ndim: int | None = 2,
+    ):
+        self.transformers = transformers
+        self.ndim = ndim
+
+    def fit(self, X, y=None):
+        self._set_transformers()
+        self._validate_data(X, y)
+        for Xi, yi, transformer in self._roll_axes(X, y):
+            transformer.fit(Xi, yi)
+
+    def transform(self, X, y=None):
+        self._validate_data(X, y)
+        return [
+            transformer.transform(Xi)
+            for Xi, _, transformer in self._roll_axes(X)
+        ]
+
+    def fit_transform(self, X, y=None):
+        self._set_transformers()
+        self._validate_data(X, y)
+        return [
+            transformer.fit_transform(Xi, yi)
+            for Xi, yi, transformer in self._roll_axes(X, y)
+        ]
+
+    def _set_transformers(self):
+        """Sets self.transformers_ and self.ndim_ during fit.
+        """
+        if isinstance(self.transformers, Sequence):
+            if self.ndim is None:
+                self.ndim_ = len(self.transformers)
+
+            elif self.ndim != len(self.transformers):
+                raise ValueError("'self.ndim' must correspond to the number of"
+                                 " transformers in self.transformers")
+            else:
+                self.ndim_ = self.ndim
+
+            self.transformers_ = [clone(t) for t in self.transformers]
+
+        else:  # If a single transformer provided
+            if self.ndim is None:
+                raise ValueError("'ndim' must be provided if 'transformers' is"
+                                 " a single transformer.")
+            self.ndim_ = self.ndim
+            self.transformers_ = [
+                clone(self.transformers) for _ in range(self.ndim_)
+            ]
+
+    def _validate_data(self, X, y):
+        if len(X) != self.ndim_:
+            raise ValueError(f"Wrong dimension. X has {len(X)} items, was exp"
+                             "ecting {self.ndim}.")
+        # FIXME: validate
+        # super()._validate_data(X, y, validate_separately=True)
+
+    def _roll_axes(self, X, y=None):
+        if not hasattr(self, "transformers_"):
+            raise AttributeError("One must call _set_transformers() before"
+                                 "attempting to call _roll_axes()")
+
+        for ax in range(self.ndim_):
+            yield X[ax], y, self.transformers_[ax]
+
+            if y is not None:
+                y = np.moveaxis(y, 0, -1)
+
+    def __sklearn_is_fitted__(self):
+        """Indicate whether the transformers have been fit."""
+        if not hasattr(self, "ndim_"):
+            return False
+        try:
+            map(check_is_fitted, self.transformers_)
+        except NotFittedError:
+            # Let the caller check_is_fitted() raise the error
             return False
