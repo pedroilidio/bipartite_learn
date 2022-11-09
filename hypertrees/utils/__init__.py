@@ -6,75 +6,39 @@ The :mod:`hypertrees.utils` module includes various utilities.
 from __future__ import annotations
 import inspect
 import pkgutil
-import numpy as np
 from importlib import import_module
 from operator import itemgetter
 from pathlib import Path
-from typing import Callable, Sequence
-from sklearn.utils import IS_PYPY
+from typing import Any, Sequence
+from sklearn.utils import check_array, IS_PYPY
+from sklearn.utils.validation import check_symmetric
 
 __all__ = [
     "all_estimators",
     "check_multipartite_params",
+    "check_simmilarity_matrix",
 ]
 
 
-def lazy_knn_weights(
-    distances: np.ndarray[float],
-    min_distance: float = 0.,
-    func: Callable = lambda x: 1/x,
-    **func_kwargs,
+def check_similarity_matrix(
+    X,
+    symmetry_tol=1e-10,
+    symmetry_warning=True,
+    symmetry_exception=False,
+    **check_array_args,
 ):
-    """Return learned instance if KNN estimator finds one during predict.
-    
-    Intended to be used as the `weights` parameter of KNN estimators such as
-    `sklearn.neighbors.KNeighborsRegressor`. If an instance given to predict
-    is identical to an instance of the training set, the KNN estimator will
-    not average its neighbors' labels, as usual, but will simply return the
-    known instance's labels.
+    X = check_array(X, **check_array_args)
 
-    Parameters
-    ----------
-    distances : np.ndarray[float]
-        The distance matrix to calculate weights on.
-    min_distance : float, default=0.
-        Minimum distance to consider samples identical.
-    func : Callable, optional, default=lambda x: 1/x
-        Function to apply on remaining instances, not found in the training set.
-    **func_kwargs : dict
-        Other keyword arguments will be forwarded to func.
+    if (X > 1.).any() or (X < 0.).any():
+        raise ValueError("Similarity values must be between 0 and 1 "
+                         "(inclusive)")
 
-    Returns
-    -------
-    np.ndarray with same shape as `distances`
-        Weight matrix, with known instances only having weight on the columns
-        corresponding to its positions (if repeated) on the training set. The
-        remaining weights of known instances are set to zero.
-    """
-    is_known = (distances <= min_distance).any(axis=1)
-    weights = np.empty_like(distances)
-
-    # Only the known instance's column has non-zero weight.
-    weights[is_known] = (distances[is_known] <= min_distance)
-
-    # Remaing weights are calculated by `func`.
-    weights[~is_known] = func(distances[~is_known], **func_kwargs)
-
-    return weights
-
-
-def lazy_knn_weights_min_one(*args, **kwargs):
-    """Return learned instance if KNN estimator finds one during predict.
-
-    Convenience partial function to call `lazy_knn_weights()` with
-    `min_distace=1`, since it's so common when dealing with inverses of
-    similarities in the 0 to 1 interval.
-
-    See also
-    --------
-    lazy_knn_weights
-    """
-    return lazy_knn_weights(*args, min_distance=1., **kwargs)
+    return check_symmetric(
+        X,
+        tol=symmetry_tol,
+        raise_warning=symmetry_warning,
+        raise_exception=symmetry_exception,
+    )
 
 
 def check_multipartite_params(*params, k=2):
@@ -90,6 +54,64 @@ def check_multipartite_params(*params, k=2):
             new_params.append([p for _ in range(k)])
     
     return new_params[0] if len(params) == 1 else new_params
+
+
+def _partiteness_name(k: int) -> str:
+    if k < 1:
+        raise ValueError("Invalid partiteness.")
+    elif k == 1:
+        return "monopartite"
+    elif k == 2:
+        return "bipartite"
+    elif k == 3:
+        return "tripartite"
+    else:
+        return f"{k}-partite"
+
+
+def check_partiteness(
+    X=None,
+    y=None,
+    *,
+    partiteness: None | int = None,
+    estimator: None | str | Any = None,
+):
+    if estimator is not None and not isinstance(estimator, str):
+        if hasattr(estimator, '_partiteness'):
+            partiteness = estimator._partiteness
+            if partiteness is None:  # Estimator accepts any partiteness
+                return
+        elif partiteness is None:
+            raise ValueError("If no partiteness provided, estimator must have "
+                             "a 'partiteness' attribute.")
+    elif partiteness is None:
+        raise ValueError(
+            "Either partiteness or an estimator instance must be provided."
+        )
+
+    kpartite = _partiteness_name(partiteness)
+
+    if estimator is None:
+        but_text = f"but {kpartite} input was expected."
+    elif isinstance(estimator, str):
+        but_text = f"but {estimator} expects {kpartite} input."
+    else:
+        but_text = f"but {type(estimator).__name__} expects {kpartite} input."
+
+    if X is None and y is None:
+        raise ValueError("Either X or y must be provided.")
+
+    if X is not None:
+        len_X = len(X)
+        if len_X != partiteness:
+            raise ValueError(
+                f"X is {_partiteness_name(len_X)} ({len(X)=}) " + but_text
+            )
+    if y is not None:
+        if y.ndim != partiteness:
+            raise ValueError(
+                f"y is {_partiteness_name(y.ndim)} ({y.ndim=}) " + but_text
+            )
 
 
 def all_estimators(type_filter=None):

@@ -2,35 +2,16 @@ import numpy as np
 from sklearn.utils import check_random_state
 from sklearn.neighbors import KNeighborsRegressor
 from ..base import BaseMultipartiteSampler, MultipartiteRegressorMixin
-from ..utils import check_multipartite_params
+from ..utils import check_similarity_matrix
 
 __all__ = ["NRLMF"]
-
-
-DEF_KNN_PARAMS = dict(
-    n_neighbors=5,
-    metric="precomputed",
-    algorithm="brute",
-)
 
 
 class NRLMF(
     BaseMultipartiteSampler,
     MultipartiteRegressorMixin,
 ):
-    # TODO: do not allow list of dicts to 'knn_params' parameter. Maybe pass
-    #       a KNeighbors object instead of dict, allowing grid search.
     """Neighborhood Regularized Logistic Matrix Factorization.
-
-    Important note: contrary to the original paper's definition, this estimator
-    must receive **distance** matrices, not similarity matrices as the X
-    parameter for fit(). One can just invert similarity matrices to use this
-    class, for example, utilizing both
-
-    :module:wrappers.MultipartiteTransformerWrapper
-    :module:preprocessing.monopartite_transformers.ReciprocalTransformer
-
-    in an `imblearn.pipeline.Pipeline`.
 
     [1] Yong Liu, Min Wu, Chunyan Miao, Peilin Zhao, Xiao-Li Li, "Neighborhood
     Regularized Logistic Matrix Factorization for Drug-target Interaction
@@ -60,10 +41,10 @@ class NRLMF(
         weighting their neighborhood information when calculating the loss.
 
     alpha_cols : float or "same", default="same"
-        Constant that multiplies the local similarity matrix of column instances,
-        weighting their neighborhood information when calculating the loss.
-        Originally called :math:`\\beta` by [1].  If "same", it takes the same
-        value of `alpha_rows`.
+        Constant that multiplies the local similarity matrix of column
+        instances, weighting their neighborhood information when calculating
+        the loss.  Originally called :math:`\\beta` by [1].  If "same", it
+        takes the same value of `alpha_rows`.
 
     lambda_rows : float, default=0.625
         Corresponds to the inverse of the assumed prior variance of U. It
@@ -74,17 +55,9 @@ class NRLMF(
         multiplies the regularization term of V. If "same", it takes the same
         value of `lambda_rows`.
 
-    knn_params : dict or sequence of dicts or None
-        Parameters to be passed on to a `KNeighborsRegressor`, that
-        will be used to get unsupervised neighborhood information. `None`
-        assumes default values bellow, that can be updated by passing a
-        `dict` instead. A two separate dictionaries, for X[0] and X[1]
-        can also be provided in a sequence (usually list or tuple).
-
-        Defaults are:
-            - n_neighbors=5,
-            - metric="precomputed",
-            - algorithm="brute",
+    n_neighbors : int, default=5
+        Number of nearest neighbors to consider when predicting new samples and
+        building the local similarity (laplacian) matrices.
 
     learning_rate : float, default=1.0
         Multiplicative factor for each gradient step.
@@ -95,12 +68,14 @@ class NRLMF(
     tol : float, default=1e-5
         Minimum relative loss improvement to continue iteration.
 
-    change_positives : bool, default=False
-        If `False`, it keeps 1s from the original y in the transformed y.  
+    keep_positives : bool, default=False
+        If `True`, it keeps 1s from the original y in the transformed y.
+        Note that it does not apply when calling only predict(), so that
+        fit_predict() will no longer yield the same result as fit().predict().
 
     resample_X : bool, default=False
         If `True`, return [U, V] as resampled X in `fit_resample`.
-    
+
     verbose : bool, default=False
         Wether to display or not training status information.
 
@@ -109,10 +84,11 @@ class NRLMF(
         results across multiple function calls.
         See :term:`Glossary <random_state>`.
     """
-    # FIXME:
-    # We need this for other scikit-learn stuff to not look for predict_proba()
-    # however, NRLMF is primarily a Xy transformer (i.e. sampler).
-    _estimator_type = "regressor"  
+    # NOTE: We need the next line for other scikit-learn stuff to not look for
+    #       predict_proba(). However, NRLMF also implements imblearn's Sampler
+    #       interface, to reconstruct y (interaction matrix) in a pipeline.
+    _estimator_type = "regressor"
+    _partiteness = 2
 
     def __init__(
         self,
@@ -123,11 +99,11 @@ class NRLMF(
         alpha_cols="same",
         lambda_rows=0.625,
         lambda_cols="same",
-        knn_params=None,
+        n_neighbors=5,
         learning_rate=1.0,
         max_iter=100,
         tol=1e-5,
-        change_positives=False,
+        keep_positives=False,
         resample_X=False,
         verbose=False,
         random_state=None,
@@ -141,25 +117,20 @@ class NRLMF(
         self.alpha_cols = alpha_cols
         self.learning_rate = learning_rate
         self.max_iter = max_iter
-        self.change_positives = change_positives
-        self.knn_params = knn_params
+        self.keep_positives = keep_positives
+        self.n_neighbors = n_neighbors
         self.tol = tol
         self.resample_X = resample_X
         self.verbose = verbose
         self.random_state = random_state
 
     def _more_tags(self):
-        def_metric = DEF_KNN_PARAMS['metric']
-
-        pw = self.knn_params and \
-            self.knn_params.get('metric', def_metric) == 'precomputed'
-
-        return dict(pairwise=pw)
+        return dict(pairwise=True)
 
     @staticmethod
     def _logistic_output(U, V):
         """Compute probabilities of interaction.
-        
+
         Calculate interaction probabilities (y predictions) based on the given
         U and V latent feature vectors.
         """
@@ -170,8 +141,10 @@ class NRLMF(
         self.fit(X, y)
         yt = self._logistic_output(self.U, self.V)
 
-        if not self.change_positives:
-            # Transform y only where it had zero similarity (distance == 1).
+        if self.keep_positives:
+            # Transform y only where it was < 1.
+            # The reason is that we usually assume that 1-valued labels are
+            # verified interactions, while 0 represents unknown interactions.
             yt[y == 1] = 1
 
         if self.resample_X:
@@ -180,29 +153,30 @@ class NRLMF(
         return X, yt
 
     def fit_predict(self, X, y):
-        # NOTE: should be equal to calling fit() and then predict(), but that's
-        #       only true with weights=lazy_knn_weights_min_one in knn_params.
         _, yt = self.fit_resample(X, y)
         return yt.reshape(-1)
 
     def predict(self, X):
-        U = self.knn_rows_.predict(X[0])
-        V = self.knn_cols_.predict(X[1])
+        U = self.knn_rows_.predict(1-X[0])
+        V = self.knn_cols_.predict(1-X[1])
         yt = self._logistic_output(U, V)
         return yt.reshape(-1)
 
     def fit(self, X, y):
-        # NOTE: Fit must receive distance matrices, not similarity matrices,
-        #       contrary to the paper's description of the problem [1].
-        # FIXME: Improve input checking.
-        #        Use sklearn.metrics.pairwise.check_pairwise_array or similar.
+        X, y = self._validate_data(X, y)
+
+        # Fit must receive [0, 1]-bounded similarity matrices.
+        for ax in range(len(X)):
+            X[ax] = check_similarity_matrix(X[ax], estimator=self)
 
         lambda_rows = self.lambda_rows
         alpha_rows = self.alpha_rows
         n_components_rows = self.n_components_rows
 
-        alpha_cols = alpha_rows if self.alpha_cols == "same" else self.alpha_cols
-        lambda_cols = lambda_rows if self.lambda_cols == "same" else self.lambda_cols
+        alpha_cols = \
+            alpha_rows if self.alpha_cols == "same" else self.alpha_cols
+        lambda_cols = \
+            lambda_rows if self.lambda_cols == "same" else self.lambda_cols
 
         if self.n_components_cols == "same":
             n_components_cols = n_components_rows
@@ -210,7 +184,6 @@ class NRLMF(
             n_components_cols = self.n_components_cols
 
         random_state = check_random_state(self.random_state)
-        knn_params = check_multipartite_params(self.knn_params)
 
         # Initialize U and V latent vectors.
         self.U = random_state.normal(size=(X[0].shape[0], n_components_rows))
@@ -219,17 +192,18 @@ class NRLMF(
         self.V /= np.sqrt(n_components_cols)
 
         # Initialize auxiliary KNN regressors.
-        knn_params[0] = DEF_KNN_PARAMS | (knn_params[0] or {})
-        knn_params[1] = DEF_KNN_PARAMS | (knn_params[1] or {})
-        self.knn_rows_ = KNeighborsRegressor(**knn_params[0])
-        self.knn_cols_ = KNeighborsRegressor(**knn_params[1])
-        self.knn_rows_.fit(X[0], self.U)
-        self.knn_cols_.fit(X[1], self.V)
+        knn_params = dict(
+            n_neighbors=self.n_neighbors,
+            metric="precomputed",
+            weights="distance",
+            algorithm="brute",  # auto sets it to brute when metric=precomputed
+        )
+        self.knn_rows_ = KNeighborsRegressor(**knn_params)
+        self.knn_cols_ = KNeighborsRegressor(**knn_params)
+        self.knn_rows_.fit(1-X[0], self.U)  # Similarity to distance conversion
+        self.knn_cols_.fit(1-X[1], self.V)
 
         self.n_features_in_ = X[0].shape[1] + X[1].shape[1]
-
-        # To be used in gradient calculation.
-        self.y_scaled_ = 1 + (self.positive_importance-1) * y
 
         # Build regularized K Nearest Neighbors similarity matrices.
         L_rows = self._laplacian_matrix(
@@ -253,9 +227,9 @@ class NRLMF(
 
         We deviate from the definition in Liu _et al._'s Eq. 11 by including
         the constants to be used in gradient calculation.  The return value
-        thus actually corresponds to 
-        
-        \\lambda \\mathbf{I} + \\alpha \mathbf{L},
+        thus actually corresponds to
+
+        \\lambda \\mathbf{I} + \\alpha \\mathbf{L},
 
         according to the paper's definition, in order to facilitate usage on
         Equations 13. `inverse_prior_var` will be \\lambda_d or \\lambda_t.
@@ -266,12 +240,11 @@ class NRLMF(
         S_knn = knn.kneighbors_graph(mode="distance")
         nonzero_idx = S_knn.nonzero()
 
-        # We need similarities but fit() needs to provide a distance matrix to
-        # the KNeighborsRegressor at `knn`. So S_knn will initially have
-        # distances that we must to convert to similarities. Thus, invert it.
-        S_knn[nonzero_idx] = alpha / S_knn[nonzero_idx]
+        # We take 1-S to convert distances back to similarities, since knn
+        # needed to be trained with distances (1-X).
+        S_knn[nonzero_idx] = alpha * (1-S_knn[nonzero_idx])
 
-        S_knn = S_knn.toarray()  # sparse slows matrix multiplication
+        S_knn = S_knn.toarray()  # Sparse slows matrix multiplication.
 
         DD = np.sum(S_knn, axis=0) + np.sum(S_knn, axis=1)
         DD += inverse_prior_var
@@ -292,23 +265,25 @@ class NRLMF(
         # See [Duchi et al., 2011](https://jmlr.org/papers/v12/duchi11a.html)
         step_sq_sum_rows = np.zeros_like(U)
         step_sq_sum_cols = np.zeros_like(V)
-        last_loss = self._loss_function(y, U, V, L_rows, L_cols)
 
-        # TODO: optimize. step_rows and step_cols should be stored in the same
-        #       matrix, not a new matrix every time.
+        # y_scaled[i, j] = positive_importance if y[i, j] == 1 else 1
+        y_scaled = 1 + (self.positive_importance-1) * y
+
+        last_loss = self._loss_function(y, y_scaled, U, V, L_rows, L_cols)
+
         for i in range(self.max_iter):
             # Update U.
-            step_rows = self._gradient_step(y, self.y_scaled_, U, V, L_rows)
+            step_rows = self._gradient_step(y, y_scaled, U, V, L_rows)
             step_sq_sum_rows += step_rows ** 2
             U += self.learning_rate * step_rows / np.sqrt(step_sq_sum_rows)
 
             # Update V.
-            step_cols = self._gradient_step(y.T, self.y_scaled_.T, V, U, L_cols)
+            step_cols = self._gradient_step(y.T, y_scaled.T, V, U, L_cols)
             step_sq_sum_cols += step_cols ** 2
             V += self.learning_rate * step_cols / np.sqrt(step_sq_sum_cols)
 
             # Calculate loss.
-            curr_loss = self._loss_function(y, U, V, L_rows, L_cols)
+            curr_loss = self._loss_function(y, y_scaled, U, V, L_rows, L_cols)
             delta_loss = abs(1 - curr_loss/last_loss)
 
             if self.verbose:
@@ -345,10 +320,9 @@ class NRLMF(
         # NOTE: the following is the negative gradient, so that it already
         #       climbs down the loss function and must be added to,
         #       not subtracted from W.
-        # TODO: parenthesized expression can be calculated once for U and V
         return (y*self.positive_importance - y_scaled*P) @ otherW - L @ W
 
-    def _loss_function(self, y, U, V, L_rows, L_cols):
+    def _loss_function(self, y, y_scaled, U, V, L_rows, L_cols):
         """Return the loss, based on the log-likelihood of U an V given y.
 
         Implements Eq. 12 of [1]. Notice that we defined L to include the
@@ -359,7 +333,7 @@ class NRLMF(
         UV = U @ V.T
         return (
             np.sum(
-                self.y_scaled_ * np.log(1 + np.exp(UV))
+                y_scaled * np.log(1 + np.exp(UV))
                 - y * UV * self.positive_importance
             )
             + np.sum(U * (L_rows @ U)) / 2

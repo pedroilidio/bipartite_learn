@@ -2,6 +2,8 @@
 import numpy as np
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.linear_model import Ridge
+from sklearn.utils._testing import assert_allclose
+from sklearn.utils.validation import check_symmetric
 from imblearn.pipeline import make_pipeline
 
 from hypertrees.matrix_factorization._nrlmf import NRLMF
@@ -28,6 +30,51 @@ def test_nrlmf(**params):
     assert Yt[Y_positive].mean() > Yt[~Y_positive].mean()
 
     return XXt
+
+
+def test_nrlmf_fit_predict(**params):
+    params = DEF_PARAMS | params
+    params['noise'] = 0
+    params["shape"] = params["nattrs"]  # X must be kernel matrices
+
+    XX, Y, = gen_mock_data(**params, melt=False)
+    XX = [check_symmetric(Xi, raise_warning=False) for Xi in XX]
+    np.fill_diagonal(XX[0], 1.)
+    np.fill_diagonal(XX[1], 1.)
+
+    nrlmf = NRLMF(verbose=True, random_state=0)
+
+    pred1 = nrlmf.fit(XX, Y).predict(XX)
+    U1, V1 = nrlmf.U, nrlmf.V
+
+    pred2 = nrlmf.fit_predict(XX, Y)
+    U2, V2 = nrlmf.U, nrlmf.V
+
+    assert_allclose(U1, U2)
+    assert_allclose(V1, V2)
+    assert_allclose(pred1, pred2)
+
+
+def test_dnilmf_fit_predict(**params):
+    params = DEF_PARAMS | params
+    params['noise'] = 0
+    params["shape"] = params["nattrs"]  # X must be kernel matrices
+
+    XX, Y, = gen_mock_data(**params, melt=False)
+    XX = [check_symmetric(Xi, raise_warning=False) for Xi in XX]
+    np.fill_diagonal(XX[0], 1.)
+    np.fill_diagonal(XX[1], 1.)
+
+    dnilmf = DNILMF(verbose=True, random_state=0)
+    pred1 = dnilmf.fit(XX, Y).predict(XX)
+    U1, V1 = dnilmf.U, dnilmf.V
+
+    pred2 = dnilmf.fit_predict(XX, Y)
+    U2, V2 = dnilmf.U, dnilmf.V
+
+    assert_allclose(U1, U2)
+    assert_allclose(V1, V2)
+    assert_allclose(pred1, pred2)
 
 
 def test_dnilmf(**params):
@@ -92,7 +139,9 @@ def test_blmnii(**params):
 
 def main(**params):
     test_nrlmf(**params)
+    test_nrlmf_fit_predict(**params)
     test_dnilmf(**params)
+    test_dnilmf_fit_predict(**params)
     test_dthybrid(**params)
     test_blmnii(**params)
 

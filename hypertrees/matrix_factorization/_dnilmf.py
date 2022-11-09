@@ -2,23 +2,15 @@ import numpy as np
 from sklearn.utils import check_random_state
 from sklearn.neighbors import KNeighborsRegressor
 from ..base import BaseMultipartiteSampler, MultipartiteRegressorMixin
-from ..utils import check_multipartite_params, lazy_knn_weights_min_one
+from ..utils import check_similarity_matrix
 
 __all__ = ["DNILMF"]
-
-
-DEF_KNN_PARAMS = dict(
-    n_neighbors=2,
-    metric="precomputed",
-    algorithm="brute",
-)
 
 
 class DNILMF(
     BaseMultipartiteSampler,
     MultipartiteRegressorMixin,
 ):
-    # TODO: fix documentation, KNN.
     """Dual-Network Integrated Logistic Matrix Factorization
 
     Note: the kernel fusion pre-processing procedure described by [1] is
@@ -76,17 +68,8 @@ class DNILMF(
         multiplies the regularization term of V. If "same", it takes the same
         value of `lambda_rows`.
 
-    knn_params : dict or sequence of dicts or None
-        Parameters to be passed on to a `KNeighborsRegressor`, that
-        will be used to get unsupervised neighborhood information. `None`
-        assumes default values bellow, that can be updated by passing a
-        `dict` instead. A two separate dictionaries, for X[0] and X[1]
-        can also be provided in a sequence (usually list or tuple).
-
-        Defaults are:
-            - n_neighbors=2,
-            - metric="precomputed",
-            - algorithm="brute",
+    n_neighbors : int, default=5
+        Number of nearest neighbors to consider when predicting new samples.
 
     max_iter : int, default=100
         Maximum number of iterations.
@@ -94,8 +77,10 @@ class DNILMF(
     tol : float, default=1e-5
         Minimum relative loss improvement to continue iteration.
 
-    change_positives : bool, default=False
-        If `False`, it keeps 1s from the original y in the transformed y.  
+    keep_positives : bool, default=False
+        If `True`, it keeps 1s from the original y in the transformed y.
+        Note that it does not apply when calling only predict(), so that
+        fit_predict() will no longer yield the same result as fit().predict().
 
     resample_X : bool, default=False
         If `True`, return [U, V] as resampled X in `fit_resample`.
@@ -110,18 +95,20 @@ class DNILMF(
 
     References
     ----------
-    .. [1] :doi:`"Predicting drug-target interactions by dual-network integrated
-    logistic matrix factorization" <https://doi.org/10.1038/srep40376>`
-    Hao, M., Bryant, S. & Wang, Y. Sci Rep 7, 40376 (2017). 
+    .. [1] :doi:`"Predicting drug-target interactions by dual-network \
+    integrated logistic matrix factorization" \
+    <https://doi.org/10.1038/srep40376>`
+    Hao, M., Bryant, S. & Wang, Y. Sci Rep 7, 40376 (2017).
 
-    .. [2] :doi:`"Neighborhood Regularized Logistic Matrix Factorization for
+    .. [2] :doi:`"Neighborhood Regularized Logistic Matrix Factorization for \
     Drug-target Interaction Prediction" <10.1371/journal.pcbi.1004760>`
     Yong Liu, Min Wu, Chunyan Miao, Peilin Zhao, Xiao-Li Li, (2016)
     """
-    # FIXME:
-    # We need this for other scikit-learn stuff to not look for predict_proba()
-    # however, NRLMF is primarily a Xy transformer (i.e. sampler).
+    # NOTE: We need the next line for other scikit-learn stuff to not look for
+    #       predict_proba(). However, DNILMF also implements imblearn's Sampler
+    #       interface, to reconstruct y (interaction matrix) in a pipeline.
     _estimator_type = "regressor"
+    _partiteness = 2
 
     def __init__(
         self,
@@ -134,10 +121,10 @@ class DNILMF(
         gamma=0.3,
         lambda_rows=2,
         lambda_cols="same",
-        knn_params=None,
+        n_neighbors=5,
         max_iter=100,
         tol=1e-5,
-        change_positives=False,
+        keep_positives=False,
         resample_X=False,
         verbose=False,
         random_state=None,
@@ -151,8 +138,8 @@ class DNILMF(
         self.alpha = alpha
         self.beta = beta
         self.gamma = gamma
-        self.change_positives = change_positives
-        self.knn_params = knn_params
+        self.keep_positives = keep_positives
+        self.n_neighbors = n_neighbors
         self.max_iter = max_iter
         self.tol = tol
         self.resample_X = resample_X
@@ -171,7 +158,7 @@ class DNILMF(
 
     def _logistic_output(self, U, V, L_rows, L_cols):
         """Compute probabilities of interaction.
-        
+
         Calculate interaction probabilities (y predictions) based on the given
         U and V latent feature vectors.
 
@@ -186,8 +173,10 @@ class DNILMF(
         self.fit(X, y)
         yt = self._logistic_output(self.U, self.V, *X)
 
-        if not self.change_positives:
-            # Transform y only where it had zero similarity (distance == 1).
+        if self.keep_positives:
+            # Transform y only where it was < 1.
+            # The reason is that we usually assume that 1-valued labels are
+            # verified interactions, while 0 represents unknown interactions.
             yt[y == 1] = 1
 
         if self.resample_X:
@@ -195,16 +184,23 @@ class DNILMF(
 
         return X, yt
 
+    def fit_predict(self, X, y):
+        _, yt = self.fit_resample(X, y)
+        return yt.reshape(-1)
+
     def predict(self, X):
-        U = self.knn_rows_.predict(X[0])
-        V = self.knn_cols_.predict(X[1])
+        U = self.knn_rows_.predict(1-X[0])  # Similarity to distance conversion
+        V = self.knn_cols_.predict(1-X[1])
         yt = self._logistic_output(U, V, *X)
         return yt.reshape(-1)
 
     def fit(self, X, y):
-        # NOTE: Fit must receive similarity matrices, contrary to NRLMF.
-        # FIXME: Improve input checking.
-        #        Use sklearn.metrics.pairwise.check_pairwise_array or similar.
+        X, y = self._validate_data(X, y)
+
+        # Fit must receive [0, 1]-bounded similarity matrices.
+        for ax in range(len(X)):
+            X[ax] = check_similarity_matrix(X[ax])
+
         if (self.alpha + self.beta + self.gamma) != 1:
             raise ValueError("alpha, beta and gamma must sum to 1.")
 
@@ -216,7 +212,6 @@ class DNILMF(
             n_components_cols = self.n_components_cols
 
         random_state = check_random_state(self.random_state)
-        knn_params = check_multipartite_params(self.knn_params)
 
         # Initialize U and V latent vectors.
         self.U = random_state.normal(size=(X[0].shape[0], n_components_rows))
@@ -225,12 +220,16 @@ class DNILMF(
         self.V /= np.sqrt(n_components_cols)
 
         # Initialize auxiliary KNN regressors.
-        knn_params[0] = DEF_KNN_PARAMS | (knn_params[0] or {})
-        knn_params[1] = DEF_KNN_PARAMS | (knn_params[1] or {})
-        self.knn_rows_ = KNeighborsRegressor(**knn_params[0])
-        self.knn_cols_ = KNeighborsRegressor(**knn_params[1])
-        self.knn_rows_.fit(X[0], self.U)
-        self.knn_cols_.fit(X[1], self.V)
+        knn_params = dict(
+            n_neighbors=self.n_neighbors,
+            metric="precomputed",
+            weights="distance",
+            algorithm="brute",  # auto sets it to brute when metric=precomputed
+        )
+        self.knn_rows_ = KNeighborsRegressor(**knn_params)
+        self.knn_cols_ = KNeighborsRegressor(**knn_params)
+        self.knn_rows_.fit(1-X[0], self.U)  # Similarity to distance conversion
+        self.knn_cols_.fit(1-X[1], self.V)
 
         self.n_features_in_ = X[0].shape[1] + X[1].shape[1]
 
@@ -255,7 +254,8 @@ class DNILMF(
         by [1] and [2].
         """
         lambda_rows = self.lambda_rows
-        lambda_cols = lambda_rows if self.lambda_cols == "same" else self.lambda_cols
+        lambda_cols = \
+            lambda_rows if self.lambda_cols == "same" else self.lambda_cols
 
         # TODO: Is this really AdaGrad?
         # See [Duchi et al., 2011](https://jmlr.org/papers/v12/duchi11a.html)
@@ -274,7 +274,7 @@ class DNILMF(
         for i in range(self.max_iter):
             P = self._logistic_output(U, V, L_rows, L_cols)
             # In the paper [1] notation, yP is now cY - Q
-            yP = y*self.positive_importance - y_scaled*P  
+            yP = y*self.positive_importance - y_scaled*P
             yP = self._merge_similarities(yP, L_rows.T, L_cols.T)
             # TODO: Check if it transposing is correct
 

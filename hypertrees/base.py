@@ -6,15 +6,21 @@ from sklearn.utils.validation import check_X_y
 from sklearn.utils.validation import check_array
 from sklearn.utils.validation import _check_y
 from imblearn.base import BaseSampler, SamplerMixin
+from .utils import check_partiteness
 
 
 class BaseMultipartiteEstimator(BaseEstimator):
     """Base class for multipartite estimators.
     """
+    # _partiteness should be set to k for an estimator that accepts only
+    # k-partite input (in fit(), k = len(X) = y.ndim). None implies that any
+    # any k >= 2 is accepted.
+    _partiteness = None
+
     def _more_tags(self):
         # Determines that it can receive X as a list of Xs, one for each y axis,
         # that is, a list of objects of any type in self._get_tags()["X_types"]
-        return dict(multipartite=True)  
+        return dict(multipartite=True)
 
     def _validate_data(
         self,
@@ -42,16 +48,27 @@ class BaseMultipartiteEstimator(BaseEstimator):
         if no_val_X and no_val_y:
             raise ValueError("Validation should be done on X, y or both.")
         elif not no_val_X and no_val_y:
-            if isinstance(X, (list, tuple)):  # TODO: better way of deciding.
+            # TODO: better way of deciding. We still accept nd_arrays in
+            #       predict, considering them as molten multipartite X
+            #       (see docs for :module:melter)
+            if isinstance(X, (list, tuple)):
+                check_partiteness(X, estimator=self)
                 for ax in range(len(X)):
                     X[ax] = check_array(X[ax], input_name="X", **check_params)
             else:
                 X = check_array(X, input_name="X", **check_params)
             out = X
         elif no_val_X and not no_val_y:
+            check_partiteness(y=y, estimator=self)
             y = _check_y(y, **check_params)
             out = y
         else:
+            check_partiteness(X, y, estimator=self)
+            if len(X) != y.ndim:
+                raise ValueError("Incompatible X and y given. The number of "
+                                 "attribute matrices (len(X)) must correspond "
+                                 f"to y's number of dimensions, but {len(X)=} "
+                                 f"and {y.ndim=}.")
             if validate_separately:
                 # We need this because some estimators validate X and y
                 # separately, and in general, separately calling check_array()
@@ -61,18 +78,15 @@ class BaseMultipartiteEstimator(BaseEstimator):
                 if "estimator" not in check_X_params:
                     check_X_params = {**default_check_params, **check_X_params}
 
-                if isinstance(X, (list, tuple)):
-                    for ax in range(len(X)):
-                        X[ax] = check_array(X[ax], input_name="X", **check_params)
-                else:
-                    X = check_array(X, input_name="X", **check_params)
+                for ax in range(len(X)):
+                    X[ax] = check_array(X[ax], input_name="X", **check_params)
 
                 if "estimator" not in check_y_params:
                     check_y_params = {**default_check_params, **check_y_params}
                 y = check_array(y, input_name="y", **check_y_params)
             else:
-                raise NotImplementedError("set validate_separately=True")
-                X, y = check_X_y(X, y, **check_params)
+                _, y = check_X_y(X[0], y, multi_output=True, **check_params)
+                # TODO: other axes
             out = X, y
 
         if not no_val_X and check_params.get("ensure_2d", True):
@@ -80,6 +94,10 @@ class BaseMultipartiteEstimator(BaseEstimator):
             # self._check_n_features(X, reset=reset)
 
         return out
+
+
+class BaseBipartiteEstimator(BaseMultipartiteEstimator):
+    _partiteness = 2
 
 
 class MultipartiteRegressorMixin(RegressorMixin):
@@ -112,7 +130,7 @@ class BaseMultipartiteSampler(MultipartiteSamplerMixin):
     def _check_X_y(self, X, y, accept_sparse=None):
         if accept_sparse is None:
             accept_sparse = ["csr", "csc"]
-        #y, binarize_y = check_target_type(y, indicate_one_vs_all=True)
+        # y, binarize_y = check_target_type(y, indicate_one_vs_all=True)
         X, y = self._validate_data(X, y, reset=True, accept_sparse=accept_sparse)
         return X, y, None
 
