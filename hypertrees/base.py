@@ -2,10 +2,10 @@ import numpy as np
 from abc import ABCMeta, abstractmethod, abstractproperty
 
 from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin
-from sklearn.utils.validation import check_X_y
-from sklearn.utils.validation import check_array
-from sklearn.utils.validation import _check_y
-from imblearn.base import BaseSampler, SamplerMixin
+from sklearn.utils.validation import (
+    check_X_y, check_array, _check_y, _num_features,
+)
+from imblearn.base import SamplerMixin
 from .utils import check_partiteness
 
 
@@ -85,15 +85,66 @@ class BaseMultipartiteEstimator(BaseEstimator):
                     check_y_params = {**default_check_params, **check_y_params}
                 y = check_array(y, input_name="y", **check_y_params)
             else:
-                _, y = check_X_y(X[0], y, multi_output=True, **check_params)
-                # TODO: other axes
+                X[0], y = check_X_y(X[0], y, multi_output=True, **check_params)
+                _y = y
+                for ax in range(1, len(X)):
+                    _y = np.moveaxis(_y, 0, -1)
+                    X[ax], _ = check_X_y(X[ax], _y, multi_output=True,
+                                         **check_params)
             out = X, y
 
         if not no_val_X and check_params.get("ensure_2d", True):
-            pass  # TODO
-            # self._check_n_features(X, reset=reset)
+            self._check_n_features(X, reset=reset)
 
         return out
+
+    def _check_n_features(self, X, reset):
+        """Set the `n_features_in_` attribute, or check against it.
+        Parameters
+        ----------
+        X : list of {ndarray, sparse matrix} of shapes (n_samples[i], \
+        n_features[i])
+            The input samples.
+        reset : bool
+            If True, the `n_features_in_` attribute is set to
+            `sum(Xi.shape[1] for Xi in X)`.
+            If False and the attribute exists, then check that it is equal to
+            `X.shape[1]`. If False and the attribute does *not* exist, then
+            the check is skipped.
+            .. note::
+               It is recommended to call reset=True in `fit` and in the first
+               call to `partial_fit`. All other methods that validate `X`
+               should set `reset=False`.
+        """
+        try:
+            # Only difference from sklearn
+            n_features = sum(_num_features(Xi) for Xi in X)
+        except TypeError as e:
+            if not reset and hasattr(self, "n_features_in_"):
+                raise ValueError(
+                    "X does not contain any features, but "
+                    f"{self.__class__.__name__} is expecting "
+                    f"{self.n_features_in_} features"
+                ) from e
+            # If the number of features is not defined and reset=True,
+            # then we skip this check
+            return
+
+        if reset:
+            self.n_features_in_ = n_features
+            return
+
+        if not hasattr(self, "n_features_in_"):
+            # Skip this check if the expected number of expected input features
+            # was not recorded by calling fit first. This is typically the case
+            # for stateless transformers.
+            return
+
+        if n_features != self.n_features_in_:
+            raise ValueError(
+                f"X has {n_features} features, but {self.__class__.__name__} "
+                f"is expecting {self.n_features_in_} features as input."
+            )
 
 
 class BaseBipartiteEstimator(BaseMultipartiteEstimator):
