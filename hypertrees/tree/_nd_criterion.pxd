@@ -87,6 +87,7 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
     """
     cdef double* _node_value_aux  # Temporary storage to use in node_value()
     cdef SIZE_t _aux_len
+    cdef SIZE_t last_split_axis
     cdef DOUBLE_t[:, ::1] y_2D_rows
     cdef DOUBLE_t[:, ::1] y_2D_cols
 

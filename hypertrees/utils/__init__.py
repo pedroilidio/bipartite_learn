@@ -20,6 +20,11 @@ __all__ = [
 ]
 
 
+def _X_is_multipartite(X):
+    # TODO: find a better way of deciding.
+    return isinstance(X, (tuple, list))
+
+
 def check_similarity_matrix(
     X,
     symmetry_tol=1e-10,
