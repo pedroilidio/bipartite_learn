@@ -6,7 +6,7 @@ from sklearn.utils.validation import (
     check_X_y, check_array, _check_y, _num_features,
 )
 from imblearn.base import SamplerMixin
-from .utils import check_partiteness
+from .utils import check_partiteness, _X_is_multipartite
 
 
 class BaseMultipartiteEstimator(BaseEstimator):
@@ -51,7 +51,7 @@ class BaseMultipartiteEstimator(BaseEstimator):
             # TODO: better way of deciding. We still accept nd_arrays in
             #       predict, considering them as molten multipartite X
             #       (see docs for :module:melter)
-            if isinstance(X, (list, tuple)):
+            if _X_is_multipartite(X):
                 check_partiteness(X, estimator=self)
                 for ax in range(len(X)):
                     X[ax] = check_array(X[ax], input_name="X", **check_params)
@@ -116,9 +116,11 @@ class BaseMultipartiteEstimator(BaseEstimator):
                call to `partial_fit`. All other methods that validate `X`
                should set `reset=False`.
         """
+        if not _X_is_multipartite(X):  # Catches molten X (see ../melter.py)
+            return super()._check_n_features(X, reset=reset)
         try:
-            # Only difference from sklearn
-            n_features = sum(_num_features(Xi) for Xi in X)
+            axes_n_features = tuple(_num_features(Xi) for Xi in X)
+            n_features = sum(axes_n_features)
         except TypeError as e:
             if not reset and hasattr(self, "n_features_in_"):
                 raise ValueError(
@@ -132,6 +134,7 @@ class BaseMultipartiteEstimator(BaseEstimator):
 
         if reset:
             self.n_features_in_ = n_features
+            self.axes_n_features_in_ = axes_n_features
             return
 
         if not hasattr(self, "n_features_in_"):

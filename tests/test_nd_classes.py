@@ -8,12 +8,13 @@ import pytest
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.base import clone
 import sklearn.tree
+from sklearn.utils._testing import assert_allclose
+from sklearn.utils.validation import check_symmetric
 
 from hypertrees.tree._nd_classes import (
-    DecisionTreeRegressor2D,
-    BiclusteringTreeRegressor,
+    BipartiteDecisionTreeRegressor,
+    _normalize_weights,
 )
-from hypertrees.melter import row_cartesian_product
 from hypertrees.melter import row_cartesian_product
 
 from make_examples import make_interaction_data
@@ -27,7 +28,7 @@ logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 
 # Default test params
 DEF_PARAMS = dict(
-    seed=7,
+    seed=0,
     shape=(50, 60),
     nattrs=(10, 9),
     nrules=10,
@@ -69,7 +70,7 @@ def print_n_samples_in_leaves(tree):
 # TODO: parameter description.
 def compare_trees(
     tree1=DecisionTreeRegressor,
-    tree2=DecisionTreeRegressor2D,
+    tree2=BipartiteDecisionTreeRegressor,
     tree2_is_2d=True,
     tree1_is_unsupervised=False,
     **params,
@@ -171,13 +172,13 @@ def compare_trees(
 
 def test_simple_tree_1d2d(
     tree1=DecisionTreeRegressor,
-    tree2=DecisionTreeRegressor2D,
+    tree2=BipartiteDecisionTreeRegressor,
     **params,
 ):
     params = DEF_PARAMS | params
     return compare_trees(
         tree1=DecisionTreeRegressor,
-        tree2=DecisionTreeRegressor2D,
+        tree2=BipartiteDecisionTreeRegressor,
         **params,
     )
 
@@ -191,36 +192,140 @@ def test_pbct_regressor(**params):
     with stopwatch():
         XX, Y = gen_mock_data(**params)
 
-    for pred_weight in (
-        "uniform",
-        np.random.rand(sum(Y.shape)),
-    ):
-        pbct = BiclusteringTreeRegressor(prediction_weights=pred_weight)
-        pbct = clone(pbct)
-        print("*** Passed cloning test.")
-        pbct.fit(XX, Y)
-        print_n_samples_in_leaves(pbct)
-        print(pbct.predict(np.hstack([XX[0][:3], XX[1][:3]])))
+    pbct = BipartiteDecisionTreeRegressor(
+        prediction_weights="leaf_uniform",
+        bipartite_adapter="local_multioutput",
+    )
+    pbct = clone(pbct)
+    print("* Passed cloning test.")
+
+    pbct.fit(XX, Y)
+    print("* Passed fit.")
+    print_n_samples_in_leaves(pbct)
+    print(pbct.predict(np.hstack([XX[0][:3], XX[1][:3]])))
+
+
+@pytest.mark.parametrize(
+    "pred_weight", [None, "uniform", "precomputed", lambda x: x**2])
+def test_pbct_ensure_symmetry(pred_weight, **params):
+    params = DEF_PARAMS | params
+
+    print('Starting with settings:')
+    pprint(params)
 
     with stopwatch():
-        XX_sim, Y_sim = gen_mock_data(**(params|dict(nattrs=params['shape'])))
+        XX, Y = gen_mock_data(**params)
 
-    for pred_weight in ("x", 3., lambda A: A**2):
-        pbct = BiclusteringTreeRegressor(prediction_weights=pred_weight)
-        with pytest.raises(ValueError, match=r"square \(pairwise\)"):
-            pbct.fit(XX, Y)
-        pbct = clone(pbct)
-        print("*** Passed cloning test.")
+    with stopwatch():
+        XX_sim, Y_sim = gen_mock_data(
+            **(params | dict(nattrs=params['shape'])))
+
+    pbct = BipartiteDecisionTreeRegressor(
+        prediction_weights=pred_weight,
+        bipartite_adapter="local_multioutput",
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"array must be 2-dimensional and square.",
+    ):
+        pbct.fit(XX, Y)
+
+    pbct = clone(pbct)
+    with pytest.raises(
+        ValueError,
+        match=r"Array must be symmetric",
+    ):
         pbct.fit(XX_sim, Y_sim)
-        print_n_samples_in_leaves(pbct)
-        print(pbct.predict(np.hstack([XX_sim[0][:3], XX_sim[1][:3]])))
+
+    XX_sim = [check_symmetric(Xi, raise_warning=False) for Xi in XX_sim]
+    pbct = clone(pbct)
+    pbct.fit(XX_sim, Y_sim)
+    print_n_samples_in_leaves(pbct)
+    print(pbct.predict(np.hstack([XX_sim[0][:3], XX_sim[1][:3]])))
 
 
-def main(**params):
-    test_simple_tree_1d2d(**params)
-    test_pbct_regressor(**params)
+def test_identity_gso(**params):
+    params = DEF_PARAMS | params
+    XX, Y, x, y = gen_mock_data(melt=True, **params)
+    tree = BipartiteDecisionTreeRegressor(min_samples_leaf=1)
+    assert_allclose(tree.fit(XX, Y).predict(XX).reshape(Y.shape), Y)
 
 
-if __name__ == "__main__":
-    args = parse_args()
-    main(**vars(args))
+@pytest.mark.parametrize(
+    "pred_weights", ["leaf_uniform", None, "uniform", lambda x: x**2])
+def test_identity_gmo(pred_weights, **params):
+    params = DEF_PARAMS | params
+    params['nattrs'] = params['shape']
+
+    XX, Y, x, y = gen_mock_data(melt=True, **params)
+    tree = BipartiteDecisionTreeRegressor(
+        min_samples_leaf=1,
+        bipartite_adapter="local_multioutput",
+        prediction_weights=pred_weights,
+    )
+    XX = [check_symmetric(X, raise_warning=False) for X in XX]
+    # Y /= Y.max()
+    Y *= 10
+
+    tree.fit(XX, Y)
+
+    wn_samples = tree.tree_.weighted_n_node_samples
+    ch_left = tree.tree_.children_left
+    ch_right = tree.tree_.children_right
+    n_samples_per_leaf = wn_samples[ch_left == ch_right]
+    print(f'{n_samples_per_leaf=}')
+
+    assert_allclose(tree.predict(XX).reshape(Y.shape), Y)
+
+
+def test_leaf_mean_symmetry(**params):
+    params = DEF_PARAMS | params
+    XX, Y, x, y = gen_mock_data(melt=True, **params)
+    tree = BipartiteDecisionTreeRegressor(
+        min_samples_leaf=1,
+        bipartite_adapter="local_multioutput",
+        prediction_weights="raw",
+    )
+    tree.fit(XX, Y)
+    pred = tree.predict(XX)
+    row_pred, col_pred = np.hsplit(pred, [tree._n_rows_fit])
+    mean_rows = np.nanmean(row_pred, axis=1)
+    mean_cols = np.nanmean(col_pred, axis=1)
+
+    nrow, ncol = y.shape
+    for i, (xi, yi) in enumerate(zip(x, y)):
+        xi = xi.reshape(1, -1)
+        ipred = tree.predict(xi)
+        irow = Y[i // nrow]
+        icol = Y[:, i % nrow]
+        breakpoint()
+
+    assert not np.isnan(mean_rows).any()
+    assert not np.isnan(mean_cols).any()
+    assert_allclose(mean_rows, mean_cols)
+
+
+def test_weight_normalization():
+    rng = np.random.default_rng()
+    w = rng.random((100, 20))
+    zeroed_w = rng.choice(w.shape[0], w.shape[0]//10)
+    w[zeroed_w] = 0.
+
+    pred = rng.random((100, 20))
+    not_nan = rng.choice((True, False), pred.shape)
+    pred[~not_nan] = np.nan
+
+    w = _normalize_weights(w, pred)
+
+    assert_allclose(w.sum(axis=1), 1.)
+    assert all(
+        1. not in row or set(row.unique()) < {0., 1.}
+        for row in w
+    )
+    assert np.all(w[np.isnan(pred)] == 0.)
+    assert_allclose(
+        w[zeroed_w],
+        (not_nan / not_nan.sum(axis=1, keepdims=True))[zeroed_w]
+    )
+
+# TODO: test mean rows in the leaf equal mean cols

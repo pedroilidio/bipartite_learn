@@ -170,7 +170,8 @@ cdef class Splitter2D:
             start, end,
         )
 
-        # # Done in criterion_wrapper.init()
+        # TODO: Uncomment?
+        # Done in criterion_wrapper.init() by node_reset
         # self.splitter_rows.criterion.reset()
         # self.splitter_cols.criterion.reset()
 
@@ -201,7 +202,7 @@ cdef class Splitter2D:
         # TODO: axis specific stopping criteria (min_samples_leaf for example).
         if (self.splitter_rows.end - self.splitter_rows.start) >= 2:
             self.splitter_rows.node_split(impurity, &current_split,
-                                          n_constant_features)
+                                          &n_constant_features[0])
             # NOTE: When no nice split have been  found, the child splitter sets
             # the split position at the end.
             if current_split.pos < self.splitter_rows.end:
@@ -212,17 +213,18 @@ cdef class Splitter2D:
                 imp_improve = self.criterion_wrapper.impurity_improvement(
                     impurity, imp_left, imp_right, 0)
 
-                # if imp_improve > best_split.improvement:  # Always.
-                best_split = current_split
-                best_split.improvement = imp_improve
-                best_split.impurity_left = imp_left
-                best_split.impurity_right = imp_right
-                best_split.axis = 0
+                with gil: print('*** imp_improve0', imp_improve)
+                if imp_improve > best_split.improvement:  # Always?  # FIXME UNCOMMENT
+                    best_split = current_split
+                    best_split.improvement = imp_improve
+                    best_split.impurity_left = imp_left
+                    best_split.impurity_right = imp_right
+                    best_split.axis = 0
 
         # FIXME: shouldn't need this if.
         if (self.splitter_cols.end - self.splitter_cols.start) >= 2:
             self.splitter_cols.node_split(impurity, &current_split,
-                                          n_constant_features+1)
+                                          &n_constant_features[1])
 
             # NOTE: When no nice split have been  found, the child splitter sets
             # the split position at the end.
@@ -234,6 +236,7 @@ cdef class Splitter2D:
                 imp_improve = self.criterion_wrapper.impurity_improvement(
                     impurity, imp_left, imp_right, 1)
 
+                with gil: print('*** imp_improve1', imp_improve)
                 if imp_improve > best_split.improvement:
                     best_split = current_split
                     best_split.improvement = imp_improve
@@ -256,6 +259,7 @@ cdef class Splitter2D:
 def make_2d_splitter(
        splitters,
        criteria,
+       *,
        n_samples=None,
        max_features=None,
        n_outputs=1,

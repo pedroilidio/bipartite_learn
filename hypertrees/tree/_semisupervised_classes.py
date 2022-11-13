@@ -143,8 +143,8 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         supervision=0.5,
         ss_criterion="ss_composite",
         criterion=None,
-        supervised_criterion=None,
-        unsupervised_criterion=None,
+        supervised_criterion=None,  # remove
+        unsupervised_criterion=None,  # rows and cols
     ):
         # Semi-supervised parameters:
         self.supervision = supervision

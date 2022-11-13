@@ -1,7 +1,7 @@
 """Distance Weighted Neighbors Regression."""
 
 # Author: Pedro Ilídio <ilidio@alumni.usp.br>
-# Adapted from Sci-Kit Learn.
+# Adapted from scikit-learn.
 
 # License: BSD 3 clause (C) Pedro Ilídio
 
@@ -13,6 +13,7 @@ from sklearn.neighbors._base import (
 )
 from sklearn.base import RegressorMixin
 from sklearn.metrics.pairwise import pairwise_distances
+from sklearn.utils._param_validation import StrOptions
 
 
 class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase):
@@ -98,15 +99,14 @@ class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase)
     [0.5]
     """
 
-    # TODO sklearn 1.2
-    # _parameter_constraints: dict = {
-    #     **NeighborsBase._parameter_constraints,
-    #     "weights": ["distance", callable, None],
-    # }
-    # _parameter_constraints.pop("radius")
-    # _parameter_constraints.pop("n_neighbors")
-    # _parameter_constraints.pop("leaf_size")
-    # _parameter_constraints.pop("algorithm")
+    _parameter_constraints: dict = {
+        **NeighborsBase._parameter_constraints,
+        "weights": [StrOptions({"distance"}), callable, None],
+    }
+    _parameter_constraints.pop("radius")
+    _parameter_constraints.pop("n_neighbors")
+    _parameter_constraints.pop("leaf_size")
+    _parameter_constraints.pop("algorithm")
 
     def __init__(
         self,
@@ -147,7 +147,7 @@ class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase)
         self : KNeighborsRegressor
             The fitted k-nearest neighbors regressor.
         """
-        # self._validate_params()  # TODO: sklearn 1.2
+        self._validate_params()
         self.n_neighbors = X.shape[0]  # TODO: optimize other methods that use it
         return self._fit(X, y)
 
@@ -192,83 +192,3 @@ class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase)
             y_pred = y_pred.ravel()
 
         return y_pred
-'''
-def kneighbors():
-        check_is_fitted(self)
-
-        query_is_train = X is None
-        if query_is_train:
-            X = self._fit_X
-        else:
-
-        n_samples_fit = self.n_samples_fit_
-
-        n_jobs = effective_n_jobs(self.n_jobs)
-        chunked_results = None
-
-        if (
-            self._fit_method == "brute" and self.metric == "precomputed" and issparse(X)
-        ):
-            results = X
-
-        elif self._fit_method == "brute":
-            # TODO: should no longer be needed once ArgKmin
-            # is extended to accept sparse and/or float32 inputs.
-
-            reduce_func = partial(
-                self._kneighbors_reduce_func,
-                n_neighbors=n_neighbors,
-                return_distance=return_distance,
-            )
-
-            # for efficiency, use squared euclidean distances
-            if self.effective_metric_ == "euclidean":
-                kwds = {"squared": True}
-            else:
-                kwds = self.effective_metric_params_
-
-            chunked_results = list(
-                pairwise_distances_chunked(
-                    X,
-                    self._fit_X,
-                    reduce_func=reduce_func,
-                    metric=self.effective_metric_,
-                    n_jobs=n_jobs,
-                    **kwds,
-                )
-            )
-
-        if chunked_results is not None:
-            neigh_dist, neigh_ind = zip(*chunked_results)
-            results = np.vstack(neigh_dist), np.vstack(neigh_ind)
-
-        if not query_is_train:
-            return results
-        else:
-            # If the query data is the same as the indexed data, we would like
-            # to ignore the first nearest neighbor of every sample, i.e
-            # the sample itself.
-            if return_distance:
-                neigh_dist, neigh_ind = results
-            else:
-                neigh_ind = results
-
-            n_queries, _ = X.shape
-            sample_range = np.arange(n_queries)[:, None]
-            sample_mask = neigh_ind != sample_range
-
-            # Corner case: When the number of duplicates are more
-            # than the number of neighbors, the first NN will not
-            # be the sample, but a duplicate.
-            # In that case mask the first duplicate.
-            dup_gr_nbrs = np.all(sample_mask, axis=1)
-            sample_mask[:, 0][dup_gr_nbrs] = False
-            neigh_ind = np.reshape(neigh_ind[sample_mask], (n_queries, n_neighbors - 1))
-
-            if return_distance:
-                neigh_dist = np.reshape(
-                    neigh_dist[sample_mask], (n_queries, n_neighbors - 1)
-                )
-                return neigh_dist, neigh_ind
-            return neigh_ind
-'''

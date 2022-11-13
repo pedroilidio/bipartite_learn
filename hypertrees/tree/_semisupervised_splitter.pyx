@@ -73,15 +73,15 @@ cdef class BestSplitterSFSS(BaseDenseSplitter):
         or 0 otherwise.
         """
         # Find the best split
-        cdef SIZE_t* samples = self.samples
+        cdef SIZE_t[::1] samples = self.samples
         cdef SIZE_t start = self.start
         cdef SIZE_t end = self.end
 
-        cdef SIZE_t* features = self.features
-        cdef SIZE_t* constant_features = self.constant_features
+        cdef SIZE_t[::1] features = self.features
+        cdef SIZE_t[::1] constant_features = self.constant_features
         cdef SIZE_t n_features = self.n_features
 
-        cdef DTYPE_t* Xf = self.feature_values
+        cdef DTYPE_t[::1] Xf = self.feature_values
         cdef SIZE_t max_features = self.max_features
         cdef SIZE_t min_samples_leaf = self.min_samples_leaf
         cdef double min_weight_leaf = self.min_weight_leaf
@@ -168,7 +168,7 @@ cdef class BestSplitterSFSS(BaseDenseSplitter):
                 for i in range(start, end):
                     Xf[i] = self.X[samples[i], current.feature]
 
-                sort(Xf + start, samples + start, end - start)
+                sort(&Xf[start], &samples[start], end - start)
 
                 if Xf[end - 1] <= Xf[start] + FEATURE_THRESHOLD:
                     features[f_j], features[n_total_constants] = features[n_total_constants], features[f_j]
@@ -264,11 +264,11 @@ cdef class BestSplitterSFSS(BaseDenseSplitter):
         # Respect invariant for constant features: the original order of
         # element in features[:n_known_constants] must be preserved for sibling
         # and child nodes
-        memcpy(features, constant_features, sizeof(SIZE_t) * n_known_constants)
+        memcpy(&features[0], &constant_features[0], sizeof(SIZE_t) * n_known_constants)
 
         # Copy newly found constant features
-        memcpy(constant_features + n_known_constants,
-               features + n_known_constants,
+        memcpy(&constant_features[n_known_constants],
+               &features[n_known_constants],
                sizeof(SIZE_t) * n_found_constants)
 
         # Return values
@@ -408,15 +408,15 @@ cdef class RandomSplitterSFSS(BaseDenseSplitter):
         or 0 otherwise.
         """
         # Draw random splits and pick the best
-        cdef SIZE_t* samples = self.samples
+        cdef SIZE_t[::1] samples = self.samples
         cdef SIZE_t start = self.start
         cdef SIZE_t end = self.end
 
-        cdef SIZE_t* features = self.features
-        cdef SIZE_t* constant_features = self.constant_features
+        cdef SIZE_t[::1] features = self.features
+        cdef SIZE_t[::1] constant_features = self.constant_features
         cdef SIZE_t n_features = self.n_features
 
-        cdef DTYPE_t* Xf = self.feature_values
+        cdef DTYPE_t[::1] Xf = self.feature_values
         cdef SIZE_t max_features = self.max_features
         cdef SIZE_t min_samples_leaf = self.min_samples_leaf
         cdef double min_weight_leaf = self.min_weight_leaf
@@ -598,11 +598,11 @@ cdef class RandomSplitterSFSS(BaseDenseSplitter):
         # Respect invariant for constant features: the original order of
         # element in features[:n_known_constants] must be preserved for sibling
         # and child nodes
-        memcpy(features, constant_features, sizeof(SIZE_t) * n_known_constants)
+        memcpy(&features[0], &constant_features[0], sizeof(SIZE_t) * n_known_constants)
 
         # Copy newly found constant features
-        memcpy(constant_features + n_known_constants,
-               features + n_known_constants,
+        memcpy(&constant_features[n_known_constants],
+               &features[n_known_constants],
                sizeof(SIZE_t) * n_found_constants)
 
         # Return values

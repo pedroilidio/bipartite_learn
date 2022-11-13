@@ -2,6 +2,7 @@
 from sklearn.tree._criterion cimport RegressionCriterion, Criterion
 # from sklearn.tree._criterion import MSE
 from time import time
+from warnings import warn
 from libc.stdlib cimport malloc, calloc, free, realloc
 from libc.string cimport memset
 
@@ -372,12 +373,14 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         cdef SIZE_t i, j, q, p, k
         cdef DOUBLE_t w = 1.0
 
-        cdef double[::1] sum_left
-        cdef double[::1] sum_right
         cdef DOUBLE_t weighted_n_left
         cdef DOUBLE_t weighted_n_right
         cdef RegressionCriterion criterion
+
         criterion = self._get_criterion(axis)
+
+        cdef double[::1] sum_left = criterion.sum_left
+        cdef double[::1] sum_right = criterion.sum_right
 
         cdef SIZE_t[2] end
         end[0], end[1] = self.end[0], self.end[1]
@@ -492,6 +495,17 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         self.weighted_n_samples = weighted_n_samples
         self.row_samples = &self.splitter_rows.samples[0]
         self.col_samples = &self.splitter_cols.samples[0]
+
+        # FIXME: does not work because of depth first-tree building
+        # Use last split axis to avoid redundantly calculating node impurity
+        # in self.impurity_improvement()
+        if self.start[0] == start[0] and self.end[0] == end[0]:
+            self.last_split_axis = 1
+        elif self.start[1] == start[1] and self.end[1] == end[1]:
+            self.last_split_axis = 0
+        else:
+            self.last_split_axis = -1
+
         self.start[0], self.start[1] = start[0], start[1]
         self.end[0], self.end[1] = end[0], end[1]
         self.sq_sum_total = 0.0
@@ -503,10 +517,14 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
 
         with gil:
             # FIXME: how to access composite semisupervised criterion?
-            #        a gambiarra is used for now.
+            #        a gambiarra is used for now (they set n_outputs again).
             # HACK
             self.splitter_rows.criterion.n_outputs = n_node_cols
             self.splitter_cols.criterion.n_outputs = n_node_rows
+
+            # self.splitter_rows.criterion.n_samples = n_node_rows
+            # self.splitter_cols.criterion.n_samples = n_node_cols
+
             self.y_2D_rows = np.empty((self.n_rows, n_node_cols))
             self.y_2D_cols = np.empty((self.n_cols, n_node_rows))
 
@@ -559,6 +577,7 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         self.weighted_n_row_samples = wnns[0]
         self.weighted_n_col_samples = wnns[1]
         self.weighted_n_node_samples = wnns[0] * wnns[1]
+        with gil: print('**** wnns', wnns)
 
         return 0
 
@@ -575,6 +594,42 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         """
         cdef int ret
         child_splitter.y = y
+        # ### TODO: scaff
+        # cdef:
+        #     int k, i, p
+        #     double sq_sum_total=0., w=1., y_ik, w_y_ik, impurity
+        #     double sum_total[200], wnns
+
+        # for k in range(child_splitter.criterion.n_outputs):
+        #     sum_total[k] = 0.
+
+        # for p in range(start, end):
+        #     i = child_splitter.samples[p]
+
+        #     if sample_weight != NULL:
+        #         w = child_splitter.sample_weight[i]
+
+        #     for k in range(child_splitter.criterion.n_outputs):
+        #         y_ik = y[i, k]
+        #         w_y_ik = w * y_ik
+        #         sum_total[k] += w_y_ik
+        #         sq_sum_total += w_y_ik * y_ik
+        #     
+        #     wnns += w
+
+        # impurity = sq_sum_total / wnns
+        # for k in range(child_splitter.criterion.n_outputs):
+        #     impurity -= (sum_total[k] / wnns)**2.0
+
+        # impurity /= child_splitter.criterion.n_outputs
+
+
+        # ret = child_splitter.node_reset(start, end, weighted_n_node_samples)
+        # with gil:
+        #     print('*** sqsumtotal, start, end', sq_sum_total, start, end)
+        #     print('*** impuyrity', impurity)
+        ####
+
         return child_splitter.node_reset(start, end, weighted_n_node_samples)
 
     cdef void node_value(self, double* dest) nogil:
@@ -582,27 +637,82 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         """
         cdef SIZE_t i, j, p, q
 
-        for i in range(self._aux_len):
+        for i in range(self.n_outputs):
             dest[i] = NAN
-
-        self.splitter_rows.node_value(self._node_value_aux)
-
-        for p in range(self.start[0], self.end[0]):
-            i = self.row_samples[p]
-            dest[i] = self._node_value_aux[p]
 
         self.splitter_cols.node_value(self._node_value_aux)
 
-        for q in range(self.start[1], self.end[1]):
-            j = self.col_samples[q]
-            dest[j + self.n_rows] = self._node_value_aux[q]
+        # Copy each row's output to their corresponding positions of dest
+        for q in range(self.start[0], self.end[0]):
+            j = self.row_samples[q]
+            dest[j] = self._node_value_aux[q-self.start[0]]
+        
+        self.splitter_rows.node_value(self._node_value_aux)
+
+        # Copy each colum's output to their corresponding positions of dest
+        for p in range(self.start[1], self.end[1]):
+            i = self.col_samples[p]
+            dest[i + self.n_rows] = self._node_value_aux[p-self.start[1]]
+
+        # with gil:
+        #     print('*** NODEVALUE NDCRIT PBCTCRIT')
+        #     print('*** crit.weighted_n_node_samples')
+        #     print(self.splitter_rows.criterion.weighted_n_node_samples)
+        #     print(self.splitter_cols.criterion.weighted_n_node_samples)
+        #     print('*** crit.n_out')
+        #     print(self.splitter_rows.criterion.n_outputs)
+        #     print(self.splitter_cols.criterion.n_outputs)
+        #     print('***', end=' ')
+        #     for p in range(self.start[0], self.end[0]):
+        #         print(self.row_samples[p], end=' ')
+        #     print()
+        #     print('***', end=' ')
+        #     for p in range(self.start[1], self.end[1]):
+        #         print(self.col_samples[p], end=' ')
+        #     print()
+        #     print('***', end=' ')
+        #     for i in range(self.n_rows + self.n_cols):
+        #         print(dest[i], end=' ')
+        #     print()
+        #     # why are they different??
+        #     print("*** partition (it's already resorted)")
+        #     for i in range(self.start[0], self.end[0]):
+        #         p = self.row_samples[i]
+        #         for j in range(self.start[1], self.end[1]):
+        #             q = self.col_samples[i]
+        #             print(self.y_2D[p, q], end=' ')
+        #         print()
+
+        #     # why are not the outputs equal to y values when n_samples==1??
+        #     # samples are equal?
+        #     print("*** y crit rows")
+        #     for i in range(self.start[0], self.end[0]):
+        #         p = self.row_samples[i]
+        #         for j in range(self.splitter_rows.criterion.n_outputs):
+        #             print(self.splitter_rows.criterion.y[p, j], end='[')
+        #             print(self.splitter_rows.criterion.samples[i], end='] ')
+        #             # print(self.splitter_rows.criterion.sum_total[j], end=' ')
+        #         print()
+        #     print("*** y crit cols")
+        #     for i in range(self.start[1], self.end[1]):
+        #         p = self.col_samples[i]
+
+        #         for j in range(self.splitter_cols.criterion.n_outputs):
+        #             print(self.splitter_cols.criterion.y[p, j], end='[')
+        #             print(self.splitter_cols.criterion.samples[i], end='] ')
+        #             # print(self.splitter_cols.criterion.sum_total[j], end=' ')
+        #         print()
 
     cdef double node_impurity(self) nogil:
         """Return the impurity of the current node.
 
         In scikit-learn trees it is only used at the root node.
         """
-        # TODO: any better alternative?
+        with gil: print("***** ROOT IMP rows cols", self.splitter_rows.node_impurity(),
+            self.splitter_cols.node_impurity())
+        
+        # Will be replaced by impurity improvement anyway. We define it here
+        # just for the sake of semantics.
         return (self.splitter_rows.node_impurity()
                 + self.splitter_cols.node_impurity()) / 2
 
@@ -612,6 +722,12 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
             double* impurity_right,
             SIZE_t axis,
     ):
+        # if axis == 0:
+        #     self.splitter_rows.criterion.children_impurity(
+        #         impurity_left, impurity_right)
+        # elif axis == 1:
+        #     self.splitter_cols.criterion.children_impurity(
+        #         impurity_left, impurity_right)
         if axis == 0:
             self.splitter_rows.criterion.children_impurity(
                 impurity_left, impurity_right)
@@ -625,26 +741,48 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
             SIZE_t axis,
     ) nogil:
         """The final value to express the split quality. 
-
-        Since row/col criteria calculates impurity differently (along rows) or
-        columns, we recompute the node impurity here, differently from what
-        sklearn does (it uses children impurity from the parent node).
         """
-        # TODO: We do not need to calculate parent impurity again if the last
-        #       split occurred in the same axis (proceed like sklearn in this
-        #       case, using children impurity from the parent node).
-        
-        # TODO: Another option to consider is to always get the mean impurity
-        #       among the two axis, yielding a symmetric and apparently more
-        #       consistent and reasonable metric.
-        cdef double impimp
-
+        # TODO: An alternative to recalculating node impurity would be to
+        #       always get the mean impurity among the two axes, yielding a
+        #       symmetric and apparently more consistent and reasonable metric.
+        #       However, obtaining the impurity along the axis other than the
+        #       used for splitting is not trivial.
+        with gil:
+            # FIXME: wrong imp improvement (> 1)
+            print("\n*** IMPIMP")
+            print("*** last_split_axis", self.last_split_axis)
+            print("*** weighted n rows/cols",
+                self.splitter_rows.criterion.weighted_n_samples,
+                self.splitter_cols.criterion.weighted_n_samples,
+            )
+            print("*** axis imp_parent left right", axis, impurity_parent, impurity_left, impurity_right)
+            print("*** axis 0 nout wnleft wnright",
+                self.splitter_rows.criterion.n_outputs,
+                self.splitter_rows.criterion.weighted_n_left,
+                self.splitter_rows.criterion.weighted_n_right,
+            )
+            print("*** axis 1 nout wnleft, wnright",
+                self.splitter_cols.criterion.n_outputs,
+                self.splitter_cols.criterion.weighted_n_left,
+                self.splitter_cols.criterion.weighted_n_right,
+            )
         if axis == 0:
-            impurity_parent = self.splitter_rows.criterion.node_impurity()
+            # FIXME: does not work because of depth first-tree building
+            # Since row and col criteria yield different impurity (along rows'
+            # or columns' axis), we recompute the node impurity here,
+            # differently from what it is originally done (reusing children
+            # impurity from the last split as the current's parent impurity).
+            if self.last_split_axis != axis:
+                impurity_parent = self.splitter_rows.criterion.node_impurity()
+            with gil:
+                print('*** recalc. impurity_parent', impurity_parent)
             return self.splitter_rows.criterion.impurity_improvement(
                 impurity_parent, impurity_left, impurity_right)
 
         elif axis == 1:
-            impurity_parent = self.splitter_cols.criterion.node_impurity()
+            if self.last_split_axis != axis:
+                impurity_parent = self.splitter_cols.criterion.node_impurity()
+            with gil:
+                print('*** recalc. impurity_parent', impurity_parent)
             return self.splitter_cols.criterion.impurity_improvement(
                 impurity_parent, impurity_left, impurity_right)
