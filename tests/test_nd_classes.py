@@ -10,6 +10,7 @@ from sklearn.base import clone
 import sklearn.tree
 from sklearn.utils._testing import assert_allclose
 from sklearn.utils.validation import check_symmetric
+from sklearn.datasets import make_checkerboard
 
 from hypertrees.tree._nd_classes import (
     BipartiteDecisionTreeRegressor,
@@ -17,7 +18,7 @@ from hypertrees.tree._nd_classes import (
 )
 from hypertrees.melter import row_cartesian_product
 
-from make_examples import make_interaction_data
+from make_examples import make_interaction_regression
 from test_utils import stopwatch, parse_args, gen_mock_data, melt_2d_data
 
 # from sklearn.tree._tree import DTYPE_t, DOUBLE_t
@@ -52,18 +53,23 @@ def print_eval_model(tree, XX, Y):
           np.corrcoef(fake_preds, Y.reshape(-1))[0, 1] ** 2)
 
 
-def print_n_samples_in_leaves(tree):
+def get_leaves(tree, verbose=True, return_values=False):
     wn_samples = tree.tree_.weighted_n_node_samples
     ch_left = tree.tree_.children_left
     ch_right = tree.tree_.children_right
     n_samples_per_leaf = wn_samples[ch_left == ch_right]
+    leaf_values = tree.tree_.value[ch_left == ch_right]
 
-    print('==> Class name:', tree.__class__.__name__)
-    print('Estimator params:')
-    pprint(tree.get_params())
-    print('n_nodes:', tree.tree_.node_count)
-    print('n_leaves:', n_samples_per_leaf.shape[0])
-    print('weighted_n_node_samples:', n_samples_per_leaf)
+    if verbose:
+        print('==> Class name:', tree.__class__.__name__)
+        print('Estimator params:')
+        pprint(tree.get_params())
+        print('n_nodes:', tree.tree_.node_count)
+        print('n_leaves:', n_samples_per_leaf.shape[0])
+        print('weighted_n_node_samples:', n_samples_per_leaf)
+
+    if return_values:
+        return n_samples_per_leaf, leaf_values
     return n_samples_per_leaf
 
 
@@ -130,8 +136,8 @@ def compare_trees(
             print('Using 1D data for tree2.')
             tree2.fit(x, y)
 
-    tree1_n_samples_in_leaves = print_n_samples_in_leaves(tree1)
-    tree2_n_samples_in_leaves = print_n_samples_in_leaves(tree2)
+    tree1_n_samples_in_leaves = get_leaves(tree1)
+    tree2_n_samples_in_leaves = get_leaves(tree2)
 
     if params['inspect']:
         breakpoint()
@@ -201,13 +207,13 @@ def test_pbct_regressor(**params):
 
     pbct.fit(XX, Y)
     print("* Passed fit.")
-    print_n_samples_in_leaves(pbct)
+    get_leaves(pbct)
     print(pbct.predict(np.hstack([XX[0][:3], XX[1][:3]])))
 
 
 @pytest.mark.parametrize(
     "pred_weight", [None, "uniform", "precomputed", lambda x: x**2])
-def test_pbct_ensure_symmetry(pred_weight, **params):
+def test_gmo_ensure_symmetry(pred_weight, **params):
     params = DEF_PARAMS | params
 
     print('Starting with settings:')
@@ -240,7 +246,7 @@ def test_pbct_ensure_symmetry(pred_weight, **params):
     XX_sim = [check_symmetric(Xi, raise_warning=False) for Xi in XX_sim]
     pbct = clone(pbct)
     pbct.fit(XX_sim, Y_sim)
-    print_n_samples_in_leaves(pbct)
+    get_leaves(pbct)
     print(pbct.predict(np.hstack([XX_sim[0][:3], XX_sim[1][:3]])))
 
 
@@ -273,16 +279,20 @@ def test_identity_gmo(pred_weights, **params):
     ch_left = tree.tree_.children_left
     ch_right = tree.tree_.children_right
     n_samples_per_leaf = wn_samples[ch_left == ch_right]
-    print(f'{n_samples_per_leaf=}')
 
+    assert_allclose(n_samples_per_leaf, 1.0)
     assert_allclose(tree.predict(XX).reshape(Y.shape), Y)
 
 
-def test_leaf_mean_symmetry(**params):
-    params = DEF_PARAMS | params
+@pytest.mark.parametrize(
+    "min_samples_leaf", [1, 20, 100])
+def test_leaf_mean_symmetry(min_samples_leaf):
+    params = DEF_PARAMS
+    params['min_samples_leaf'] = min_samples_leaf
+
     XX, Y, x, y = gen_mock_data(melt=True, **params)
     tree = BipartiteDecisionTreeRegressor(
-        min_samples_leaf=1,
+        min_samples_leaf=params['min_samples_leaf'],
         bipartite_adapter="local_multioutput",
         prediction_weights="raw",
     )
@@ -291,14 +301,6 @@ def test_leaf_mean_symmetry(**params):
     row_pred, col_pred = np.hsplit(pred, [tree._n_rows_fit])
     mean_rows = np.nanmean(row_pred, axis=1)
     mean_cols = np.nanmean(col_pred, axis=1)
-
-    nrow, ncol = y.shape
-    for i, (xi, yi) in enumerate(zip(x, y)):
-        xi = xi.reshape(1, -1)
-        ipred = tree.predict(xi)
-        irow = Y[i // nrow]
-        icol = Y[:, i % nrow]
-        breakpoint()
 
     assert not np.isnan(mean_rows).any()
     assert not np.isnan(mean_cols).any()
@@ -328,4 +330,85 @@ def test_weight_normalization():
         (not_nan / not_nan.sum(axis=1, keepdims=True))[zeroed_w]
     )
 
-# TODO: test mean rows in the leaf equal mean cols
+
+@pytest.mark.parametrize("mrl,mcl", [(1, 5), (2, 1), (11, 19)])
+def test_leaf_shape(mrl, mcl, **params):
+    params = DEF_PARAMS | params
+    # XX, Y, x, y = gen_mock_data(melt=True, **params)
+    rng = np.random.default_rng(params['seed'])
+    n_clusters = 10, 10
+    Y_unique = np.arange(np.prod(n_clusters), dtype=float).reshape(n_clusters)
+    Y = Y_unique.repeat(mrl, axis=0).repeat(mcl, axis=1)
+    shape = mrl * n_clusters[0], mcl * n_clusters[1]
+
+    n_features = 50, 50
+    XX = [rng.random((s, f)) for s, f in zip(shape, n_features)]
+    XX[0][:, 0] = np.sort(XX[0][:, 0])
+    XX[1][:, 0] = np.sort(XX[1][:, 0])
+
+    # Shuffle
+    id_rows = rng.choice(shape[0], size=shape[0], replace=False)
+    id_cols = rng.choice(shape[1], size=shape[1], replace=False)
+    XX[0] = XX[0][id_rows]
+    XX[1] = XX[1][id_cols]
+    Y = Y[np.ix_(id_rows, id_cols)]
+
+    tree = BipartiteDecisionTreeRegressor(
+        min_rows_leaf=mrl,
+        min_cols_leaf=mcl,
+        bipartite_adapter="local_multioutput",
+        prediction_weights="raw",
+    )
+    tree.fit(XX, Y)
+    pred = tree.predict(XX)
+    row_pred, col_pred = np.hsplit(pred, [tree._n_rows_fit])
+    n_rows = (~np.isnan(row_pred)).sum(axis=1)
+    n_cols = (~np.isnan(col_pred)).sum(axis=1)
+
+    assert_allclose(n_rows, mrl)
+    assert_allclose(n_cols, mcl)
+
+
+@pytest.mark.parametrize("mrl,mcl", [(1, 1), (1, 5), (2, 1), (19, 11)])
+def test_leaf_shape_gso(mrl, mcl, **params):
+    params = DEF_PARAMS | params
+    # XX, Y, x, y = gen_mock_data(melt=True, **params)
+    rng = np.random.default_rng(params['seed'])
+    n_clusters = 10, 10
+    Y_unique = np.arange(np.prod(n_clusters), dtype=float).reshape(n_clusters)
+    Y = Y_unique.repeat(mrl, axis=0).repeat(mcl, axis=1)
+    y_values = np.sort(Y_unique.reshape(-1))
+
+    shape = mrl * n_clusters[0], mcl * n_clusters[1]
+    n_features = 50, 50
+    XX = [rng.random((s, f)) for s, f in zip(shape, n_features)]
+    XX[0][:, 0] = np.sort(XX[0][:, 0])
+    XX[1][:, 0] = np.sort(XX[1][:, 0])
+
+    # Shuffle
+    id_rows = rng.choice(shape[0], size=shape[0], replace=False)
+    id_cols = rng.choice(shape[1], size=shape[1], replace=False)
+    XX[0] = XX[0][id_rows]
+    XX[1] = XX[1][id_cols]
+    Y = Y[np.ix_(id_rows, id_cols)]
+
+    # Control result
+    X, y = row_cartesian_product(XX), Y.reshape(-1)
+    tree1d = DecisionTreeRegressor()
+    tree1d.fit(X, y)
+    leaf_sizes1d, leaf_values1d = get_leaves(tree1d, return_values=True)
+    leaf_values1d = np.sort(leaf_values1d.reshape(-1))
+    assert_allclose(leaf_sizes1d, mrl*mcl)
+    assert_allclose(leaf_values1d, y_values)
+
+    tree = BipartiteDecisionTreeRegressor(
+        min_rows_leaf=mrl,
+        min_cols_leaf=mcl,
+        bipartite_adapter="global_single_output",
+    )
+    tree.fit(XX, Y)
+    leaf_sizes, leaf_values = get_leaves(tree, return_values=True)
+    leaf_values = np.sort(leaf_values.reshape(-1))
+
+    assert_allclose(leaf_sizes, mrl*mcl)
+    assert_allclose(leaf_values, y_values)
