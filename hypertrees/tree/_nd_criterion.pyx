@@ -103,8 +103,8 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         self.weighted_n_node_samples = 0.0
         # self.weighted_n_left = 0.0
         # self.weighted_n_right = 0.0
-        self.weighted_n_row_samples = 0.0
-        self.weighted_n_col_samples = 0.0
+        self.weighted_n_node_rows = 0.0
+        self.weighted_n_node_cols = 0.0
 
         self.sum_total = np.zeros(self.n_outputs, dtype=np.float64)
         # self.sum_left = np.zeros(self.n_outputs, dtype=np.float64)
@@ -161,8 +161,8 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         self.sq_sum_total = 0.0
 
         self.weighted_n_node_samples = 0.0
-        self.weighted_n_row_samples = 0.0
-        self.weighted_n_col_samples = 0.0
+        self.weighted_n_node_rows = 0.0
+        self.weighted_n_node_cols = 0.0
 
         # TODO: implement multi-output.
         memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
@@ -205,18 +205,18 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
 
         # Set weighted axis n_samples.
         if self.row_sample_weight == NULL:
-            self.weighted_n_row_samples = end[0] - start[0]
+            self.weighted_n_node_rows = end[0] - start[0]
         else:
             for p in range(start[0], end[0]):
                 i = self.row_samples[p]
-                self.weighted_n_row_samples += row_sample_weight[i]
+                self.weighted_n_node_rows += row_sample_weight[i]
 
         if self.col_sample_weight == NULL:
-            self.weighted_n_col_samples = end[1] - start[1]
+            self.weighted_n_node_cols = end[1] - start[1]
         else:
             for q in range(start[1], end[1]):
                 j = self.col_samples[q]
-                self.weighted_n_col_samples += col_sample_weight[j]
+                self.weighted_n_node_cols += col_sample_weight[j]
 
         # Build total_row[col]_sample_weight
         for p in range(start[0], end[0]):
@@ -224,22 +224,22 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
 
             if self.row_sample_weight != NULL:
                 self.total_row_sample_weight[i] = \
-                    self.row_sample_weight[i] * self.weighted_n_col_samples
+                    self.row_sample_weight[i] * self.weighted_n_node_cols
             else:
-                self.total_row_sample_weight[i] = self.weighted_n_col_samples
+                self.total_row_sample_weight[i] = self.weighted_n_node_cols
 
             # TODO: Multioutput
             self.y_row_sums[i, 0] = \
-                self.y_row_sums[i, 0]/self.weighted_n_col_samples
+                self.y_row_sums[i, 0]/self.weighted_n_node_cols
 
         for q in range(start[1], end[1]):
             j = self.col_samples[q]
 
             if self.col_sample_weight != NULL:
                 self.total_col_sample_weight[j] = \
-                    self.col_sample_weight[j] * self.weighted_n_row_samples
+                    self.col_sample_weight[j] * self.weighted_n_node_rows
             else:
-                self.total_col_sample_weight[j] = self.weighted_n_row_samples
+                self.total_col_sample_weight[j] = self.weighted_n_node_rows
 
             # NOTE: divide to multiply after in Criterion.update().
             # Not the most efficient, but it was the only way I saw to keep
@@ -247,7 +247,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
             # FIXME: the name should be y_col_means.
             # TODO: Multioutput
             self.y_col_sums[j, 0] = \
-                self.y_col_sums[j, 0] / self.weighted_n_row_samples
+                self.y_col_sums[j, 0] / self.weighted_n_node_rows
 
         # FIXME what to do with this? Get self.weighted_n_samples from it?
         cdef double[2] wnns  # will be discarded
@@ -458,8 +458,8 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         self.end[1] = 0
 
         self.weighted_n_node_samples = 0.0
-        self.weighted_n_row_samples = 0.0
-        self.weighted_n_col_samples = 0.0
+        self.weighted_n_node_rows = 0.0
+        self.weighted_n_node_cols = 0.0
 
         self.sum_total = np.zeros(self.n_outputs, dtype=np.float64)
 
@@ -574,8 +574,8 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
             return -1
 
         # FIXME: do we need self.sum_total?
-        self.weighted_n_row_samples = wnns[0]
-        self.weighted_n_col_samples = wnns[1]
+        self.weighted_n_node_rows = wnns[0]
+        self.weighted_n_node_cols = wnns[1]
         self.weighted_n_node_samples = wnns[0] * wnns[1]
         with gil: print('**** wnns', wnns)
 
@@ -728,12 +728,34 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         # elif axis == 1:
         #     self.splitter_cols.criterion.children_impurity(
         #         impurity_left, impurity_right)
+        # cdef SIZE_t pos
+        # cdef double other_node_imp, imp_left, imp_right
+        # cdef double wn_left, wn_right, wn
+
         if axis == 0:
+            # pos = self.splitter_rows.criterion.pos
+            # other_node_imp = self.splitter_cols.criterion.node_impurity()
+
+            # self.splitter_cols.criterion.n_outputs = pos
+            # imp_left = self.splitter_cols.criterion.node_impurity()
+            # self.splitter_cols.criterion.n_outputs = self.n_node_rows  # remove?
+            # imp_right = self.n_node_rows * other_node_imp - pos * imp_left
+            # imp_right /= self.n_node_rows - pos
+            # # FIXME: what about sample_weights?
+            other_imp = self.splitter_cols.criterion.node_impurity()
+
             self.splitter_rows.criterion.children_impurity(
                 impurity_left, impurity_right)
+            
+            impurity_left[0] += other_imp
+            impurity_right[0] += other_imp
+
         elif axis == 1:
+            other_imp = self.splitter_rows.criterion.node_impurity()
             self.splitter_cols.criterion.children_impurity(
                 impurity_left, impurity_right)
+            impurity_left[0] += other_imp
+            impurity_right[0] += other_imp
 
     cdef double impurity_improvement(
             self, double impurity_parent, double
@@ -747,42 +769,51 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         #       symmetric and apparently more consistent and reasonable metric.
         #       However, obtaining the impurity along the axis other than the
         #       used for splitting is not trivial.
-        with gil:
-            # FIXME: wrong imp improvement (> 1)
-            print("\n*** IMPIMP")
-            print("*** last_split_axis", self.last_split_axis)
-            print("*** weighted n rows/cols",
-                self.splitter_rows.criterion.weighted_n_samples,
-                self.splitter_cols.criterion.weighted_n_samples,
-            )
-            print("*** axis imp_parent left right", axis, impurity_parent, impurity_left, impurity_right)
-            print("*** axis 0 nout wnleft wnright",
-                self.splitter_rows.criterion.n_outputs,
-                self.splitter_rows.criterion.weighted_n_left,
-                self.splitter_rows.criterion.weighted_n_right,
-            )
-            print("*** axis 1 nout wnleft, wnright",
-                self.splitter_cols.criterion.n_outputs,
-                self.splitter_cols.criterion.weighted_n_left,
-                self.splitter_cols.criterion.weighted_n_right,
-            )
+        # with gil:
+        #     # FIXME: wrong imp improvement (> 1)
+        #     print("\n*** IMPIMP")
+        #     print("*** last_split_axis", self.last_split_axis)
+        #     print("*** weighted n rows/cols",
+        #         self.splitter_rows.criterion.weighted_n_samples,
+        #         self.splitter_cols.criterion.weighted_n_samples,
+        #     )
+        #     print("*** axis imp_parent left right", axis, impurity_parent, impurity_left, impurity_right)
+        #     print("*** axis 0 nout wnleft wnright",
+        #         self.splitter_rows.criterion.n_outputs,
+        #         self.splitter_rows.criterion.weighted_n_left,
+        #         self.splitter_rows.criterion.weighted_n_right,
+        #     )
+        #     print("*** axis 1 nout wnleft, wnright",
+        #         self.splitter_cols.criterion.n_outputs,
+        #         self.splitter_cols.criterion.weighted_n_left,
+        #         self.splitter_cols.criterion.weighted_n_right,
+        #     )
+        # NOTE: we are actually receiving left_impurity + others_node_impurity
+        #       from children_impurity(). The result is not exactly correct, we
+        #       would have to subtract others_node_impurity first.
+        cdef double other_imp
+
         if axis == 0:
             # FIXME: does not work because of depth first-tree building
             # Since row and col criteria yield different impurity (along rows'
             # or columns' axis), we recompute the node impurity here,
             # differently from what it is originally done (reusing children
             # impurity from the last split as the current's parent impurity).
-            if self.last_split_axis != axis:
-                impurity_parent = self.splitter_rows.criterion.node_impurity()
+            # # if self.last_split_axis != axis:
+            impurity_parent = self.splitter_rows.criterion.node_impurity()
+            other_imp = self.splitter_cols.criterion.node_impurity()
             with gil:
                 print('*** recalc. impurity_parent', impurity_parent)
+            # TODO: return
             return self.splitter_rows.criterion.impurity_improvement(
-                impurity_parent, impurity_left, impurity_right)
+                impurity_parent, impurity_left-other_imp, impurity_right-other_imp)
 
         elif axis == 1:
-            if self.last_split_axis != axis:
-                impurity_parent = self.splitter_cols.criterion.node_impurity()
+            #  if self.last_split_axis != axis:
+            impurity_parent = self.splitter_cols.criterion.node_impurity()
+            other_imp = self.splitter_rows.criterion.node_impurity()
             with gil:
                 print('*** recalc. impurity_parent', impurity_parent)
+            # TODO: return
             return self.splitter_cols.criterion.impurity_improvement(
-                impurity_parent, impurity_left, impurity_right)
+                impurity_parent, impurity_left-other_imp, impurity_right-other_imp)

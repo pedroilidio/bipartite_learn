@@ -111,11 +111,13 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
     _parameter_constraints: dict = {
         **BaseDecisionTree._parameter_constraints,
         "min_rows_split": [
-            Interval(Integral, 2, None, closed="left"),
+            # min value is not 2 to still allow split on the other axis.
+            Interval(Integral, 1, None, closed="left"),
             Interval(Real, 0.0, 1.0, closed="right"),
         ],
         "min_cols_split": [
-            Interval(Integral, 2, None, closed="left"),
+            # min value is not 2 to still allow split on the other axis.
+            Interval(Integral, 1, None, closed="left"),
             Interval(Real, 0.0, 1.0, closed="right"),
         ],
         "min_rows_leaf": [
@@ -146,7 +148,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         ],
         "prediction_weights": [
             "array-like",
-            StrOptions({"precomputed", "uniform", "raw"}),
+            StrOptions({"precomputed", "leaf_uniform", "uniform", "raw"}),
             callable,
             None,
         ],
@@ -169,8 +171,8 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         class_weight=None,
         ccp_alpha=0.0,
         # Bipartite parameters:
-        min_rows_split=2,
-        min_cols_split=2,
+        min_rows_split=1,  # Not 2, to still allow split on the other axis
+        min_cols_split=1,
         min_rows_leaf=1,
         min_cols_leaf=1,
         min_row_weight_fraction_leaf=0.0,
@@ -206,7 +208,6 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 
     def fit(self, X, y, row_weight=None, col_weight=None, check_input=True):
         random_state = check_random_state(self.random_state)
-
         if check_input:
             # Need to validate separately here.
             # We can't pass multi_output=True because that would allow y to be
@@ -237,6 +238,12 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                         "Sum of y is not positive which is "
                         "necessary for Poisson regression."
                     )
+
+        if y.shape[0] != len(X[0]) or y.shape[1] != len(X[1]):
+            raise ValueError(
+                f"Interaction matrix shape {y.shape=} does not match number "
+                f"of samples {(len(X[0]),len(X[1]))=}"
+            )
 
         # Determine output settings
         # n_samples, self.n_features_in_ = X.shape
@@ -316,16 +323,10 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             min_rows_split = self.min_rows_split
         else:  # float
             min_rows_split = int(ceil(self.min_rows_split * n_rows))
-            min_rows_split = max(2, min_rows_split)
         if isinstance(self.min_cols_split, Integral):
             min_cols_split = self.min_cols_split
         else:  # float
             min_cols_split = int(ceil(self.min_cols_split * n_cols))
-            min_cols_split = max(2, min_cols_split)
-
-        min_samples_split = max(min_samples_split, 2 * min_samples_leaf)
-        min_rows_split = max(min_rows_split, 2 * min_rows_leaf)
-        min_cols_split = max(min_cols_split, 2 * min_cols_leaf)
 
         # TODO: Not implemented. Would have to dynamically change each
         #       splitter's max_features so that the total features selected
@@ -393,12 +394,6 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         self.max_col_features_ = max_col_features
 
         max_leaf_nodes = -1 if self.max_leaf_nodes is None else self.max_leaf_nodes
-
-        if y.size != len(X[0]) * len(X[1]):
-            raise ValueError(
-                f"Number of labels={y.size=} does not match number of "
-                f"samples={(len(X[0]) * len(X[1]))=}"
-            )
 
         if row_weight is not None:
             row_weight = _check_sample_weight(row_weight, X[0], DOUBLE)
@@ -504,11 +499,18 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         if max_leaf_nodes < 0:
             builder = DepthFirstTreeBuilder2D(
                 splitter,
-                min_samples_split,
-                min_samples_leaf,
-                min_weight_leaf,
-                max_depth,
-                self.min_impurity_decrease,
+                min_samples_split=min_samples_split,
+                min_samples_leaf=min_samples_leaf,
+                min_weight_leaf=min_weight_leaf,
+                max_depth=max_depth,
+                min_impurity_decrease=self.min_impurity_decrease,
+                # Bipartite parameters
+                min_rows_split=min_rows_split,
+                min_rows_leaf=min_rows_leaf,
+                min_row_weight_leaf=min_row_weight_leaf,
+                min_cols_split=min_cols_split,
+                min_cols_leaf=min_cols_leaf,
+                min_col_weight_leaf=min_col_weight_leaf,
             )
         else:
             raise NotImplementedError("Pleaase set max_leaf_nodes=None")
@@ -897,8 +899,8 @@ class BipartiteDecisionTreeRegressor(
         min_impurity_decrease=0.0,
         ccp_alpha=0.0,
         # Bipartite parameters:
-        min_rows_split=2,
-        min_cols_split=2,
+        min_rows_split=1,
+        min_cols_split=1,
         min_rows_leaf=1,
         min_cols_leaf=1,
         min_row_weight_fraction_leaf=0.0,
@@ -1155,8 +1157,8 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         min_impurity_decrease=0.0,
         ccp_alpha=0.0,
         # Bipartite parameters:
-        min_rows_split=2,
-        min_cols_split=2,
+        min_rows_split=1,
+        min_cols_split=1,
         min_rows_leaf=1,
         min_cols_leaf=1,
         min_row_weight_fraction_leaf=0.0,

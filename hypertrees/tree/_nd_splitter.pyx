@@ -115,10 +115,12 @@ cdef class Splitter2D:
         self.splitter_rows.init(X[0], y, self.row_sample_weight)
         self.splitter_cols.init(X[1], yT, self.col_sample_weight)
 
-        self.n_samples = self.splitter_rows.n_samples * \
-                         self.splitter_cols.n_samples
-        self.weighted_n_samples = self.splitter_rows.weighted_n_samples * \
-                                  self.splitter_cols.weighted_n_samples
+        self.n_rows = self.splitter_rows.n_samples
+        self.n_cols = self.splitter_cols.n_samples
+        self.n_samples = self.n_rows * self.n_cols
+        self.weighted_n_rows = self.splitter_rows.weighted_n_samples
+        self.weighted_n_cols = self.splitter_cols.weighted_n_samples
+        self.weighted_n_samples = self.weighted_n_rows * self.weighted_n_cols
 
         return 0
 
@@ -147,15 +149,16 @@ cdef class Splitter2D:
         eff_min_rows_leaf = 1 + (self.min_samples_leaf-1) // n_node_cols
         eff_min_cols_leaf = 1 + (self.min_samples_leaf-1) // n_node_rows
 
-        # max.
-        if self.min_rows_leaf > eff_min_rows_leaf:
-            self.splitter_rows.min_samples_leaf = self.min_rows_leaf
-        else:
-            self.splitter_rows.min_samples_leaf = eff_min_rows_leaf
-        if self.min_cols_leaf > eff_min_cols_leaf:
-            self.splitter_cols.min_samples_leaf = self.min_cols_leaf
-        else:
-            self.splitter_cols.min_samples_leaf = eff_min_cols_leaf
+        self.splitter_rows.min_samples_leaf = max(
+            self.min_rows_leaf, eff_min_rows_leaf)
+        self.splitter_cols.min_samples_leaf = max(
+            self.min_cols_leaf, eff_min_cols_leaf)
+
+        with gil:
+            print('*** self.min_rows_leaf, self.min_cols_leaf')
+            print(self.min_rows_leaf, self.min_cols_leaf)
+            print('*** eff_min_rows_leaf, eff_min_cols_leaf')
+            print(eff_min_rows_leaf, eff_min_cols_leaf)
 
         self.splitter_rows.start = start[0]
         self.splitter_rows.end = end[0]
@@ -177,6 +180,10 @@ cdef class Splitter2D:
 
         weighted_n_node_samples[0] = \
             self.criterion_wrapper.weighted_n_node_samples
+        weighted_n_node_samples[1] = \
+            self.criterion_wrapper.weighted_n_node_rows
+        weighted_n_node_samples[2] = \
+            self.criterion_wrapper.weighted_n_node_cols
 
         return 0
 
@@ -194,13 +201,10 @@ cdef class Splitter2D:
         # (sklearn.tree._splitter.pyx, line 417)
 
         # TODO: DRY. Cumbersome to have an array of Splitters in Cython.
-
-        # If only one sample in axis, do not split that axis.
-        # Necessary since min_samples_leaf only sees both axes at the same time,
-        # so eventually, for instance, it would try to split a 1x23 matrix in
-        # the rows direction.
-        # TODO: axis specific stopping criteria (min_samples_leaf for example).
-        if (self.splitter_rows.end - self.splitter_rows.start) >= 2:
+        if (
+            self.splitter_rows.end - self.splitter_rows.start
+            >= 2 * self.splitter_rows.min_samples_leaf
+        ):
             self.splitter_rows.node_split(impurity, &current_split,
                                           &n_constant_features[0])
             # NOTE: When no nice split have been  found, the child splitter sets
@@ -221,8 +225,10 @@ cdef class Splitter2D:
                     best_split.impurity_right = imp_right
                     best_split.axis = 0
 
-        # FIXME: shouldn't need this if.
-        if (self.splitter_cols.end - self.splitter_cols.start) >= 2:
+        if (
+            self.splitter_cols.end - self.splitter_cols.start
+            >= 2 * self.splitter_cols.min_samples_leaf
+        ):
             self.splitter_cols.node_split(impurity, &current_split,
                                           &n_constant_features[1])
 

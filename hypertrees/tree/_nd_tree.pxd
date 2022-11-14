@@ -42,13 +42,21 @@ cdef class TreeBuilderND:  # (TreeBuilder):
 
     # FIXME: All these properties should be inherited from TreeBuilder.
 
-    cdef Splitter2D splitter             # Splitting algorithm
+    cdef Splitter2D splitter            # Splitting algorithm
 
-    cdef SIZE_t min_samples_split        # Minimum number of samples in an internal node
-    cdef SIZE_t min_samples_leaf         # Minimum number of samples in a leaf
-    cdef double min_weight_leaf          # Minimum weight in a leaf
-    cdef SIZE_t max_depth                # Maximal tree depth
-    cdef double min_impurity_decrease    # Impurity threshold for early stopping
+    cdef SIZE_t min_samples_split       # Minimum number of samples in an internal node
+    cdef SIZE_t min_samples_leaf        # Minimum number of samples in a leaf
+    cdef double min_weight_leaf         # Minimum weight in a leaf
+    cdef SIZE_t max_depth               # Maximal tree depth
+    cdef double min_impurity_decrease   # Impurity threshold for early stopping
+
+    # Bipartite parameters
+    cdef SIZE_t min_rows_split          # Minimum number of rows in an internal node
+    cdef SIZE_t min_rows_leaf           # Minimum number of rows in a leaf
+    cdef double min_row_weight_leaf     # Minimum sum of row weights in a leaf
+    cdef SIZE_t min_cols_split          # Minimum number of columns in an internal node
+    cdef SIZE_t min_cols_leaf           # Minimum number of columns in a leaf
+    cdef double min_col_weight_leaf     # Minimum sum of column weights in a leaf
 
     cpdef build(self, Tree tree, object X, np.ndarray y,
                 np.ndarray sample_weight=*)

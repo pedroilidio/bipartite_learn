@@ -29,11 +29,11 @@ cdef class CriterionWrapper2D:
     cdef SIZE_t n_cols
     cdef double sq_sum_total
     cdef double[::1] sum_total
-    cdef double weighted_n_node_samples
     cdef double weighted_n_samples
 
-    cdef double weighted_n_row_samples
-    cdef double weighted_n_col_samples
+    cdef double weighted_n_node_samples
+    cdef double weighted_n_node_rows
+    cdef double weighted_n_node_cols
 
     cdef int init(
         self, const DOUBLE_t[:, ::1] y_2D,

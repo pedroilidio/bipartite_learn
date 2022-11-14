@@ -5,7 +5,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.base import clone
 from sklearn.model_selection._validation import _score
 from sklearn.metrics import check_scoring
-from hypertrees.wrappers import GlobalSingleOutputWrapper, melt_Xy
+from hypertrees.wrappers import GlobalSingleOutputWrapper
 from test_utils import gen_mock_data, parse_args
 
 # Default test params

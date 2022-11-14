@@ -36,7 +36,11 @@ cdef class Splitter2D:
     cdef const DOUBLE_t[:, ::1] y
     cdef SIZE_t[2] shape
 
+    cdef SIZE_t n_rows
+    cdef SIZE_t n_cols
     cdef SIZE_t n_samples
+    cdef double weighted_n_rows
+    cdef double weighted_n_cols
     cdef double weighted_n_samples
 
     cdef SIZE_t min_samples_leaf
