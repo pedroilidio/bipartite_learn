@@ -265,27 +265,13 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                     or weighted_n_node_samples[1] < 2 * min_row_weight_leaf
                     or weighted_n_node_samples[2] < 2 * min_col_weight_leaf
                 )
-                with gil:
-                    print('*** isleaf1', is_leaf)
-                    print(
-                        n_node_samples < min_samples_split,
-                        n_node_samples < 2 * min_samples_leaf,
-                        f'({n_node_samples} < 2*{min_samples_leaf})',
-                        weighted_n_node_samples[0] < 2 * min_weight_leaf,
-                        weighted_n_node_samples[1] < 2 * min_row_weight_leaf,
-                        weighted_n_node_samples[2] < 2 * min_col_weight_leaf,
-                    )
 
                 if first:
                     impurity = splitter.node_impurity()
-                    with gil:
-                        print('*** root imp', impurity)
                     first = 0
 
                 # impurity == 0 with tolerance due to rounding errors
                 is_leaf = is_leaf or impurity <= EPSILON  # TODO
-                with gil:
-                    print(f'*** {(is_leaf, impurity, EPSILON, n_node_samples)}')
 
                 if not is_leaf:
                     splitter.node_split(impurity, &split, n_constant_features)
