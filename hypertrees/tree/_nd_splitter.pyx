@@ -154,12 +154,6 @@ cdef class Splitter2D:
         self.splitter_cols.min_samples_leaf = max(
             self.min_cols_leaf, eff_min_cols_leaf)
 
-        with gil:
-            print('*** self.min_rows_leaf, self.min_cols_leaf')
-            print(self.min_rows_leaf, self.min_cols_leaf)
-            print('*** eff_min_rows_leaf, eff_min_cols_leaf')
-            print(eff_min_rows_leaf, eff_min_cols_leaf)
-
         self.splitter_rows.start = start[0]
         self.splitter_rows.end = end[0]
         self.splitter_cols.start = start[1]
@@ -217,8 +211,7 @@ cdef class Splitter2D:
                 imp_improve = self.criterion_wrapper.impurity_improvement(
                     impurity, imp_left, imp_right, 0)
 
-                with gil: print('*** imp_improve0', imp_improve)
-                if imp_improve > best_split.improvement:  # Always?  # FIXME UNCOMMENT
+                if imp_improve > best_split.improvement:  # Always?
                     best_split = current_split
                     best_split.improvement = imp_improve
                     best_split.impurity_left = imp_left
@@ -242,7 +235,6 @@ cdef class Splitter2D:
                 imp_improve = self.criterion_wrapper.impurity_improvement(
                     impurity, imp_left, imp_right, 1)
 
-                with gil: print('*** imp_improve1', imp_improve)
                 if imp_improve > best_split.improvement:
                     best_split = current_split
                     best_split.improvement = imp_improve

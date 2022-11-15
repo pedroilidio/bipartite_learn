@@ -29,15 +29,10 @@ logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 
 # Default test params
 DEF_PARAMS = dict(
-    seed=0,
-    shape=(50, 60),
-    nattrs=(10, 9),
-    nrules=10,
-    min_samples_leaf=100,
-    transpose_test=False,
+    n_samples=(50, 60),
+    n_features=(10, 9),
     noise=0.1,
-    inspect=False,
-    plot=False,
+    random_state=None,
 )
 
 
@@ -79,6 +74,7 @@ def compare_trees(
     tree2=BipartiteDecisionTreeRegressor,
     tree2_is_2d=True,
     tree1_is_unsupervised=False,
+    min_samples_leaf=1,
     **params,
 ):
     """Test hypertreesDecisionTreeRegressor2D
@@ -88,33 +84,31 @@ def compare_trees(
 
     Parameters
     ----------
-        seed : int
+        random_state : int
         shape : list-like of int
-        nattrs : list-like of int
+        n_features : list-like of int
         nrules : int
         min_samples_leaf : int
         transpose_test : bool
         noise : float
-        inspect : bool
-        plot : bool
     """
     print('Starting with settings:')
     pprint(params)
 
     with stopwatch():
-        XX, Y, x, y = gen_mock_data(melt=True, **params)
+        XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
 
     # ######### Instantiate trees
     if isinstance(tree2, Callable):
         tree2 = tree2(
-            min_samples_leaf=params['min_samples_leaf'],
-            random_state=params['seed'],
+            min_samples_leaf=min_samples_leaf,
+            random_state=params['random_state'],
         )
 
     if isinstance(tree1, Callable):
         tree1 = tree1(
-            min_samples_leaf=params['min_samples_leaf'],
-            random_state=params['seed'],
+            min_samples_leaf=min_samples_leaf,
+            random_state=params['random_state'],
         )
     # NOTE on ExtraTrees:
     # Even with the same random_state, the way 2d splitter uses this random
@@ -139,9 +133,6 @@ def compare_trees(
     tree1_n_samples_in_leaves = get_leaves(tree1)
     tree2_n_samples_in_leaves = get_leaves(tree2)
 
-    if params['inspect']:
-        breakpoint()
-
     # =========================================================================
     # Start of comparison tests
     # =========================================================================
@@ -152,15 +143,6 @@ def compare_trees(
     # comparison_test = np.all(leaves_comparison)  # See issue #1
     comparison_test = \
         set(tree1_n_samples_in_leaves) == set(tree2_n_samples_in_leaves)
-
-    stree1 = sklearn.tree.export_text(tree1)
-    stree2 = sklearn.tree.export_text(tree2)
-
-    if params['plot']:
-        with open('tree1.txt', 'w') as f:
-            f.write(stree1)
-        with open('tree2.txt', 'w') as f:
-            f.write(stree2)
 
     assert (tree1_n_samples_in_leaves.shape[0] ==
             tree2_n_samples_in_leaves.shape[0]), \
@@ -176,7 +158,9 @@ def compare_trees(
         f"!= {tree2_n_samples_in_leaves[~leaves_comparison]}")
 
 
+@pytest.mark.parametrize('msl', [1, 20, 100])
 def test_simple_tree_1d2d(
+    msl,
     tree1=DecisionTreeRegressor,
     tree2=BipartiteDecisionTreeRegressor,
     **params,
@@ -185,6 +169,7 @@ def test_simple_tree_1d2d(
     return compare_trees(
         tree1=DecisionTreeRegressor,
         tree2=BipartiteDecisionTreeRegressor,
+        min_samples_leaf=msl,
         **params,
     )
 
@@ -196,7 +181,7 @@ def test_pbct_regressor(**params):
     pprint(params)
 
     with stopwatch():
-        XX, Y = gen_mock_data(**params)
+        XX, Y = make_interaction_regression(**params)
 
     pbct = BipartiteDecisionTreeRegressor(
         prediction_weights="leaf_uniform",
@@ -213,46 +198,47 @@ def test_pbct_regressor(**params):
 
 @pytest.mark.parametrize(
     "pred_weight", [None, "uniform", "precomputed", lambda x: x**2])
-def test_gmo_ensure_symmetry(pred_weight, **params):
-    params = DEF_PARAMS | params
-
-    print('Starting with settings:')
-    pprint(params)
-
-    with stopwatch():
-        XX, Y = gen_mock_data(**params)
-
-    with stopwatch():
-        XX_sim, Y_sim = gen_mock_data(
-            **(params | dict(nattrs=params['shape'])))
+class TestGMOSymmetry:
+    params = DEF_PARAMS
+    XX, Y = make_interaction_regression(**params)
+    XX_sim, Y_sim, = make_interaction_regression(
+        **(params | dict(n_features=params['n_samples'])))
 
     pbct = BipartiteDecisionTreeRegressor(
-        prediction_weights=pred_weight,
         bipartite_adapter="local_multioutput",
     )
-    with pytest.raises(
-        ValueError,
-        match=r"array must be 2-dimensional and square.",
-    ):
-        pbct.fit(XX, Y)
 
-    pbct = clone(pbct)
-    with pytest.raises(
-        ValueError,
-        match=r"Array must be symmetric",
-    ):
-        pbct.fit(XX_sim, Y_sim)
+    def test_square_array_error(self, pred_weight, **params):
+        params = DEF_PARAMS | params
+        pbct = clone(self.pbct).set_params(prediction_weights=pred_weight)
+        with pytest.raises(
+            ValueError,
+            match=r"array must be 2-dimensional and square.",
+        ):
+            pbct.fit(self.XX, self.Y)
 
-    XX_sim = [check_symmetric(Xi, raise_warning=False) for Xi in XX_sim]
-    pbct = clone(pbct)
-    pbct.fit(XX_sim, Y_sim)
-    get_leaves(pbct)
-    print(pbct.predict(np.hstack([XX_sim[0][:3], XX_sim[1][:3]])))
+    def test_non_symmetric_array(self, pred_weight, **params):
+        params = DEF_PARAMS | params
+        pbct = clone(self.pbct).set_params(prediction_weights=pred_weight)
+        with pytest.raises(
+            ValueError,
+            match=r"Array must be symmetric",
+        ):
+            pbct.fit(self.XX_sim, self.Y_sim)
+
+    def test_working(self, pred_weight, **params):
+        params = DEF_PARAMS | params
+        pbct = clone(self.pbct).set_params(prediction_weights=pred_weight)
+        XX_sim = [check_symmetric(Xi, raise_warning=False)
+                  for Xi in self.XX_sim]
+        pbct = clone(pbct)
+        pbct.fit(XX_sim, self.Y_sim)
+        pbct.predict(np.hstack([XX_sim[0][:3], XX_sim[1][:3]]))
 
 
 def test_identity_gso(**params):
     params = DEF_PARAMS | params
-    XX, Y, x, y = gen_mock_data(melt=True, **params)
+    XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
     tree = BipartiteDecisionTreeRegressor(min_samples_leaf=1)
     assert_allclose(tree.fit(XX, Y).predict(XX).reshape(Y.shape), Y)
 
@@ -261,9 +247,9 @@ def test_identity_gso(**params):
     "pred_weights", ["leaf_uniform", None, "uniform", lambda x: x**2])
 def test_identity_gmo(pred_weights, **params):
     params = DEF_PARAMS | params
-    params['nattrs'] = params['shape']
+    params['n_features'] = params['n_samples']
 
-    XX, Y, x, y = gen_mock_data(melt=True, **params)
+    XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
     tree = BipartiteDecisionTreeRegressor(
         min_samples_leaf=1,
         bipartite_adapter="local_multioutput",
@@ -284,15 +270,13 @@ def test_identity_gmo(pred_weights, **params):
     assert_allclose(tree.predict(XX).reshape(Y.shape), Y)
 
 
-@pytest.mark.parametrize(
-    "min_samples_leaf", [1, 20, 100])
+@pytest.mark.parametrize("min_samples_leaf", [1, 20, 100])
 def test_leaf_mean_symmetry(min_samples_leaf):
     params = DEF_PARAMS
-    params['min_samples_leaf'] = min_samples_leaf
 
-    XX, Y, x, y = gen_mock_data(melt=True, **params)
+    XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
     tree = BipartiteDecisionTreeRegressor(
-        min_samples_leaf=params['min_samples_leaf'],
+        min_samples_leaf=min_samples_leaf,
         bipartite_adapter="local_multioutput",
         prediction_weights="raw",
     )
@@ -335,7 +319,7 @@ def test_weight_normalization():
 def test_leaf_shape(mrl, mcl, **params):
     params = DEF_PARAMS | params
     # XX, Y, x, y = gen_mock_data(melt=True, **params)
-    rng = np.random.default_rng(params['seed'])
+    rng = np.random.default_rng(params['random_state'])
     n_clusters = 10, 10
     Y_unique = np.arange(np.prod(n_clusters), dtype=float).reshape(n_clusters)
     Y = Y_unique.repeat(mrl, axis=0).repeat(mcl, axis=1)
@@ -373,7 +357,7 @@ def test_leaf_shape(mrl, mcl, **params):
 def test_leaf_shape_gso(mrl, mcl, **params):
     params = DEF_PARAMS | params
     # XX, Y, x, y = gen_mock_data(melt=True, **params)
-    rng = np.random.default_rng(params['seed'])
+    rng = np.random.default_rng(params['random_state'])
     n_clusters = 10, 10
     Y_unique = np.arange(np.prod(n_clusters), dtype=float).reshape(n_clusters)
     Y = Y_unique.repeat(mrl, axis=0).repeat(mcl, axis=1)
