@@ -28,7 +28,7 @@ from hypertrees.tree._dynamic_supervision_criterion import DynamicSSMSE
 from sklearn.tree._criterion import MSE
 from test_nd_classes import compare_trees, parse_args
 
-#from sklearn.tree._tree import DTYPE_t, DOUBLE_t
+# from sklearn.tree._tree import DTYPE_t, DOUBLE_t
 DTYPE_t, DOUBLE_t = np.float32, np.float64
 
 logging.basicConfig(level=logging.DEBUG)
@@ -128,6 +128,8 @@ def test_semisupervision_1d2d(supervision=None, **params):
     tree2 = DecisionTreeRegressor2DSS(
         supervision=supervision,
         min_samples_leaf=params['min_samples_leaf'],
+        max_col_features=1.0,
+        max_row_features=1.0,
         random_state=params['random_state'],
     )
 
