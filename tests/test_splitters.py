@@ -1,12 +1,19 @@
+# TODO: test with different axis supervisions. sscrit2d.impurity_improvement()
+#       may fail.
+from pprint import pprint
+from time import time
+from pathlib import Path
 from typing import Callable
 import warnings
-from functools import partial
+import pytest
 
 import numpy as np
 from pytest import raises
 
 from sklearn.tree._criterion import MSE
 from sklearn.tree._splitter import BestSplitter
+from sklearn.utils.validation import check_random_state
+from sklearn.utils._testing import assert_allclose
 
 from hypertrees.tree._splitter_factory import (
     make_2d_splitter,
@@ -33,10 +40,6 @@ from test_utils import (
 #from sklearn.tree._tree import DTYPE_t, DOUBLE_t
 DTYPE_t, DOUBLE_t = np.float32, np.float64
 
-from pathlib import Path
-from time import time
-from pprint import pprint
-import warnings
 
 # Default test params
 DEF_PARAMS = dict(
@@ -68,7 +71,7 @@ def compare_splitters_1d2d_ideal(
         warnings.warn(f"noise={params['noise']}. Setting it to zero"
                       " since noise=0 is what defines an ideal split.")
         params['noise'] = 0
-    
+
     result1, result2 = compare_splitters_1d2d(
         splitter1, splitter2, tol, **params)
 
@@ -81,6 +84,7 @@ def compare_splitters_1d2d_ideal(
     assert result2['impurity_right'] == 0
 
 
+# TODO: Refactoring needed.
 def compare_splitters_1d2d(
     splitter1,
     splitter2,
@@ -89,13 +93,11 @@ def compare_splitters_1d2d(
     single_feature_ss_1d=False,
     multioutput_1d=False,
     only_1d=False,
-    tol=1e-10,
     manual_impurity=True,
     **params,
 ):
     params = DEF_PARAMS | params
-    if not isinstance(params['seed'], np.random.RandomState):
-        random_state = np.random.RandomState(params['seed'])
+    random_state = check_random_state(params['seed'])
 
     if params['nrules'] != 1:
         warnings.warn(f"Setting params['nrules'] = 1 (was {params['nrules']})")
@@ -106,7 +108,7 @@ def compare_splitters_1d2d(
     n_samples_0 = params['shape'][0]
 
     # Artificially set XX[0][:, 0] to be the best (most separable)
-    # unsupervised attribute. 
+    # unsupervised attribute.
     XX[0][:, 0] = np.hstack([
         random_state.normal(loc=.2, scale=.1, size=n_samples_0//2),
         random_state.normal(loc=.8, scale=.1, size=n_samples_0-n_samples_0//2),
@@ -118,7 +120,7 @@ def compare_splitters_1d2d(
 
     start = params['start'] or 0
 
-    if multioutput_1d:
+    if multioutput_1d:  # Test GMO splitter
         # The split will be across rows (ax = 0) or columns (ax = 1)
         ax = next(iter(intervals.keys())) >= XX[0].shape[1]
         x, y = XX[int(ax)], np.ascontiguousarray(Y.T) if ax else Y
@@ -153,7 +155,7 @@ def compare_splitters_1d2d(
             max_features=x.shape[1],
             min_samples_leaf=1,
             min_weight_leaf=0,
-            random_state=np.random.RandomState(params['seed']),
+            random_state=check_random_state(params['seed']),
         )
 
     if isinstance(splitter2, Callable):
@@ -163,7 +165,7 @@ def compare_splitters_1d2d(
                 max_features=x.shape[1],
                 min_samples_leaf=y.shape[1],
                 min_weight_leaf=0,
-                random_state=random_state,
+                random_state=check_random_state(params['seed']),
             )
         else:
             splitter2 = make_2d_splitter(
@@ -172,7 +174,7 @@ def compare_splitters_1d2d(
                 max_features=[X.shape[1] for X in XX],
                 n_samples=Y.shape,
                 n_outputs=1,
-                random_state=random_state,
+                random_state=check_random_state(params['seed']),
             )
 
     # Run test
@@ -197,6 +199,7 @@ def compare_splitters_1d2d(
         if semisupervised_1d:
             # NOTE: only single-output
             x_, y_ = x_.copy(), y_.copy()
+            # Apply 'supervision' parameter weighting
             sup = splitter1.criterion.supervision
             y_[:, -1] *= np.sqrt(sup * y_.shape[1])
             y_[:, :-1] *= np.sqrt((1-sup) * y_.shape[1] / (y_.shape[1]-1))
@@ -204,15 +207,14 @@ def compare_splitters_1d2d(
         sorted_indices = x_[:, result1['feature']].argsort()
         manual_impurity_left = y_[sorted_indices][:pos].var(0).mean()
         manual_impurity_right = y_[sorted_indices][pos:].var(0).mean()
+
         print(f'* manual_impurity_left={manual_impurity_left}')
         print(f'* manual_impurity_right={manual_impurity_right}')
 
-        assert abs(result1['impurity_left']-manual_impurity_left) <= tol, \
-            ('Wrong reference impurity left: '
-             f'{result1["impurity_left"]} != {manual_impurity_left}')
-        assert abs(result1['impurity_right']-manual_impurity_right) <= tol, \
-            ('Wrong reference impurity right: '
-             f'{result1["impurity_left"]} != {manual_impurity_left}')
+        assert_allclose(result1['impurity_left'], manual_impurity_left,
+                        err_msg='Wrong reference impurity left.')
+        assert_allclose(result1['impurity_right'], manual_impurity_right,
+                        err_msg='Wrong reference impurity right.')
 
     # Run test 2d
     with stopwatch(f'Testing 2D splitter ({splitter2.__class__.__name__})...'):
@@ -233,15 +235,27 @@ def compare_splitters_1d2d(
         print('Best split found:')
         pprint(result2)
 
-    assert result2['threshold'] == result1['threshold'], \
-        'threshold differs from reference.'
-    assert abs(result2['improvement']-result1['improvement']) <= tol, \
-        'improvement differs from reference.'
-    assert abs(result2['impurity_left']-result1['impurity_left']) <= tol, \
-        'impurity_left differs from reference.'
-    assert abs(result2['impurity_right']-result1['impurity_right']) <= tol, \
-        'impurity_right differs from reference.'
-    
+    assert_allclose(result2['threshold'], result1['threshold'],
+                    err_msg='threshold differs from reference.')
+    assert_allclose(result2['improvement'], result1['improvement'],
+                    err_msg='improvement differs from reference.')
+
+    # HACK: GMO bipartite adapter adds the other axis impurity to avoid getting
+    #       zero if a single row/column is present in a child partition.')
+    if multioutput_1d:
+        other_axis_imp = y_.var(1).mean()
+        result1['impurity_left'] += other_axis_imp
+        result1['impurity_right'] += other_axis_imp
+
+        print('GMO-specific updated target impurities:\n'
+              '* Left:  {impurity_left}\n'
+              '* Right: {impurity_right}'.format(**result1))
+
+    assert_allclose(result2['impurity_left'], result1['impurity_left'],
+                    err_msg='impurity_left differs from reference.')
+    assert_allclose(result2['impurity_right'], result1['impurity_right'],
+                    err_msg='impurity_right differs from reference.')
+
     return result1, result2
 
 
@@ -268,14 +282,17 @@ def test_1d2d(**params):
 def test_ss_1d2d_sup(**params):
     print('*** test_ss_1d2d_sup')
     params = DEF_PARAMS | params
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitter,
-        criteria=MSE,
-        supervision=1.,
+        ss_criteria=SSCompositeCriterion,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
+        supervision=1.0,
         max_features=params['nattrs'],
         n_features=params['nattrs'],
         n_samples=params['shape'],
         n_outputs=1,
+        random_state=check_random_state(params['seed']),
     )
 
     return compare_splitters_1d2d(
@@ -288,9 +305,11 @@ def test_ss_1d2d_sup(**params):
 def test_ss_1d2d_unsup(**params):
     print('*** test_ss_1d2d_unsup')
     params = DEF_PARAMS | params
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitter,
-        criteria=MSE,
+        ss_criteria=SSCompositeCriterion,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
         supervision=0.,
         max_features=params['nattrs'],
         n_features=params['nattrs'],
@@ -311,16 +330,16 @@ def test_ss_1d2d(**params):
     """
     print('*** test_ss_1d2d')
     params = DEF_PARAMS | params
-    rstate = np.random.RandomState(params['seed'])
     supervision = params.get('supervision', -1.)
     if supervision == -1.:
-        supervision = rstate.random()
+        supervision = check_random_state(params['seed']).random()
     print(f"* Set supervision={supervision}")
 
     splitter1 = BestSplitter(
         criterion=SSCompositeCriterion(
             supervision=supervision,
-            criterion=MSE,
+            supervised_criterion=MSE,
+            unsupervised_criterion=MSE,
             n_features=np.sum(params['nattrs']),
             n_samples=np.prod(params['shape']),
             n_outputs=1,
@@ -328,18 +347,20 @@ def test_ss_1d2d(**params):
         max_features=np.sum(params['nattrs']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
-        random_state=rstate,
+        random_state=check_random_state(params['seed']),
     )
 
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitter,
-        criteria=MSE,
+        ss_criteria=SSCompositeCriterion,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
         supervision=supervision,
         max_features=params['nattrs'],
         n_features=params['nattrs'],
         n_samples=params['shape'],
         n_outputs=1,
-        random_state=rstate,
+        random_state=params['seed'],
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
     )
@@ -355,9 +376,11 @@ def test_ss_1d2d(**params):
 def test_ss_1d2d_ideal_split(**params):
     print('*** test_ss_1d2d_ideal_split')
     params = DEF_PARAMS | params
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitter,
-        criteria=MSE,
+        ss_criteria=SSCompositeCriterion,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
         supervision=1.,
         max_features=params['nattrs'],
         n_features=params['nattrs'],
@@ -372,10 +395,11 @@ def test_ss_1d2d_ideal_split(**params):
     )
 
 
+@pytest.mark.skip
 def test_sfss_1d_sup(**params):
     print('*** test_sfss_1d_sup')
     params = DEF_PARAMS | params
-    rstate = np.random.RandomState(params['seed'])
+    rstate = check_random_state(params['seed'])
 
     splitter1 = BestSplitterSFSS(
         criterion=SingleFeatureSSCompositeCriterion(
@@ -398,10 +422,11 @@ def test_sfss_1d_sup(**params):
     )
 
 
+@pytest.mark.skip
 def test_sfss_1d_unsup(**params):
     print('*** test_sfss_1d_unsup')
     params = DEF_PARAMS | params
-    rstate = np.random.RandomState(params['seed'])
+    rstate = check_random_state(params['seed'])
 
     splitter1 = BestSplitterSFSS(
         criterion=SingleFeatureSSCompositeCriterion(
@@ -426,24 +451,26 @@ def test_sfss_1d_unsup(**params):
     )
 
 
+@pytest.mark.skip
 def test_sfss_2d_sup(**params):
     print('*** test_sfss_2d_sup')
     params = DEF_PARAMS | params
-    rstate = np.random.RandomState(params['seed'])
+    rstate = check_random_state(params['seed'])
 
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitterSFSS,
-        criteria=MSE,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
         ss_criteria=SingleFeatureSSCompositeCriterion,
         supervision=1.,
         max_features=params['nattrs'],
         n_features=1,
         n_samples=params['shape'],
         n_outputs=1,
-        random_state=rstate,
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
         criterion_wrapper_class=MSE2DSFSS,
+        random_state=rstate,
     )
 
     return compare_splitters_1d2d(
@@ -454,14 +481,16 @@ def test_sfss_2d_sup(**params):
 
 
 # FIXME
+@pytest.mark.skip
 def test_sfss_2d_unsup(**params):
     print('*** test_sfss_2d_unsup')
     params = DEF_PARAMS | params
-    rstate = np.random.RandomState(params['seed'])
+    rstate = check_random_state(params['seed'])
 
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitterSFSS,
-        criteria=MSE,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
         ss_criteria=SingleFeatureSSCompositeCriterion,
         supervision=0.,
         max_features=params['nattrs'],
@@ -483,12 +512,13 @@ def test_sfss_2d_unsup(**params):
     )
 
 
+@pytest.mark.skip
 def test_sfss_1d2d(**params):
     """Compare 1D to 2D version of semisupervised MSE splitter.
     """
     print('*** test_sfss_1d2d')
     params = DEF_PARAMS | params
-    rstate = np.random.RandomState(params['seed'])
+    rstate = check_random_state(params['seed'])
     supervision = params.get('supervision', -1.)
     if supervision == -1.:
         supervision = rstate.random()
@@ -505,22 +535,23 @@ def test_sfss_1d2d(**params):
         max_features=np.sum(params['nattrs']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
-        random_state=rstate,
+        random_state=check_random_state(params['seed']),
     )
 
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitterSFSS,
-        criteria=MSE,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
         ss_criteria=SingleFeatureSSCompositeCriterion,
         supervision=supervision,
         max_features=params['nattrs'],
         n_features=1,
         n_samples=params['shape'],
         n_outputs=1,
-        random_state=rstate,
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
         criterion_wrapper_class=MSE2DSFSS,
+        random_state=check_random_state(params['seed']),
     )
 
     return compare_splitters_1d2d(
@@ -531,12 +562,12 @@ def test_sfss_1d2d(**params):
     )
 
 
+@pytest.mark.skip
 def test_ud3_1d2d_unsup(**params):
     """Compare 1D to 2D version of semisupervised MSE splitter.
     """
     print('*** test_ud3_1d2d_unsup')
     params = DEF_PARAMS | params
-    rstate = np.random.RandomState(params['seed'])
 
     splitter1 = BestSplitterSFSS(
         criterion=SingleFeatureSSCompositeCriterion(
@@ -550,10 +581,10 @@ def test_ud3_1d2d_unsup(**params):
         max_features=np.sum(params['nattrs']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
-        random_state=rstate,
+        random_state=check_random_state(params['seed']),
     )
 
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitterSFSS,
         ss_criteria=SingleFeatureSSCompositeCriterion,
         supervised_criteria=MSE,
@@ -563,7 +594,7 @@ def test_ud3_1d2d_unsup(**params):
         n_features=1,
         n_samples=params['shape'],
         n_outputs=1,
-        random_state=rstate,
+        random_state=check_random_state(params['seed']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
         criterion_wrapper_class=MSE2DSFSS,
@@ -582,12 +613,12 @@ def test_ud3_1d2d_unsup(**params):
     assert result2['feature'] == 0
 
 
+@pytest.mark.skip
 def test_ud35_1d2d_unsup(**params):
     """Compare 1D to 2D version of semisupervised MSE splitter.
     """
     print('*** test_ud35_1d2d_unsup')
     params = DEF_PARAMS | params
-    rstate = np.random.RandomState(params['seed'])
 
     splitter1 = BestSplitterSFSS(
         criterion=SingleFeatureSSCompositeCriterion(
@@ -601,10 +632,10 @@ def test_ud35_1d2d_unsup(**params):
         max_features=np.sum(params['nattrs']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
-        random_state=rstate,
+        random_state=check_random_state(params['seed']),
     )
 
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitterSFSS,
         ss_criteria=SingleFeatureSSCompositeCriterion,
         supervised_criteria=MSE,
@@ -614,10 +645,10 @@ def test_ud35_1d2d_unsup(**params):
         n_features=1,
         n_samples=params['shape'],
         n_outputs=1,
-        random_state=rstate,
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
         criterion_wrapper_class=MSE2DSFSS,
+        random_state=check_random_state(params['seed']),
     )
 
     result1, result2 = compare_splitters_1d2d(
@@ -633,12 +664,13 @@ def test_ud35_1d2d_unsup(**params):
     assert result2['feature'] == 0
 
 
+@pytest.mark.skip
 def test_sfssmse_1d(**params):
     """Compare 1D to 2D version of semisupervised MSE splitter.
     """
     print('*** test_sfssmse_1d')
     params = DEF_PARAMS | params
-    rstate = np.random.RandomState(params['seed'])
+    rstate = check_random_state(params['seed'])
     supervision = params.get('supervision', -1.)
     if supervision == -1.:
         supervision = rstate.random()
@@ -654,19 +686,20 @@ def test_sfssmse_1d(**params):
         max_features=np.sum(params['nattrs']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
-        random_state=rstate,
+        random_state=check_random_state(rstate),
     )
 
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitterSFSS,
         ss_criteria=SingleFeatureSSCompositeCriterion,
-        criteria=MSE,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
         supervision=supervision,
         max_features=params['nattrs'],
         n_features=1,
         n_samples=params['shape'],
         n_outputs=1,
-        random_state=rstate,
+        random_state=check_random_state(params['seed']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
         criterion_wrapper_class=MSE2DSFSS,
@@ -680,6 +713,7 @@ def test_sfssmse_1d(**params):
     )
 
 
+@pytest.mark.skip
 def test_sfssmse_1d2d(**params):
     """Compare 1D to 2D version of semisupervised MSE splitter.
     """
@@ -701,18 +735,20 @@ def test_sfssmse_1d2d(**params):
         max_features=np.sum(params['nattrs']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
-        random_state=rstate,
+        random_state=check_random_state(params['seed']),
     )
 
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitterSFSS,
         ss_criteria=SFSSMSE,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
         supervision=supervision,
         max_features=params['nattrs'],
         n_features=1,
         n_samples=params['shape'],
         n_outputs=1,
-        random_state=rstate,
+        random_state=check_random_state(params['seed']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
         criterion_wrapper_class=MSE2DSFSS,
@@ -729,21 +765,16 @@ def test_sfssmse_1d2d(**params):
 def test_ss_alves_1d2d(**params):
     print('*** test_ss_alves_1d2d')
     params = DEF_PARAMS | params
-    random_state = np.random.RandomState(params['seed'])
 
-    # supervision = params.get('supervision', -1.)
-    # if supervision == -1.:
-    #     supervision = random_state.random()
-
-    supervision = params["supervision"] = 0
-    print(f"* Set supervision={supervision}")
-    params["noise"] = 0
-    print(f"* Set noise={params['noise']}")
+    supervision = params.get('supervision', -1.)
+    if supervision == -1.0:
+        supervision = check_random_state(params['seed']).random()
 
     splitter1 = BestSplitter(
         criterion=SSCompositeCriterionAlves(
             supervision=supervision,
-            criterion=MSE,
+            supervised_criterion=MSE,
+            unsupervised_criterion=MSE,
             n_features=sum(params['nattrs']),
             n_samples=np.prod(params['shape']),
             n_outputs=1,
@@ -751,21 +782,22 @@ def test_ss_alves_1d2d(**params):
         max_features=np.sum(params['nattrs']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
-        random_state=random_state,
+        random_state=check_random_state(params['seed']),
     )
 
     splitter2d = make_2dss_splitter(
         splitters=BestSplitter,
         ss_criteria=SSCompositeCriterionAlves,
-        criteria=MSE,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
         supervision=supervision,
         max_features=params['nattrs'],
         n_features=params['nattrs'],
         n_samples=params['shape'],
         n_outputs=1,
-        random_state=random_state,
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
+        random_state=check_random_state(params['seed']),
     )
 
     return compare_splitters_1d2d(
@@ -784,28 +816,22 @@ def test_ss_alves_1d(**params):
     """
     print('*** test_ss_alves_1d')
     params = DEF_PARAMS | params
-    random_state = np.random.RandomState(params['seed'])
 
-    # supervision = params.get('supervision', -1.)
-    # if supervision == -1.:
-    #     # The supervised impurity should not dominate, otherwise.
-    #     supervision = random_state.random() / 100000
-
-    supervision = params["supervision"] = 0
-    print(f"* Set supervision={supervision}")
-    params["noise"] = 0
-    print(f"* Set noise={params['noise']}")
+    supervision = params.get('supervision', -1.)
+    if supervision == -1.0:
+        supervision = check_random_state(params['seed']).random()
 
     splitter2d = make_2dss_splitter(
         splitters=BestSplitter,
         ss_criteria=SSCompositeCriterionAlves,
-        criteria=MSE,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
         supervision=supervision,
         max_features=params['nattrs'],
         n_features=params['nattrs'],
         n_samples=params['shape'],
         n_outputs=1,
-        random_state=random_state,
+        random_state=check_random_state(params['seed']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
     )
@@ -838,31 +864,3 @@ def test_pbct_splitter(**params):
         multioutput_1d=True,
         **params,
     )
-
-
-# TODO: test with different axis supervisions. sscrit2d.impurity_improvement()
-#       may fail.
-def main(**params):
-    params = DEF_PARAMS | params
-    test_1d2d_ideal(**vars(args))
-    test_1d2d(**vars(args))
-    test_ss_1d2d_sup(**vars(args))
-    test_ss_1d2d_unsup(**vars(args))
-    test_ss_1d2d_ideal_split(**vars(args))
-    test_ss_alves_1d(**vars(args))
-    test_ss_alves_1d2d(**vars(args))
-    test_pbct_splitter(**vars(args))
-    # test_sfss_1d_sup(**vars(args))
-    # test_sfss_1d_unsup(**vars(args))
-    # test_sfss_2d_sup(**vars(args))
-    # test_sfss_2d_unsup(**vars(args))
-    # test_sfss_1d2d(**vars(args))
-    # test_sfssmse_1d(**vars(args))
-    # test_sfssmse_1d2d(**vars(args))
-    # test_ud3_1d2d_unsup(**vars(args))  # FIXME
-    # test_ud35_1d2d_unsup(**vars(args))  # FIXME
-
-
-if __name__ == "__main__":
-    args = parse_args(**DEF_PARAMS)
-    main(**vars(args))

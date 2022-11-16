@@ -1,5 +1,5 @@
 # cython: boundscheck=True
-import copy, warnings
+import copy, warnings, numbers
 from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 from sklearn.tree._criterion import MSE
@@ -9,6 +9,10 @@ from libc.string cimport memset
 import numpy as np
 cimport numpy as cnp
 from ._nd_criterion cimport RegressionCriterionWrapper2D, MSE_Wrapper2D
+from sklearn.utils._param_validation import (
+    validate_params,
+    Interval,
+)
 
 
 cdef class SemisupervisedCriterion(Criterion):
@@ -48,23 +52,25 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
             type(self),
             (
                 self.supervision,
-                self.n_outputs,
-                self.n_features,
-                self.n_samples,
-                None,
+                0,
+                0,
+                0,
                 self.supervised_criterion,
                 self.unsupervised_criterion,
             ),
             self.__getstate__(),
         )
 
+    def __getstate__(self):
+        return {}
+
     # TODO: We maybe should make __init__ simpler.
     def __init__(
         self,
         double supervision,
-        SIZE_t n_outputs,
-        SIZE_t n_features,
-        SIZE_t n_samples,
+        SIZE_t n_outputs=0,
+        SIZE_t n_features=0,
+        SIZE_t n_samples=0,
         supervised_criterion=None,
         unsupervised_criterion=None,
         *args, **kwargs,

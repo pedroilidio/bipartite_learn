@@ -1,7 +1,10 @@
 import warnings
 import copy
+from numbers import Integral, Real
 import numpy as np
 from sklearn.tree._criterion import Criterion
+from sklearn.tree._splitter import Splitter
+from sklearn.utils._param_validation import validate_params, Interval
 from ._nd_splitter import Splitter2D
 from ._nd_criterion import MSE_Wrapper2D
 from ._semisupervised_criterion import (
@@ -9,6 +12,20 @@ from ._semisupervised_criterion import (
     SSCompositeCriterion,
     MSE_Wrapper2DSS,
 )
+
+# @validate_params(dict(
+#     splitters=[list, tuple, Splitter],
+#     criteria=[list, tuple, Criterion],
+#     n_samples=[None, list, tuple, ],
+#     max_features=None,
+#     n_outputs=1,
+#     min_samples_leaf=1,
+#     min_weight_leaf=0.0,
+#     ax_min_samples_leaf=1,
+#     ax_min_weight_leaf=0.0,
+#     random_state=None,
+#     criterion_wrapper_class=MSE_Wrapper2D,
+# ))
 
 
 def make_2d_splitter(
@@ -99,10 +116,10 @@ def make_2d_splitter(
 
 def make_2dss_splitter(
     splitters,
+    supervised_criteria,
+    unsupervised_criteria,
+    ss_criteria,
     supervision=0.5,
-    ss_criteria=None,
-    criteria=None,
-    unsupervised_criteria=None,
     n_features=None,
     n_samples=None,
     max_features=None,
@@ -131,8 +148,9 @@ def make_2dss_splitter(
         supervision = [supervision, supervision]
     if not isinstance(ss_criteria, (list, tuple)):
         ss_criteria = [copy.deepcopy(ss_criteria) for i in range(2)]
-    if not isinstance(criteria, (list, tuple)):
-        criteria = [copy.deepcopy(criteria) for i in range(2)]
+    if not isinstance(supervised_criteria, (list, tuple)):
+        supervised_criteria = [copy.deepcopy(
+            supervised_criteria) for i in range(2)]
     if not isinstance(unsupervised_criteria, (list, tuple)):
         unsupervised_criteria = \
             [copy.deepcopy(unsupervised_criteria) for i in range(2)]
@@ -149,8 +167,8 @@ def make_2dss_splitter(
         else:
             raise ValueError
 
-        if isinstance(criteria[ax], type):
-            if not issubclass(criteria[ax], Criterion):
+        if isinstance(supervised_criteria[ax], type):
+            if not issubclass(supervised_criteria[ax], Criterion):
                 raise ValueError
 
         if isinstance(unsupervised_criteria[ax], type):
@@ -159,7 +177,7 @@ def make_2dss_splitter(
 
         ss_criteria[ax] = ss_criteria[ax](
             supervision=supervision[ax],
-            supervised_criterion=criteria[ax],
+            supervised_criterion=supervised_criteria[ax],
             unsupervised_criterion=unsupervised_criteria[ax],
             n_outputs=n_outputs[ax],
             n_features=n_features[ax],
@@ -167,15 +185,59 @@ def make_2dss_splitter(
         )
 
     return make_2d_splitter(
-       splitters=splitters,
-       criteria=ss_criteria,  # Main change.
-       n_samples=n_samples,
-       max_features=max_features,
-       n_outputs=n_outputs,
-       min_samples_leaf=min_samples_leaf,
-       min_weight_leaf=min_weight_leaf,
-       ax_min_samples_leaf=ax_min_samples_leaf,
-       ax_min_weight_leaf=ax_min_weight_leaf,
-       random_state=random_state,
-       criterion_wrapper_class=criterion_wrapper_class,
+        splitters=splitters,
+        criteria=ss_criteria,  # Main change.
+        n_samples=n_samples,
+        max_features=max_features,
+        n_outputs=n_outputs,
+        min_samples_leaf=min_samples_leaf,
+        min_weight_leaf=min_weight_leaf,
+        ax_min_samples_leaf=ax_min_samples_leaf,
+        ax_min_weight_leaf=ax_min_weight_leaf,
+        random_state=random_state,
+        criterion_wrapper_class=criterion_wrapper_class,
+    )
+
+
+@validate_params(dict(
+    supervision=[Interval(Real, 0.0, 1.0, closed="both")],
+    n_outputs=[Interval(Integral, 1, None, closed="left"), None],
+    n_features=[Interval(Integral, 1, None, closed="left"), None],
+    n_samples=[Interval(Integral, 1, None, closed="left"), None],
+    ss_class=[type],
+    supervised_criterion=[Criterion, type],
+    unsupervised_criterion=[Criterion, type],
+))
+def make_semisupervised_criterion(
+    supervision,
+    ss_class,
+    n_outputs=None,
+    n_features=None,
+    n_samples=None,
+    supervised_criterion=None,
+    unsupervised_criterion=None,
+):
+    if isinstance(supervised_criterion, type):
+        if not n_outputs or not n_samples:
+            raise ValueError('If supervised_criterion is a class, one must'
+                             ' provide both n_outputs (received '
+                             f'{n_outputs}) and n_samples ({n_samples}).')
+        supervised_criterion = supervised_criterion(
+            n_outputs=n_outputs,
+            n_samples=n_samples,
+        )
+    if isinstance(unsupervised_criterion, type):
+        if not n_features or not n_samples:
+            raise ValueError('If unsupervised_criterion is a class, one mu'
+                             'st provide both n_features (received '
+                             f'{n_features}) and n_samples ({n_samples}).')
+        unsupervised_criterion = unsupervised_criterion(
+            n_outputs=n_features,
+            n_samples=n_samples,
+        )
+
+    return ss_class(
+        supervision=supervision,
+        supervised_criterion=supervised_criterion,
+        unsupervised_criterion=unsupervised_criterion,
     )
