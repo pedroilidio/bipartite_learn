@@ -1,4 +1,4 @@
-# cython: boundscheck=False
+# cython: boundscheck=True
 import copy, warnings
 from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion
@@ -8,9 +8,7 @@ from libc.stdlib cimport malloc, free
 from libc.string cimport memset
 import numpy as np
 cimport numpy as cnp
-
 from ._nd_criterion cimport RegressionCriterionWrapper2D, MSE_Wrapper2D
-from ._nd_splitter import make_2d_splitter
 
 
 cdef class SemisupervisedCriterion(Criterion):
@@ -67,7 +65,6 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         SIZE_t n_outputs,
         SIZE_t n_features,
         SIZE_t n_samples,
-        criterion=None,
         supervised_criterion=None,
         unsupervised_criterion=None,
         *args, **kwargs,
@@ -75,13 +72,6 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         if not (0 <= supervision <= 1):
             # TODO: == 0 only for tests.
             raise ValueError("supervision must be in [0, 1] interval.")
-
-        if criterion is None and (supervised_criterion is None or
-                                  unsupervised_criterion is None):
-            raise ValueError('If criterion is None, both supervised and unsupe'
-                            'rvised criteria must be given.')
-        supervised_criterion = supervised_criterion or criterion
-        unsupervised_criterion = unsupervised_criterion or criterion
 
         if isinstance(supervised_criterion, type):
             if not n_outputs or not n_samples:
@@ -884,100 +874,3 @@ cdef class MSE2DSFSS(MSE_Wrapper2DSS):
 
         impurity_left[0] = u_impurity_left*(1-sup) + s_impurity_left * sup
         impurity_right[0] = u_impurity_right*(1-sup) + s_impurity_right * sup
-        
-
-# =============================================================================
-# Splitter factory function
-# =============================================================================
-
-def make_2dss_splitter(
-       splitters,
-       supervision=0.5,
-       ss_criteria=None,
-       criteria=None,
-       supervised_criteria=None,
-       unsupervised_criteria=None,
-       n_features=None,
-
-       n_samples=None,
-       max_features=None,
-       n_outputs=1,
-       min_samples_leaf=1,
-       min_weight_leaf=0.0,
-       ax_min_samples_leaf=1,
-       ax_min_weight_leaf=0.0,
-       random_state=None,
-       criterion_wrapper_class=MSE_Wrapper2DSS,
-    ):
-    """Factory function of Splitter2D instances.
-
-    Since the building of a Splitter2D is somewhat counterintuitive, this func-
-    tion is provided to simplificate the process. With exception of n_samples,
-    the remaining parameters may be set to a single value or a 2-valued
-    tuple or list, to specify them for each axis.
-    """
-    if not isinstance(n_samples, (list, tuple)):
-        n_samples = [n_samples, n_samples]
-    if not isinstance(n_features, (list, tuple)):
-        n_features = [n_features, n_features]
-    if not isinstance(n_outputs, (list, tuple)):
-        n_outputs = [n_outputs, n_outputs]
-
-    if not isinstance(supervision, (list, tuple)):
-        supervision = [supervision, supervision]
-    if not isinstance(ss_criteria, (list, tuple)):
-        ss_criteria = [copy.deepcopy(ss_criteria) for i in range(2)]
-    if not isinstance(criteria, (list, tuple)):
-        criteria = [copy.deepcopy(criteria) for i in range(2)]
-    if not isinstance(supervised_criteria, (list, tuple)):
-        supervised_criteria = \
-            [copy.deepcopy(supervised_criteria) for i in range(2)]
-    if not isinstance(unsupervised_criteria, (list, tuple)):
-        unsupervised_criteria = \
-            [copy.deepcopy(unsupervised_criteria) for i in range(2)]
-
-    # Make semi-supervised criteria
-    for ax in range(2):
-        if ss_criteria[ax] is None:
-            ss_criteria[ax] = SSCompositeCriterion
-        elif isinstance(ss_criteria[ax], SemisupervisedCriterion):
-            continue
-        elif isinstance(ss_criteria[ax], type):
-            if not issubclass(ss_criteria[ax], SSCompositeCriterion):
-                raise ValueError
-        else:
-            raise ValueError
-
-        supervised_criteria[ax] = supervised_criteria[ax] or criteria[ax]
-        unsupervised_criteria[ax] = unsupervised_criteria[ax] or criteria[ax]
-
-        if isinstance(supervised_criteria[ax], type):
-            if not issubclass(supervised_criteria[ax], Criterion):
-                raise ValueError
-
-        if isinstance(unsupervised_criteria[ax], type):
-            if not issubclass(unsupervised_criteria[ax], Criterion):
-                raise ValueError
-
-        ss_criteria[ax] = ss_criteria[ax](
-            supervision=supervision[ax],
-            supervised_criterion=supervised_criteria[ax],
-            unsupervised_criterion=unsupervised_criteria[ax],
-            n_outputs=n_outputs[ax],
-            n_features=n_features[ax],
-            n_samples=n_samples[ax],
-        )
-
-    return make_2d_splitter(
-       splitters=splitters,
-       criteria=ss_criteria,  # Main change.
-       n_samples=n_samples,
-       max_features=max_features,
-       n_outputs=n_outputs,
-       min_samples_leaf=min_samples_leaf,
-       min_weight_leaf=min_weight_leaf,
-       ax_min_samples_leaf=ax_min_samples_leaf,
-       ax_min_weight_leaf=ax_min_weight_leaf,
-       random_state=random_state,
-       criterion_wrapper_class=criterion_wrapper_class,
-    )

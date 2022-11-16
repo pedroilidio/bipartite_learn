@@ -1,11 +1,13 @@
 from argparse import ArgumentParser
+from collections import defaultdict
 from itertools import product, pairwise
+from numbers import Integral, Real
 from pathlib import Path
 from pprint import pprint
 import numpy as np
 from sklearn.tree import ExtraTreeRegressor
 from sklearn.utils import check_random_state
-from collections import defaultdict
+from sklearn.utils._param_validation import validate_params, Interval
 from hypertrees.melter import row_cartesian_product
 
 DIR_HERE = Path(__file__).resolve().parent
@@ -23,8 +25,8 @@ def parse_args(args=None):
 
 
 def make_interaction_data(
-         shape, nattrs, func=None, nrules=5, quiet=False, noise=0.,
-         random_state=None, return_intervals=False,
+    shape, nattrs, func=None, nrules=5, quiet=False, noise=0.,
+    random_state=None, return_intervals=False, verbose=False,
  ):
     random_state = check_random_state(random_state)
 
@@ -35,12 +37,13 @@ def make_interaction_data(
     # shape contains the number of instances in each axis database, i.e.
     # its number of rows. nattrs contains their numbers of columns, i.e.
     # how many attributes per axis.
-    print("Generating X...")
-    XX = [random_state.random((ni, nj), dtype=np.float32)
-          for ni, nj in zip(shape, nattrs)]
+    if verbose:
+        print("Generating X...")
+    XX = [random_state.rand(ni, nj) for ni, nj in zip(shape, nattrs)]
     X = row_cartesian_product(XX)
-    
-    print("Generating y...")
+
+    if verbose:
+        print("Generating y...")
     y = np.apply_along_axis(func, -1, X)
 
     if noise:
@@ -59,18 +62,18 @@ def make_intervals(
     boundaries = defaultdict(lambda: [0, 1])
 
     for _ in range(n_rules):
-        boundaries[random_state.integers(nattrs)].append(random_state.random())
-    
+        boundaries[random_state.randint(nattrs)].append(random_state.random())
+
     intervals = {}
     for attr, bounds in boundaries.items():
         intervals[attr] = list(pairwise(sorted(bounds)))
 
-    print("Generated decision boundaries:")
-    pprint(dict(boundaries))
-    
+    # print("Generated decision boundaries:")
+    # pprint(dict(boundaries))
+
     return intervals
 
-    
+
 def make_binary_interaction_func(
     nattrs, n_rules, random_state=None,
 ):
@@ -80,7 +83,7 @@ def make_binary_interaction_func(
     attrs = list(intervals.keys())
     interv = list(intervals.values())
     invert = random_state.choice(2)
-    
+
     def interaction_func(x):
         indices = (range(len(i)) for i in interv)
 
@@ -92,12 +95,12 @@ def make_binary_interaction_func(
                 return (sum(ii) + invert) % 2
 
         raise ValueError("x values must be between 0 and 1")
-    
+
     return interaction_func, intervals
 
 
 def make_dense_interaction_func(
-    nattrs, n_boundaries, random_state=None,
+    nattrs, n_boundaries, random_state=None, n_rules=None,
 ):
     random_state = check_random_state(random_state)
     intervals = make_intervals(nattrs, n_rules, random_state)
@@ -109,7 +112,7 @@ def make_dense_interaction_func(
     #     random_state=params['seed'],
     #     shuffle=False,
     # )
-    
+
     def interaction_func(x):
         inner_rng = np.random.default_rng(seed)
 
@@ -123,10 +126,21 @@ def make_dense_interaction_func(
                 return return_value
 
         raise ValueError("x values must be between 0 and 1")
-    
+
     return interaction_func, intervals
 
 
+@validate_params(dict(
+    n_samples=[list, tuple, Interval(Integral, 1, None, closed="left")],
+    n_features=[list, tuple, Interval(Integral, 1, None, closed="left")],
+    n_targets=[list, tuple, Interval(Integral, 1, None, closed="left"), None],
+    min_target=[list, tuple, Real],
+    max_target=[list, tuple, Real],
+    noise=[Interval(Real, 0.0, None, closed="left")],
+    return_molten=["boolean"],
+    return_tree=["boolean"],
+    random_state=["random_state"],
+))
 def make_interaction_regression(
     n_samples=100,
     n_features=50,
@@ -149,22 +163,21 @@ def make_interaction_regression(
     n_targets = n_targets or n_samples
 
     X = [random_state.random((s, f)) for s, f in zip(n_targets, n_features)]
-    xx = row_cartesian_product(X)
-    y = (max_target - min_target) * random_state.random(np.prod(n_targets))
-
-    tree = ExtraTreeRegressor(
-        min_samples_leaf=1,
-        max_features=1,
+    y = (
+        random_state.random(n_targets)
+        * (max_target - min_target)
+        + min_target
     )
-    tree.fit(xx, y)
 
+    tree = ExtraTreeRegressor(min_samples_leaf=1, max_features=1)
+    tree.fit(row_cartesian_product(X), y.reshape(-1))
+
+    # Make new data
     X = [random_state.random((s, f)) for s, f in zip(n_samples, n_features)]
-
     X_molten = row_cartesian_product(X)
     Y_molten = tree.predict(X_molten)
     if noise > 0.0:
         Y_molten += random_state.normal(scale=noise, size=Y_molten.size)
-
     Y = Y_molten.reshape(n_samples)
 
     ret = [X, Y]

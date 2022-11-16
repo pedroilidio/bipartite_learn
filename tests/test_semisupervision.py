@@ -3,21 +3,23 @@ from pathlib import Path
 from time import time
 import numpy as np
 from functools import partial
+import pytest
 
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.tree._splitter import BestSplitter
+from sklearn.utils import check_random_state
 
-from hypertrees.tree import DecisionTreeRegressor2D
-from hypertrees.tree._nd_splitter import make_2d_splitter
+from hypertrees.tree import BipartiteDecisionTreeRegressor
+from hypertrees.tree._splitter_factory import (
+    make_2dss_splitter,
+)
 from hypertrees.tree._semisupervised_criterion import (
-    SSMSE, SSCompositeCriterion, make_2dss_splitter,
+    SSMSE, SSCompositeCriterion,
     SingleFeatureSSCompositeCriterion, MSE2DSFSS,
 )
 
 from hypertrees.tree._semisupervised_classes import (
     DecisionTreeRegressorSS, DecisionTreeRegressor2DSS,
-    DecisionTreeRegressorDS, DecisionTreeRegressor2DDS,
-    DecisionTreeRegressorSFSS, DecisionTreeRegressor2DSFSS,
 )
 
 from hypertrees.tree._semisupervised_splitter import BestSplitterSFSS
@@ -34,118 +36,114 @@ logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 
 # Default test params
 DEF_PARAMS = dict(
-    seed=7,
-    seed_end=-1,
-    shape=(50, 60),
-    nattrs=(10, 9),
-    nrules=10,
+    n_samples=(50, 60),
+    n_features=(10, 9),
     min_samples_leaf=100,
-    transpose_test=False,
     noise=0.1,
-    inspect=False,
-    plot=False,
-    save_trees=False,
     supervision=-1.,
+    random_state=0,
 )
 
 
-def test_supervised_component(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
+def test_supervised_component(**params):
+    params = DEF_PARAMS | params
 
     treess = DecisionTreeRegressorSS(
         supervision=1,
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        random_state=PARAMS['seed'],
+        min_samples_leaf=params['min_samples_leaf'],
+        random_state=params['random_state'],
     )
 
     return compare_trees(
         tree1=treess,
         tree2=DecisionTreeRegressor,
         tree2_is_2d=False,
-        **PARAMS,
+        **params,
     )
 
 
-def test_unsupervised_component(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
+def test_unsupervised_component(**params):
+    params = DEF_PARAMS | params
 
     treess = DecisionTreeRegressorSS(
         supervision=0,
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        random_state=PARAMS['seed'],
+        min_samples_leaf=params['min_samples_leaf'],
+        random_state=params['random_state'],
     )
     return compare_trees(
         tree1=DecisionTreeRegressor,
         tree2=treess,
         tree2_is_2d=False,
         tree1_is_unsupervised=True,
-        **PARAMS,
+        **params,
     )
 
 
-def test_supervised_component_2d(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
+def test_supervised_component_2d(**params):
+    params = DEF_PARAMS | params
 
     treess = DecisionTreeRegressor2DSS(
         supervision=1.,
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        random_state=PARAMS['seed'],
+        min_samples_leaf=params['min_samples_leaf'],
+        random_state=params['random_state'],
     )
     return compare_trees(
         tree1=DecisionTreeRegressor,
         tree1_is_unsupervised=False,
         tree2=treess,
         tree2_is_2d=True,
-        **PARAMS,
+        **params,
     )
 
 
-def test_unsupervised_component_2d(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
+def test_unsupervised_component_2d(**params):
+    params = DEF_PARAMS | params
 
     treess = DecisionTreeRegressor2DSS(
         supervision=0.,
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        random_state=PARAMS['seed'],
+        min_samples_leaf=params['min_samples_leaf'],
+        random_state=params['random_state'],
     )
     return compare_trees(
         tree1=DecisionTreeRegressor,
         tree1_is_unsupervised=True,
         tree2=treess,
         tree2_is_2d=True,
-        **PARAMS,
+        **params,
     )
 
 
-def test_semisupervision_1d2d(supervision=None, **PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
-    rstate = np.random.RandomState(PARAMS['seed'])
+def test_semisupervision_1d2d(supervision=None, **params):
+    params = DEF_PARAMS | params
+    rstate = check_random_state(params['random_state'])
     if supervision in (None, -1):
         supervision = rstate.random()
     print('Supervision level:', supervision)
 
     tree1 = DecisionTreeRegressorSS(
         supervision=supervision,
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        random_state=PARAMS['seed'],
+        min_samples_leaf=params['min_samples_leaf'],
+        random_state=params['random_state'],
     )
     tree2 = DecisionTreeRegressor2DSS(
         supervision=supervision,
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        random_state=PARAMS['seed'],
+        min_samples_leaf=params['min_samples_leaf'],
+        random_state=params['random_state'],
     )
 
+    breakpoint()
     return compare_trees(
         tree1=tree1,
         tree1_is_unsupervised=False,
         tree2=tree2,
         tree2_is_2d=True,
-        **PARAMS,
+        **params,
     )
 
 
-def test_dynamic_supervision_1d2d(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
+@pytest.mark.skip
+def test_dynamic_supervision_1d2d(**params):
+    params = DEF_PARAMS | params
 
     # FIXME: Are not they supposed to match?
     return compare_trees(
@@ -153,24 +151,25 @@ def test_dynamic_supervision_1d2d(**PARAMS):
         tree2=DecisionTreeRegressor2DDS,
         tree1_is_unsupervised=False,
         tree2_is_2d=True,
-        **PARAMS,
+        **params,
     )
 
 
-def test_single_feature_semisupervision_1d_sup(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
-    rstate = np.random.RandomState(PARAMS['seed'])
+@pytest.mark.skip
+def test_single_feature_semisupervision_1d_sup(**params):
+    params = DEF_PARAMS | params
+    rstate = check_random_state(params['random_state'])
 
     splitter1d = BestSplitterSFSS(
         criterion=SingleFeatureSSCompositeCriterion(
             supervision=1.,
             criterion=MSE,
-            n_features=np.sum(PARAMS['nattrs']),
-            n_samples=np.prod(PARAMS['shape']),
+            n_features=np.sum(params['n_features']),
+            n_samples=np.prod(params['n_samples']),
             n_outputs=1,
         ),
-        max_features=np.sum(PARAMS['nattrs']),
-        min_samples_leaf=PARAMS['min_samples_leaf'],
+        max_features=np.sum(params['n_features']),
+        min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
         random_state=rstate,
     )
@@ -182,13 +181,14 @@ def test_single_feature_semisupervision_1d_sup(**PARAMS):
     return compare_trees(
         tree1=tree1,
         tree2_is_2d=True,
-        **PARAMS,
+        **params,
     )
 
 
-def test_single_feature_semisupervision_1d2d(supervision=None, **PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
-    rstate = np.random.RandomState(PARAMS['seed'])
+@pytest.mark.skip
+def test_single_feature_semisupervision_1d2d(supervision=None, **params):
+    params = DEF_PARAMS | params
+    rstate = check_random_state(params['random_state'])
     if supervision is None:
         supervision = rstate.random()
     print('Supervision level:', supervision)
@@ -198,26 +198,26 @@ def test_single_feature_semisupervision_1d2d(supervision=None, **PARAMS):
             supervision=supervision,
             criterion=MSE,
             n_features=1.,
-            n_samples=np.prod(PARAMS['shape']),
+            n_samples=np.prod(params['n_samples']),
             n_outputs=1,
         ),
-        max_features=np.sum(PARAMS['nattrs']),
-        min_samples_leaf=PARAMS['min_samples_leaf'],
+        max_features=np.sum(params['n_features']),
+        min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
         random_state=rstate,
     )
 
-    ss2d_splitter=make_2dss_splitter(
+    ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitterSFSS,
         criteria=MSE,
         ss_criteria=SingleFeatureSSCompositeCriterion,
         supervision=supervision,
-        max_features=PARAMS['nattrs'],
+        max_features=params['n_features'],
         n_features=1,
-        n_samples=PARAMS['shape'],
+        n_samples=params['n_samples'],
         n_outputs=1,
         random_state=rstate,
-        min_samples_leaf=PARAMS['min_samples_leaf'],
+        min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
         criterion_wrapper_class=MSE2DSFSS,
     )
@@ -234,14 +234,15 @@ def test_single_feature_semisupervision_1d2d(supervision=None, **PARAMS):
         tree2=tree2,
         tree1_is_unsupervised=False,
         tree2_is_2d=True,
-        **PARAMS,
+        **params,
     )
 
 
-def test_single_feature_semisupervision_1d2d_classes(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
-    rstate = np.random.RandomState(PARAMS['seed'])
-    supervision = PARAMS['supervision']
+@pytest.mark.skip
+def test_single_feature_semisupervision_1d2d_classes(**params):
+    params = DEF_PARAMS | params
+    rstate = check_random_state(params['random_state'])
+    supervision = params['supervision']
 
     if supervision == -1:
         supervision = rstate.random()
@@ -254,31 +255,31 @@ def test_single_feature_semisupervision_1d2d_classes(**PARAMS):
         tree2=partial(DecisionTreeRegressor2DSFSS, supervision=supervision),
         tree1_is_unsupervised=False,
         tree2_is_2d=True,
-        **PARAMS,
+        **params,
     )
 
 
-def main(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
-    test_supervised_component(**PARAMS)
-    test_unsupervised_component(**PARAMS)
-    test_supervised_component_2d(**PARAMS)
-    test_unsupervised_component_2d(**PARAMS)
+def main(**params):
+    params = DEF_PARAMS | params
+    test_supervised_component(**params)
+    test_unsupervised_component(**params)
+    test_supervised_component_2d(**params)
+    test_unsupervised_component_2d(**params)
 
-    # FIXME: seed=82; seed=3 nrules=3
-    # FIXME: --seed 2133 --supervision .03
-    # FIXME: --seed 82 --supervision .5
-    ## When actual impurity is used intead of the proxies
-    # --seed 8221324 --supervision .3
-    # --seed 31284009 --supervision .3
-    # --seed 1 --supervision .1
-    # --seed 2 --supervision .1
-    test_semisupervision_1d2d(**PARAMS)  
+    # FIXME: random_state=82; random_state=3 nrules=3
+    # FIXME: --random_state 2133 --supervision .03
+    # FIXME: --random_state 82 --supervision .5
+    # When actual impurity is used intead of the proxies
+    # --random_state 8221324 --supervision .3
+    # --random_state 31284009 --supervision .3
+    # --random_state 1 --supervision .1
+    # --random_state 2 --supervision .1
+    test_semisupervision_1d2d(**params)
 
-    test_dynamic_supervision_1d2d(**PARAMS)
-    # test_single_feature_semisupervision_1d_sup(**PARAMS)
-    # test_single_feature_semisupervision_1d2d(**PARAMS)  # FIXME
-    # test_single_feature_semisupervision_1d2d_classes(**PARAMS)
+    test_dynamic_supervision_1d2d(**params)
+    # test_single_feature_semisupervision_1d_sup(**params)
+    # test_single_feature_semisupervision_1d2d(**params)  # FIXME
+    # test_single_feature_semisupervision_1d2d_classes(**params)
 
 
 if __name__ == "__main__":
@@ -291,12 +292,13 @@ if __name__ == "__main__":
         unsuccessful = []
         nseeds = 100
 
-        for s in range(params['seed'], params['seed_end']):
-            params['seed'] = s
+        for s in range(params['random_state'], params['seed_end']):
+            params['random_state'] = s
             try:
                 main(**params)
             except AssertionError:
                 unsuccessful.append(s)
-        
-        print(f'Success rate: {len(unsuccessful)}/{nseeds} = {100*len(unsuccessful)/nseeds:.3f}%')
+
+        print(
+            f'Success rate: {len(unsuccessful)}/{nseeds} = {100*len(unsuccessful)/nseeds:.3f}%')
         print('Failed seeds:', *unsuccessful)

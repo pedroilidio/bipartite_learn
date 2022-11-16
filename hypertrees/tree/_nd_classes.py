@@ -8,7 +8,7 @@ randomized trees, adapted from sklearn for bipartite training data.
 #
 # License: BSD 3 clause
 
-from numbers import Integral, Number, Real
+from numbers import Integral, Real
 import warnings
 import copy
 from abc import ABCMeta
@@ -52,9 +52,10 @@ from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import (
     CriterionWrapper2D, MSE_Wrapper2D, PBCTCriterionWrapper,
 )
-from ._nd_splitter import Splitter2D, make_2d_splitter
+from ._nd_splitter import Splitter2D
 from ..melter import row_cartesian_product
 from ..utils import check_similarity_matrix, _X_is_multipartite
+from ._splitter_factory import make_2d_splitter
 
 
 __all__ = [
@@ -107,8 +108,8 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
     Use derived classes instead.
     """
 
-    _parameter_constraints: dict = {
-        **BaseDecisionTree._parameter_constraints,
+    _parameter_constraints: dict = BaseDecisionTree._parameter_constraints | {
+        "splitter": [StrOptions({"best", "random"}), Hidden(Splitter2D)],
         "min_rows_split": [
             # min value is not 2 to still allow split on the other axis.
             Interval(Integral, 1, None, closed="left"),
@@ -145,6 +146,9 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             StrOptions({"sqrt", "log2"}),
             None,
         ],
+        "bipartite_adapter": [
+            StrOptions({"global_single_output", "local_multioutput"}),
+        ],
         "prediction_weights": [
             "array-like",
             StrOptions({"precomputed", "leaf_uniform", "uniform", "raw"}),
@@ -178,7 +182,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter=None,
+        bipartite_adapter="global_single_output",
         prediction_weights=None,
     ):
         self.criterion = criterion
@@ -193,7 +197,6 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         self.min_impurity_decrease = min_impurity_decrease
         self.class_weight = class_weight
         self.ccp_alpha = ccp_alpha
-        # Bipartite parameters:
         self.min_rows_split = min_rows_split
         self.min_cols_split = min_cols_split
         self.min_rows_leaf = min_rows_leaf
@@ -333,8 +336,10 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         #       splitter's max_features so that the total features selected
         #       considering both axes is constant.
         if self.max_features is not None:
-            raise NotImplementedError("Please set 'max_row_features' and "
-                                      "'max_col_features' instead.")
+            raise NotImplementedError(
+                "max_features!=None is not implemented.Please set"
+                "'max_row_features' and 'max_col_features' instead."
+            )
         max_features = self.n_features_in_
 
         # if isinstance(self.max_features, str):
@@ -436,9 +441,9 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                 self.n_outputs_ = n_raw_outputs
         else:
             n_raw_outputs = self.n_outputs_
-        
+
         self._n_raw_outputs = n_raw_outputs
-        
+
         if self.bipartite_adapter == "global_single_output":
             if self.criterion != "squared_error":
                 raise NotImplementedError(  # TODO
@@ -550,38 +555,42 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         n_samples,
         n_outputs,
         sparse=False,
-        ax_max_features=None,
         min_samples_leaf=1,
         min_weight_leaf=0.,
+        ax_max_features=None,
         ax_min_samples_leaf=1,
         ax_min_weight_leaf=0.,
         random_state=None,
     ):
         if isinstance(self.splitter, Splitter2D):
-            return self.splitter
+            # Make a deepcopy in case the splitter has mutable attributes that
+            # might be shared and modified concurrently during parallel fitting
+            return copy.deepcopy(self.splitter)
 
         bipartite_adapter = self.bipartite_adapter
         if isinstance(bipartite_adapter, str):
             bipartite_adapter = BIPARTITE_CRITERIA[bipartite_adapter]
 
         criterion = self.criterion
-        if not isinstance(criterion, (tuple, list)):
-            criterion = [criterion, criterion]
-        for ax in range(2):
-            if isinstance(criterion[ax], str):
-                if is_classifier(self):
-                    criterion[ax] = CRITERIA_CLF[criterion[ax]]
-                else:
-                    criterion[ax] = CRITERIA_REG[criterion[ax]]
+        if isinstance(criterion, str):
+            if is_classifier(self):
+                criterion = CRITERIA_CLF[criterion]
+            else:
+                criterion = CRITERIA_REG[criterion]
+        else:
+            criterion = copy.deepcopy(criterion)
 
         SPLITTERS = SPARSE_SPLITTERS if sparse else DENSE_SPLITTERS
 
         splitter = self.splitter
+        # User is able to specify a splitter for each axis
         if not isinstance(splitter, (tuple, list)):
             splitter = [splitter, splitter]
         for ax in range(2):
             if isinstance(splitter[ax], str):
                 splitter[ax] = SPLITTERS[splitter[ax]]
+            else:  # is a Splitter instance
+                splitter[ax] = copy.deepcopy(splitter[ax])
 
         splitter = make_2d_splitter(
             splitters=splitter,
@@ -618,7 +627,8 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 
             else:
                 class_type = self.classes_[0].dtype
-                predictions = np.zeros((n_samples, self.n_outputs_), dtype=class_type)
+                predictions = np.zeros(
+                    (n_samples, self.n_outputs_), dtype=class_type)
                 for k in range(self.n_outputs_):
                     predictions[:, k] = self.classes_[k].take(
                         np.argmax(proba[:, k], axis=1), axis=0
@@ -683,7 +693,9 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 
 
 class BipartiteDecisionTreeRegressor(
-    MultipartiteRegressorMixin, BaseBipartiteDecisionTree, DecisionTreeRegressor
+    MultipartiteRegressorMixin,
+    BaseBipartiteDecisionTree,
+    DecisionTreeRegressor,
 ):
     """Decision tree regressor tailored to bipartite input.
 
@@ -897,7 +909,7 @@ class BipartiteDecisionTreeRegressor(
     .. [1] :doi:`Global Multi-Output Decision Trees for interaction prediction \
        <doi.org/10.1007/s10994-018-5700-x>`
        Pliakos, Geurts and Vens, 2018
-    
+
     .. [2] :doi:`Drug-target interaction prediction with tree-ensemble \
            learning and output space reconstruction \
            <doi.org/10.1186/s12859-020-3379-z>`
@@ -910,7 +922,7 @@ class BipartiteDecisionTreeRegressor(
     >>> from sklearn.tree import DecisionTreeRegressor
     >>> X, y = load_diabetes(return_X_y=True)
 
-        
+
         cross_val_score(regressor, X, y, cv=10)
     ...                    # doctest: +SKIP
     ...
@@ -918,7 +930,7 @@ class BipartiteDecisionTreeRegressor(
            0.16...,  0.11..., -0.73..., -0.30..., -0.00...])
     """
     _parameter_constraints: dict = {
-        **BaseDecisionTree._parameter_constraints,
+        **BaseBipartiteDecisionTree._parameter_constraints,
         "criterion": [
             StrOptions({"squared_error"}),
             Hidden(StrOptions({"friedman_mse", "absolute_error", "poisson"})),
@@ -1233,7 +1245,7 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
     .. [1] :doi:`Global Multi-Output Decision Trees for interaction prediction \
        <doi.org/10.1007/s10994-018-5700-x>`
        Pliakos, Geurts and Vens, 2018
-    
+
     .. [2] :doi:`Drug-target interaction prediction with tree-ensemble \
            learning and output space reconstruction \
            <doi.org/10.1186/s12859-020-3379-z>`
@@ -1246,7 +1258,7 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
     >>> from sklearn.tree import DecisionTreeRegressor
     >>> X, y = load_diabetes(return_X_y=True)
 
-        
+
         cross_val_score(regressor, X, y, cv=10)
     ...                    # doctest: +SKIP
     ...

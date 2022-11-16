@@ -14,12 +14,12 @@ cdef class SemisupervisedCriterion(Criterion):
     """Base class for semantic purposes and future maintenance.
     """
 
-cdef class SSRegressionCriterion(SemisupervisedCriterion):
-    """Base class for semantic purposes and future maintenance.
-    """
-    cdef double[::1] sum_total
-    cdef double[::1] sum_left
-    cdef double[::1] sum_right
+# cdef class SSRegressionCriterion(SemisupervisedCriterion):
+#     """Base class for semantic purposes and future maintenance.
+#     """
+#     cdef double[::1] sum_total
+#     cdef double[::1] sum_left
+#     cdef double[::1] sum_right
 
 cdef class SSCompositeCriterion(SemisupervisedCriterion):
     cdef public RegressionCriterion supervised_criterion

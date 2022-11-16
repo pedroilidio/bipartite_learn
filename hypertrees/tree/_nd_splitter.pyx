@@ -1,4 +1,4 @@
-# cython: boundscheck=False
+# cython: boundscheck=True
 import copy
 import warnings
 from sklearn.tree._splitter cimport Splitter
@@ -169,8 +169,8 @@ cdef class Splitter2D:
 
         # TODO: Uncomment?
         # Done in criterion_wrapper.init() by node_reset
-        # self.splitter_rows.criterion.reset()
-        # self.splitter_cols.criterion.reset()
+        self.splitter_rows.criterion.reset()
+        self.splitter_cols.criterion.reset()
 
         weighted_n_node_samples[0] = \
             self.criterion_wrapper.weighted_n_node_samples
@@ -252,88 +252,3 @@ cdef class Splitter2D:
     cdef double node_impurity(self) nogil:
         """Return the impurity of the current node."""
         return self.criterion_wrapper.node_impurity()
-
-
-def make_2d_splitter(
-       splitters,
-       criteria,
-       *,
-       n_samples=None,
-       max_features=None,
-       n_outputs=1,
-       min_samples_leaf=1,
-       min_weight_leaf=0.0,
-       ax_min_samples_leaf=1,
-       ax_min_weight_leaf=0.0,
-       random_state=None,
-       criterion_wrapper_class=MSE_Wrapper2D,
-    ):
-    """Factory function of Splitter2D instances.
-
-    Since the building of a Splitter2D is somewhat counterintuitive, this func-
-    tion is provided to simplificate the process. With exception of n_samples,
-    the remaining parameters may be set to a single value or a 2-valued
-    tuple or list, to specify them for each axis.
-
-    ax_min_samples_leaf represents [min_rows_leaf, min_cols_leaf]
-    """
-    if not isinstance(n_samples, (list, tuple)):
-        n_samples = [n_samples, n_samples]
-    if not isinstance(max_features, (list, tuple)):
-        max_features = [max_features, max_features]
-    if not isinstance(n_outputs, (list, tuple)):
-        n_outputs = [n_outputs, n_outputs]
-    if not isinstance(ax_min_samples_leaf, (list, tuple)):
-        ax_min_samples_leaf = [ax_min_samples_leaf, ax_min_samples_leaf]
-    if not isinstance(ax_min_weight_leaf, (list, tuple)):
-        ax_min_weight_leaf = [ax_min_weight_leaf, ax_min_weight_leaf]
-    if not isinstance(splitters, (list, tuple)):
-        splitters = [copy.deepcopy(splitters), copy.deepcopy(splitters)]
-    if not isinstance(criteria, (list, tuple)):
-        criteria = [copy.deepcopy(criteria), copy.deepcopy(criteria)]
-    if not isinstance(random_state, np.random.RandomState):
-        random_state = np.random.RandomState(random_state)
-
-    for ax in range(2):
-        # Make criterion
-        if isinstance(criteria[ax], type):
-            if n_samples[ax] is None:
-                raise ValueError(
-                    f"n_samples[{ax}] must be provided if criteria"
-                    f"[{ax}]={criteria[ax]} is a Criterion type.")
-            criteria[ax] = criteria[ax](
-                n_outputs=n_outputs[ax],
-                n_samples=n_samples[ax])
-
-        elif not isinstance(criteria[ax], Criterion):
-            raise TypeError
-
-        # Make splitter
-        if isinstance(splitters[ax], type):
-            if max_features[ax] is None:
-                raise ValueError(
-                    f"max_features[{ax}] must be provided if splitters"
-                    f"[{ax}]={splitters[ax]} is a Splitter type.")
-            splitters[ax] = splitters[ax](
-                criterion=criteria[ax],
-                max_features=max_features[ax],
-                min_samples_leaf=ax_min_samples_leaf[ax],
-                min_weight_leaf=ax_min_weight_leaf[ax],
-                random_state=random_state,
-            )
-        elif criteria[ax] is not None:
-                warnings.warn("Since splitters[ax] is not a class, the provided"
-                            " criteria[ax] is being ignored.")
-
-    # Wrap criteria.
-    criterion_wrapper = \
-        criterion_wrapper_class(splitters[0], splitters[1])
-
-    # Wrap splitters.
-    return Splitter2D(
-        splitter_rows=splitters[0],
-        splitter_cols=splitters[1],
-        criterion_wrapper=criterion_wrapper,
-        min_samples_leaf=min_samples_leaf,
-        min_weight_leaf=min_weight_leaf,
-    )

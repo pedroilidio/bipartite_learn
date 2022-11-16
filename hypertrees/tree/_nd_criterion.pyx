@@ -1,4 +1,4 @@
-# cython: boundscheck=False
+# cython: boundscheck=True
 from sklearn.tree._criterion cimport RegressionCriterion, Criterion
 # from sklearn.tree._criterion import MSE
 from libc.stdlib cimport malloc, calloc, free, realloc

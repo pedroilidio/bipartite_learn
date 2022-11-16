@@ -10,7 +10,6 @@ from sklearn.base import clone
 import sklearn.tree
 from sklearn.utils._testing import assert_allclose
 from sklearn.utils.validation import check_symmetric
-from sklearn.datasets import make_checkerboard
 
 from hypertrees.tree._nd_classes import (
     BipartiteDecisionTreeRegressor,
@@ -96,7 +95,13 @@ def compare_trees(
     pprint(params)
 
     with stopwatch():
-        XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
+        XX, Y, x, y = make_interaction_regression(
+            return_molten=True,
+            n_samples=params['n_samples'],
+            n_features=params['n_features'],
+            noise=params['noise'],
+            random_state=params['random_state'],
+        )
 
     # ######### Instantiate trees
     if isinstance(tree2, Callable):
@@ -174,28 +179,6 @@ def test_simple_tree_1d2d(
     )
 
 
-def test_pbct_regressor(**params):
-    params = DEF_PARAMS | params
-
-    print('Starting with settings:')
-    pprint(params)
-
-    with stopwatch():
-        XX, Y = make_interaction_regression(**params)
-
-    pbct = BipartiteDecisionTreeRegressor(
-        prediction_weights="leaf_uniform",
-        bipartite_adapter="local_multioutput",
-    )
-    pbct = clone(pbct)
-    print("* Passed cloning test.")
-
-    pbct.fit(XX, Y)
-    print("* Passed fit.")
-    get_leaves(pbct)
-    print(pbct.predict(np.hstack([XX[0][:3], XX[1][:3]])))
-
-
 @pytest.mark.parametrize(
     "pred_weight", [None, "uniform", "precomputed", lambda x: x**2])
 class TestGMOSymmetry:
@@ -226,26 +209,32 @@ class TestGMOSymmetry:
         ):
             pbct.fit(self.XX_sim, self.Y_sim)
 
-    def test_working(self, pred_weight, **params):
+    @pytest.mark.parametrize("splitter", ["random", "best"])
+    def test_working(self, pred_weight, splitter, **params):
         params = DEF_PARAMS | params
-        pbct = clone(self.pbct).set_params(prediction_weights=pred_weight)
+        pbct = clone(self.pbct).set_params(
+            prediction_weights=pred_weight,
+            splitter=splitter,
+        )
         XX_sim = [check_symmetric(Xi, raise_warning=False)
                   for Xi in self.XX_sim]
-        pbct = clone(pbct)
         pbct.fit(XX_sim, self.Y_sim)
         pbct.predict(np.hstack([XX_sim[0][:3], XX_sim[1][:3]]))
 
 
-def test_identity_gso(**params):
+@pytest.mark.parametrize("splitter", ["random", "best"])
+def test_identity_gso(splitter, **params):
     params = DEF_PARAMS | params
     XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
-    tree = BipartiteDecisionTreeRegressor(min_samples_leaf=1)
+    tree = BipartiteDecisionTreeRegressor(
+        min_samples_leaf=1, splitter=splitter)
     assert_allclose(tree.fit(XX, Y).predict(XX).reshape(Y.shape), Y)
 
 
 @pytest.mark.parametrize(
     "pred_weights", ["leaf_uniform", None, "uniform", lambda x: x**2])
-def test_identity_gmo(pred_weights, **params):
+@pytest.mark.parametrize("splitter", ["random", "best"])
+def test_identity_gmo(pred_weights, splitter, **params):
     params = DEF_PARAMS | params
     params['n_features'] = params['n_samples']
 
@@ -254,6 +243,7 @@ def test_identity_gmo(pred_weights, **params):
         min_samples_leaf=1,
         bipartite_adapter="local_multioutput",
         prediction_weights=pred_weights,
+        splitter=splitter,
     )
     XX = [check_symmetric(X, raise_warning=False) for X in XX]
     # Y /= Y.max()
@@ -271,7 +261,8 @@ def test_identity_gmo(pred_weights, **params):
 
 
 @pytest.mark.parametrize("min_samples_leaf", [1, 20, 100])
-def test_leaf_mean_symmetry(min_samples_leaf):
+@pytest.mark.parametrize("splitter", ["random", "best"])
+def test_leaf_mean_symmetry(min_samples_leaf, splitter):
     params = DEF_PARAMS
 
     XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
@@ -279,6 +270,7 @@ def test_leaf_mean_symmetry(min_samples_leaf):
         min_samples_leaf=min_samples_leaf,
         bipartite_adapter="local_multioutput",
         prediction_weights="raw",
+        splitter=splitter,
     )
     tree.fit(XX, Y)
     pred = tree.predict(XX)

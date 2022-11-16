@@ -8,14 +8,16 @@ from pytest import raises
 from sklearn.tree._criterion import MSE
 from sklearn.tree._splitter import BestSplitter
 
-from hypertrees.tree._nd_splitter import make_2d_splitter
+from hypertrees.tree._splitter_factory import (
+    make_2d_splitter,
+    make_2dss_splitter,
+)
 from hypertrees.tree._nd_criterion import (
     PBCTCriterionWrapper,
 )
 from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
     SSCompositeCriterionAlves,
-    make_2dss_splitter,
     SingleFeatureSSCompositeCriterion,
     MSE2DSFSS,
     SFSSMSE,
