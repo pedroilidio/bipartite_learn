@@ -54,9 +54,14 @@ DEF_PARAMS = dict(
     plot=False,
     start=0,
     end=0,
-    supervision=-1.,
     verbose=False,
 )
+
+
+@pytest.fixture(
+    params=[0.0, 0.00001, 0.1, 0.2328, 0.569, 0.782, 0.995, 1.0])
+def supervision(request):
+    return request.param
 
 
 def compare_splitters_1d2d_ideal(
@@ -201,6 +206,7 @@ def compare_splitters_1d2d(
             x_, y_ = x_.copy(), y_.copy()
             # Apply 'supervision' parameter weighting
             sup = splitter1.criterion.supervision
+            # y_.shape[1] == n_features + n_outputs = n_features + 1
             y_[:, -1] *= np.sqrt(sup * y_.shape[1])
             y_[:, :-1] *= np.sqrt((1-sup) * y_.shape[1] / (y_.shape[1]-1))
 
@@ -325,15 +331,11 @@ def test_ss_1d2d_unsup(**params):
     )
 
 
-def test_ss_1d2d(**params):
+def test_ss_1d2d(supervision, **params):
     """Compare 1D to 2D version of semisupervised MSE splitter.
     """
     print('*** test_ss_1d2d')
     params = DEF_PARAMS | params
-    supervision = params.get('supervision', -1.)
-    if supervision == -1.:
-        supervision = check_random_state(params['seed']).random()
-    print(f"* Set supervision={supervision}")
 
     splitter1 = BestSplitter(
         criterion=SSCompositeCriterion(
@@ -399,7 +401,6 @@ def test_ss_1d2d_ideal_split(**params):
 def test_sfss_1d_sup(**params):
     print('*** test_sfss_1d_sup')
     params = DEF_PARAMS | params
-    rstate = check_random_state(params['seed'])
 
     splitter1 = BestSplitterSFSS(
         criterion=SingleFeatureSSCompositeCriterion(
@@ -412,7 +413,7 @@ def test_sfss_1d_sup(**params):
         max_features=np.sum(params['nattrs']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
-        random_state=rstate,
+        random_state=params['seed'],
     )
 
     return compare_splitters_1d2d(

@@ -17,7 +17,7 @@ from hypertrees.tree._nd_classes import (
 )
 from hypertrees.melter import row_cartesian_product
 
-from make_examples import make_interaction_regression
+from make_examples import make_interaction_regression, make_interaction_data
 from test_utils import stopwatch, parse_args, gen_mock_data, melt_2d_data
 
 # from sklearn.tree._tree import DTYPE_t, DOUBLE_t
@@ -33,18 +33,6 @@ DEF_PARAMS = dict(
     noise=0.1,
     random_state=None,
 )
-
-
-def print_eval_model(tree, XX, Y):
-    x_gen = (np.hstack(x).reshape(1, -1) for x in product(*XX))
-    pred = np.fromiter((tree.predict(x) for x in x_gen), dtype=float, like=Y)
-    print('Final MSE:', np.mean((pred.reshape(-1) - Y.reshape(-1))**2))
-    print('R^2:', np.corrcoef(pred.reshape(-1), Y.reshape(-1))[0, 1] ** 2)
-    fake_preds = Y.reshape(-1).copy()
-    np.random.shuffle(fake_preds)
-    print('Random baseline MSE:', np.mean((fake_preds - Y.reshape(-1))**2))
-    print('Random baseline R^2:',
-          np.corrcoef(fake_preds, Y.reshape(-1))[0, 1] ** 2)
 
 
 def get_leaves(tree, verbose=True, return_values=False):
@@ -72,7 +60,7 @@ def compare_trees(
     tree1=DecisionTreeRegressor,
     tree2=BipartiteDecisionTreeRegressor,
     tree2_is_2d=True,
-    tree1_is_unsupervised=False,
+    supervision=1.0,
     min_samples_leaf=1,
     **params,
 ):
@@ -95,13 +83,20 @@ def compare_trees(
     pprint(params)
 
     with stopwatch():
-        XX, Y, x, y = make_interaction_regression(
-            return_molten=True,
-            n_samples=params['n_samples'],
-            n_features=params['n_features'],
-            noise=params['noise'],
-            random_state=params['random_state'],
+        # XX, Y, x, y, gen_tree = make_interaction_regression(
+        #     return_molten=True,
+        #     return_tree=True,
+        #     n_samples=params['n_samples'],
+        #     n_features=params['n_features'],
+        #     noise=params['noise'],
+        #     random_state=params['random_state'],
+        #     n_targets=params.get('n_targets'),
+        # )
+        XX, Y = make_interaction_data(
+            shape=params['n_samples'],
+            nattrs=params['n_features'],
         )
+        x, y = row_cartesian_product(XX), Y.reshape(-1)
 
     # ######### Instantiate trees
     if isinstance(tree2, Callable):
@@ -121,18 +116,27 @@ def compare_trees(
     # an ExtraTree2d different from sklearn's ExtraTree.
 
     with stopwatch(f'Fitting {tree1.__class__.__name__}...'):
-        if tree1_is_unsupervised:
-            print('Using unsupervised data for tree1.')
+        if supervision == 1.0:
+            print('* Using supervised data for tree1.')
+            tree1.fit(x, y)
+        elif supervision == 0.0:
+            print('* Using unsupervised data for tree1.')
             tree1.fit(x, x)
         else:
-            tree1.fit(x, y)
+            print('* Using semisupervised data for tree1.')
+            # Apply 'supervision' parameter weighting
+            Xy = np.hstack((x.copy(), y.copy().reshape(-1, 1)))
+            # Xy.shape[1] == n_features + n_outputs = n_features + 1
+            Xy[:, -1] *= np.sqrt(supervision * Xy.shape[1])
+            Xy[:, :-1] *= np.sqrt((1-supervision) * Xy.shape[1] / (Xy.shape[1]-1))
+            tree1.fit(x, Xy)
 
     with stopwatch(f'Fitting {tree2.__class__.__name__}...'):
         if tree2_is_2d:
-            print('Using 2D data for tree2.')
+            print('* Using 2D data for tree2.')
             tree2.fit(XX, Y)
         else:
-            print('Using 1D data for tree2.')
+            print('* Using 1D data for tree2.')
             tree2.fit(x, y)
 
     tree1_n_samples_in_leaves = get_leaves(tree1)
@@ -142,16 +146,17 @@ def compare_trees(
     # Start of comparison tests
     # =========================================================================
 
-    leaves_comparison = \
-        tree1_n_samples_in_leaves == tree2_n_samples_in_leaves
-
-    # comparison_test = np.all(leaves_comparison)  # See issue #1
     comparison_test = \
         set(tree1_n_samples_in_leaves) == set(tree2_n_samples_in_leaves)
 
     assert (tree1_n_samples_in_leaves.shape[0] ==
             tree2_n_samples_in_leaves.shape[0]), \
         "Number of leaves differ."
+
+    leaves_comparison = \
+        tree1_n_samples_in_leaves == tree2_n_samples_in_leaves
+    # comparison_test = np.all(leaves_comparison)  # See issue #1
+
     assert (tree1_n_samples_in_leaves.sum() ==
             tree2_n_samples_in_leaves.sum()), \
         "Total weighted_n_samples of leaves differ."

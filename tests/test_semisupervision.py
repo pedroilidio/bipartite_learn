@@ -36,28 +36,55 @@ logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 
 # Default test params
 DEF_PARAMS = dict(
-    n_samples=(50, 60),
+    n_samples=(150, 160),
     n_features=(10, 9),
+    # n_targets=(2, 1),
+    min_target=0.0,
+    max_target=100.0,
     min_samples_leaf=100,
-    noise=0.1,
-    supervision=-1.,
+    noise=0.0,
     random_state=0,
 )
+
+
+@pytest.fixture(
+    params=[0.0, 0.00001, 0.1, 0.2328, 0.569, 0.782, 0.995, 1.0])
+def supervision(request):
+    return request.param
+
+
+def test_monopartite_semisupervised(supervision, **params):
+    params = DEF_PARAMS | params
+
+    treess = DecisionTreeRegressorSS(
+        supervision=supervision,
+        min_samples_leaf=params['min_samples_leaf'],
+        random_state=params['random_state'],
+    )
+
+    return compare_trees(
+        tree1=DecisionTreeRegressor,
+        tree2=treess,
+        tree2_is_2d=False,
+        supervision=supervision,
+        **params,
+    )
 
 
 def test_supervised_component(**params):
     params = DEF_PARAMS | params
 
     treess = DecisionTreeRegressorSS(
-        supervision=1,
+        supervision=1.0,
         min_samples_leaf=params['min_samples_leaf'],
         random_state=params['random_state'],
     )
 
     return compare_trees(
-        tree1=treess,
-        tree2=DecisionTreeRegressor,
+        tree1=DecisionTreeRegressor,
+        tree2=treess,
         tree2_is_2d=False,
+        supervision=1.0,
         **params,
     )
 
@@ -74,11 +101,12 @@ def test_unsupervised_component(**params):
         tree1=DecisionTreeRegressor,
         tree2=treess,
         tree2_is_2d=False,
-        tree1_is_unsupervised=True,
+        supervision=0.0,
         **params,
     )
 
 
+# FIXME: sometimes fails
 def test_supervised_component_2d(**params):
     params = DEF_PARAMS | params
 
@@ -89,9 +117,9 @@ def test_supervised_component_2d(**params):
     )
     return compare_trees(
         tree1=DecisionTreeRegressor,
-        tree1_is_unsupervised=False,
         tree2=treess,
         tree2_is_2d=True,
+        supervision=1.0,
         **params,
     )
 
@@ -106,19 +134,17 @@ def test_unsupervised_component_2d(**params):
     )
     return compare_trees(
         tree1=DecisionTreeRegressor,
-        tree1_is_unsupervised=True,
         tree2=treess,
         tree2_is_2d=True,
+        supervision=0.0,
         **params,
     )
 
 
-def test_semisupervision_1d2d(supervision=None, **params):
+def test_semisupervision_1d2d(supervision, **params):
     params = DEF_PARAMS | params
-    rstate = check_random_state(params['random_state'])
-    if supervision in (None, -1):
-        supervision = rstate.random()
     print('Supervision level:', supervision)
+    params['noise'] = 0.0
 
     tree1 = DecisionTreeRegressorSS(
         supervision=supervision,
@@ -128,22 +154,20 @@ def test_semisupervision_1d2d(supervision=None, **params):
     tree2 = DecisionTreeRegressor2DSS(
         supervision=supervision,
         min_samples_leaf=params['min_samples_leaf'],
-        max_col_features=1.0,
-        max_row_features=1.0,
         random_state=params['random_state'],
     )
 
-    breakpoint()
     return compare_trees(
         tree1=tree1,
-        tree1_is_unsupervised=False,
         tree2=tree2,
         tree2_is_2d=True,
+        supervision=1.0,  # tree1 will multiply the supervision
         **params,
     )
 
 
-@pytest.mark.skip
+@pytest.mark.skip(
+    reason="compare_trees still does not work with dynamic supervision")
 def test_dynamic_supervision_1d2d(**params):
     params = DEF_PARAMS | params
 
@@ -151,7 +175,6 @@ def test_dynamic_supervision_1d2d(**params):
     return compare_trees(
         tree1=DecisionTreeRegressorDS,
         tree2=DecisionTreeRegressor2DDS,
-        tree1_is_unsupervised=False,
         tree2_is_2d=True,
         **params,
     )
@@ -190,15 +213,15 @@ def test_single_feature_semisupervision_1d_sup(**params):
 @pytest.mark.skip
 def test_single_feature_semisupervision_1d2d(supervision=None, **params):
     params = DEF_PARAMS | params
-    rstate = check_random_state(params['random_state'])
     if supervision is None:
-        supervision = rstate.random()
+        supervision = check_random_state(params['random_state']).random()
     print('Supervision level:', supervision)
 
     splitter1d = BestSplitterSFSS(
         criterion=SingleFeatureSSCompositeCriterion(
             supervision=supervision,
-            criterion=MSE,
+            supervised_criterion=MSE,
+            unsupervised_criterion=MSE,
             n_features=1.,
             n_samples=np.prod(params['n_samples']),
             n_outputs=1,
@@ -206,19 +229,20 @@ def test_single_feature_semisupervision_1d2d(supervision=None, **params):
         max_features=np.sum(params['n_features']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
-        random_state=rstate,
+        random_state=check_random_state(params['random_state']),
     )
 
     ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitterSFSS,
-        criteria=MSE,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
         ss_criteria=SingleFeatureSSCompositeCriterion,
         supervision=supervision,
         max_features=params['n_features'],
         n_features=1,
         n_samples=params['n_samples'],
         n_outputs=1,
-        random_state=rstate,
+        random_state=check_random_state(params['random_state']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
         criterion_wrapper_class=MSE2DSFSS,
@@ -234,7 +258,6 @@ def test_single_feature_semisupervision_1d2d(supervision=None, **params):
     return compare_trees(
         tree1=tree1,
         tree2=tree2,
-        tree1_is_unsupervised=False,
         tree2_is_2d=True,
         **params,
     )
@@ -255,7 +278,6 @@ def test_single_feature_semisupervision_1d2d_classes(**params):
     return compare_trees(
         tree1=partial(DecisionTreeRegressorSFSS, supervision=supervision),
         tree2=partial(DecisionTreeRegressor2DSFSS, supervision=supervision),
-        tree1_is_unsupervised=False,
         tree2_is_2d=True,
         **params,
     )

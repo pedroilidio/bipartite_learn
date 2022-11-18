@@ -116,9 +116,9 @@ def make_2d_splitter(
 
 def make_2dss_splitter(
     splitters,
-    supervised_criteria,
-    unsupervised_criteria,
-    ss_criteria,
+    supervised_criteria=None,  # FIXME: validate, cannot pass None
+    unsupervised_criteria=None,
+    ss_criteria=None,
     supervision=0.5,
     n_features=None,
     n_samples=None,
