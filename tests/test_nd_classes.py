@@ -83,19 +83,20 @@ def compare_trees(
     pprint(params)
 
     with stopwatch():
-        # XX, Y, x, y, gen_tree = make_interaction_regression(
-        #     return_molten=True,
-        #     return_tree=True,
-        #     n_samples=params['n_samples'],
-        #     n_features=params['n_features'],
-        #     noise=params['noise'],
-        #     random_state=params['random_state'],
-        #     n_targets=params.get('n_targets'),
-        # )
-        XX, Y = make_interaction_data(
-            shape=params['n_samples'],
-            nattrs=params['n_features'],
+        XX, Y, x, y, gen_tree = make_interaction_regression(
+            return_molten=True,
+            return_tree=True,
+            n_samples=params['n_samples'],
+            n_features=params['n_features'],
+            noise=params['noise'],
+            random_state=params['random_state'],
+            max_depth=params.get('max_depth'),
+            n_targets=params.get('n_targets'),
         )
+        # XX, Y = make_interaction_data(
+        #     shape=params['n_samples'],
+        #     nattrs=params['n_features'],
+        # )
         x, y = row_cartesian_product(XX), Y.reshape(-1)
 
     # ######### Instantiate trees

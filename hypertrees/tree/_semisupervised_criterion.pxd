@@ -26,10 +26,27 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     cdef public RegressionCriterion unsupervised_criterion
     cdef const DOUBLE_t[:, ::1] X
     cdef public SIZE_t n_features
-    cdef public double supervision
-    cdef public double original_supervision
+
+    # The supervision attribute is a float between 0 and 1 that weights
+    # supervised and unsupervised impurities when calculating the total
+    # semisupervised impurity:
+    #
+    #   final_impurity = (
+    #     sup * self.supervised_criterion.node_impurity() + \
+    #     (1-sup) * self.unsupervised_criterion.node_impurity())
+    #
+    # Its value can be dynamically controlled by a Python callable passed to
+    # the constructor's update_supervision parameter, which should only receive
+    # the current SSCompositeCriterion instance as argument and return a float.
+    cdef public double supervision           # Current supervision amount
+    cdef public double original_supervision  # first supervision value received
+    cdef public object update_supervision    # callable to update supervision
+
+    # The _supervision_is_dynamic serves merely as a C-typed flag to
+    # avoid asking for the GIL if update_supervision was not provided.
+    cdef bint _supervision_is_dynamic
+
     cdef void unpack_y(self, const DOUBLE_t[:, ::1] y) nogil
-    cdef void update_supervision(self) nogil
 
 cdef class SSMSE(SSCompositeCriterion):
     """Semi-supervised composite criterion with only MSE.

@@ -207,6 +207,7 @@ def make_2dss_splitter(
     ss_class=[type],
     supervised_criterion=[Criterion, type],
     unsupervised_criterion=[Criterion, type],
+    update_supervision=[callable, None],
 ))
 def make_semisupervised_criterion(
     supervision,
@@ -216,6 +217,7 @@ def make_semisupervised_criterion(
     n_samples=None,
     supervised_criterion=None,
     unsupervised_criterion=None,
+    update_supervision=None,
 ):
     if isinstance(supervised_criterion, type):
         if not n_outputs or not n_samples:
@@ -240,4 +242,5 @@ def make_semisupervised_criterion(
         supervision=supervision,
         supervised_criterion=supervised_criterion,
         unsupervised_criterion=unsupervised_criterion,
+        update_supervision=update_supervision,
     )

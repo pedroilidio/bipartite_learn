@@ -45,7 +45,10 @@ from ..base import MultipartiteRegressorMixin
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import MSE_Wrapper2D
 from ._nd_splitter import Splitter2D
-from ._splitter_factory import make_2dss_splitter
+from ._splitter_factory import (
+    make_2dss_splitter,
+    make_semisupervised_criterion
+)
 from ..melter import row_cartesian_product
 
 # Semi-supervision-specific:
@@ -149,6 +152,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
             Hidden(Criterion),
         ],
         "supervision": [Interval(Real, 0.0, 1.0, closed="both")],
+        "update_supervision": [callable, None],
         "ss_adapter": [
             StrOptions({"default"}),
             Hidden(SemisupervisedCriterion),
@@ -173,12 +177,14 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         ccp_alpha=0.0,
         # Semi-supervised parameters:
         supervision=0.5,
-        ss_adapter="default",
         unsupervised_criterion="squared_error",
+        update_supervision=None,
+        ss_adapter="default",
     ):
         self.supervision = supervision
         self.ss_adapter = ss_adapter
         self.unsupervised_criterion = unsupervised_criterion
+        self.update_supervision = update_supervision
 
         super().__init__(
             splitter=splitter,
@@ -393,6 +399,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         ss_adapter=None,
         criterion=None,
         unsupervised_criterion=None,
+        update_supervision=None,
     ):
         n_outputs = n_outputs or self.n_outputs_
         n_features = n_features or self.n_features_in_
@@ -400,6 +407,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         ss_adapter = ss_adapter or self.ss_adapter
         criterion = criterion or self.criterion
         unsupervised_criterion = unsupervised_criterion or self.unsupervised_criterion
+        update_supervision = update_supervision or self.update_supervision
 
         if isinstance(ss_adapter, str):
             ss_adapter = CRITERIA_SS[ss_adapter]
@@ -421,13 +429,15 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         else:
             unsupervised_criterion = deepcopy(unsupervised_criterion)
 
-        return ss_adapter(
+        return make_semisupervised_criterion(
+            ss_class=ss_adapter,
             supervision=supervision,
             supervised_criterion=criterion,
             unsupervised_criterion=unsupervised_criterion,
             n_outputs=n_outputs,
             n_features=n_features,
             n_samples=n_samples,
+            update_supervision=update_supervision,
         )
 
     def _make_splitter(
@@ -713,6 +723,7 @@ class DecisionTreeClassifierSS(ClassifierMixin, BaseDecisionTreeSS):
         supervision=0.5,
         ss_adapter="default",
         unsupervised_criterion="squared_error",
+        update_supervision=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -731,6 +742,7 @@ class DecisionTreeClassifierSS(ClassifierMixin, BaseDecisionTreeSS):
             supervision=supervision,
             ss_adapter=ss_adapter,
             unsupervised_criterion=unsupervised_criterion,
+            update_supervision=update_supervision,
         )
 
     def fit(self, X, y, sample_weight=None, check_input=True):
@@ -1088,6 +1100,7 @@ class DecisionTreeRegressorSS(RegressorMixin, BaseDecisionTreeSS):
         supervision=0.5,
         ss_adapter="default",
         unsupervised_criterion="squared_error",
+        update_supervision=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -1106,6 +1119,7 @@ class DecisionTreeRegressorSS(RegressorMixin, BaseDecisionTreeSS):
             supervision=supervision,
             ss_adapter=ss_adapter,
             unsupervised_criterion=unsupervised_criterion,
+            update_supervision=update_supervision,
         )
 
     def fit(self, X, y, sample_weight=None, check_input=True):
@@ -1425,6 +1439,7 @@ class ExtraTreeClassifierSS(DecisionTreeClassifierSS):
         supervision=0.5,
         ss_adapter="default",
         unsupervised_criterion="squared_error",
+        update_supervision=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -1438,12 +1453,12 @@ class ExtraTreeClassifierSS(DecisionTreeClassifierSS):
             min_impurity_decrease=min_impurity_decrease,
             random_state=random_state,
             ccp_alpha=ccp_alpha,
-
             # Semi-supervised parameters:
             supervision=supervision,
             ss_adapter=ss_adapter,
             criterion=criterion,
             unsupervised_criterion=unsupervised_criterion,
+            update_supervision=update_supervision,
         )
 
 
@@ -1677,6 +1692,7 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
         supervision=0.5,
         ss_adapter="default",
         unsupervised_criterion="squared_error",
+        update_supervision=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -1695,6 +1711,7 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
             ss_adapter=ss_adapter,
             criterion=criterion,
             unsupervised_criterion=unsupervised_criterion,
+            update_supervision=update_supervision,
         )
 
 
@@ -1754,11 +1771,13 @@ class BaseDecisionTree2DSS(
         ss_adapter="default",
         unsupervised_criterion_rows="squared_error",
         unsupervised_criterion_cols="squared_error",
+        update_supervision=None,
     ):
         self.supervision = supervision
         self.ss_adapter = ss_adapter
         self.unsupervised_criterion_rows = unsupervised_criterion_rows
         self.unsupervised_criterion_cols = unsupervised_criterion_cols
+        self.update_supervision = update_supervision
 
         BaseBipartiteDecisionTree.__init__(
             self,
@@ -1891,6 +1910,7 @@ class DecisionTreeRegressor2DSS(
         ss_adapter="default",
         unsupervised_criterion_rows="squared_error",
         unsupervised_criterion_cols="squared_error",
+        update_supervision=None,
     ):
         super().__init__(
             criterion=criterion,
@@ -1918,4 +1938,5 @@ class DecisionTreeRegressor2DSS(
             ss_adapter=ss_adapter,
             unsupervised_criterion_rows=unsupervised_criterion_rows,
             unsupervised_criterion_cols=unsupervised_criterion_cols,
+            update_supervision=update_supervision,
         )

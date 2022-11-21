@@ -316,9 +316,9 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
                 impurity_left, impurity_right)
 
     cdef double impurity_improvement(
-            self, double impurity_parent, double
-            impurity_left, double impurity_right,
-            SIZE_t axis,
+        self, double impurity_parent, double
+        impurity_left, double impurity_right,
+        SIZE_t axis,
     ) nogil:
         if axis == 0:
             return self.splitter_rows.criterion.impurity_improvement(

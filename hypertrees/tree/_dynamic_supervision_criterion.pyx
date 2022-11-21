@@ -32,19 +32,20 @@ cdef class DynamicSSMSE(SSCompositeCriterion):
     ):
         super().__init__(
             supervision=supervision,
-            criterion=MSE,
+            supervised_criterion=MSE,
+            unsupervised_criterion=MSE,
             n_outputs=n_outputs,
             n_features=n_features,
             n_samples=n_samples,
         )
 
-    cdef void update_supervision(self) nogil:
+    def update_supervision(self):
         cdef double w, W
 
         w = self.weighted_n_node_samples 
         W = self.weighted_n_samples
 
-        self.supervision = 1/(1 + 2 ** (10*(.5 - log2(w)/log2(W))))
+        return 1/(1 + 2 ** (10*(.5 - log2(w)/log2(W))))
         # self.weighted_n_node_samples / weighted_n_samples
 
 
@@ -62,7 +63,7 @@ cdef class HyperbolicSSCriterion(SSCompositeCriterion):
     (horizontally stacked) as its y parameter (y=np.hstack((X, y))).
     """
 
-    cdef void update_supervision(self) nogil:
+    def update_supervision(self):
         """Hyperbolic function asymptotically going to 1 when depth increases.
 
         self.supervision increases with tree depth.
@@ -81,4 +82,4 @@ cdef class HyperbolicSSCriterion(SSCompositeCriterion):
 
         beta = log2(unsup) / log2(W)
 
-        self.supervision = 1 - (unsup / w ** beta) ** 2
+        return 1 - (unsup / w ** beta) ** 2
