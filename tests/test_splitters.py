@@ -45,13 +45,14 @@ DTYPE_t, DOUBLE_t = np.float32, np.float64
 
 # Default test params
 DEF_PARAMS = dict(
-    seed=1,
+    seed=3,
     shape=(50, 60),
     nattrs=(10, 9),
     nrules=1,
     min_samples_leaf=100,
     transpose_test=False,
     noise=.5,
+    # noise=0.0,
     inspect=False,
     plot=False,
     start=0,
@@ -884,7 +885,7 @@ def test_pbct_splitter_gso(**params):
         criteria=GlobalMSE,
         max_features=params['nattrs'],
         n_samples=params['shape'],
-        n_outputs=params['shape'][::-1],
+        n_outputs=1,
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
     )

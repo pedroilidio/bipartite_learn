@@ -484,7 +484,6 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
 
         self.start[0], self.start[1] = start[0], start[1]
         self.end[0], self.end[1] = end[0], end[1]
-        self.sq_sum_total = 0.0
 
         cdef double wnns  # will be discarded
 
@@ -559,7 +558,8 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
 
         other_criterion = other_splitter.criterion
         pos = criterion.pos
-        print('*** other\'s col_start, pos, col_end', other_criterion.col_start, pos, other_criterion.col_end)
+        # print('*** other\'s col_start, pos, col_end', other_criterion.col_start, pos, other_criterion.col_end)
+        print('*** self.start[axis], pos, self.end[axis]', self.start[axis], pos, self.end[axis])
         # print('*** start, pos, end', criterion.start, pos, other_criterion.col_end)
 
         # print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
@@ -571,7 +571,7 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         )
         # print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
         # print('*** self.start[1-axis], self.end[1-axis]',self.start[1-axis], self.end[1-axis])
-        #other_splitter.node_reset(self.start[1-axis], self.end[1-axis], &wnns)
+        other_splitter.node_reset(self.start[1-axis], self.end[1-axis], &wnns)
         other_imp_left = other_splitter.node_impurity()
         print('* LEFT')
         print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
@@ -618,6 +618,18 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         impurity_left[0] = 0.5 * (impurity_left[0] + other_imp_left)
         impurity_right[0] = 0.5 * (impurity_right[0] + other_imp_right)
         print('*** 9, imp left/right', impurity_left[0], impurity_right[0]) 
+        print('*** self.splitter_rows.start, self.splitter_rows.end', self.splitter_rows.start, self.splitter_rows.end) 
+        print('*** self.splitter_cols.start, self.splitter_cols.end', self.splitter_cols.start, self.splitter_cols.end) 
+
+        # FIXME: redundant
+        other_criterion.set_columns(
+            self.start[axis],
+            self.end[axis],
+            criterion.samples,
+            criterion.sample_weight,
+        )
+        other_splitter.node_reset(self.start[1-axis], self.end[1-axis], &wnns)
+        print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
 
     cdef double impurity_improvement(
         self, double impurity_parent, double impurity_left, double impurity_right,
@@ -774,6 +786,9 @@ cdef class AxisRegressionCriterion(RegressionCriterion):
 
 
 cdef class GlobalMSE(AxisRegressionCriterion):
+    def __init__(self, n_outputs=1, *args, **kwargs):
+        if n_outputs != 1:
+            raise ValueError(f"{type(self).__name__} only supports n_outputs=1")
     # cdef double node_impurity(self) nogil:
     #     with gil:
     #         return MSE.node_impurity(<MSE>self)
