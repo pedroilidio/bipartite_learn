@@ -577,6 +577,10 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
         print('*** othercrit. sq_sum_total, sum_total', other_criterion.sq_sum_total, other_criterion.sum_total[0])
         print('*** other axis y sum left', np.sum(other_criterion.y))
+        print('*** other axis y manual imp left', 0.5 * (
+            np.asarray(other_criterion.y).var(1).mean()
+            + np.asarray(other_criterion.y).var(0).mean()
+        ))
 
         # print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
         other_criterion.set_columns(
@@ -591,6 +595,10 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
         print('*** othercrit. sq_sum_total, sum_total', other_criterion.sq_sum_total, other_criterion.sum_total[0])
         print('*** other axis y sum right', np.sum(other_criterion.y))
+        print('*** other axis y manual imp right', 0.5 * (
+            np.asarray(other_criterion.y).var(1).mean()
+            + np.asarray(other_criterion.y).var(0).mean()
+        ))
 
         print('*** other axis')
         cdef SIZE_t i
@@ -614,6 +622,10 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         print(f'*** curr. imp_left /right {impurity_left[0]:<20} {impurity_right[0]:<20}')
 
         print('*** curr. axis y sum', np.sum(criterion.y))
+        print('*** curr. axis y manual imp', 0.5 * (
+            np.asarray(criterion.y).var(1).mean()
+            + np.asarray(criterion.y).var(0).mean()
+        ))
 
         impurity_left[0] = 0.5 * (impurity_left[0] + other_imp_left)
         impurity_right[0] = 0.5 * (impurity_right[0] + other_imp_right)
@@ -961,15 +973,22 @@ cdef class GlobalMSE(AxisRegressionCriterion):
 
 
 cdef class LocalMSE(AxisRegressionCriterion):
+    cdef DOUBLE_t sq_row_sums
+
     cdef double node_impurity(self) nogil:
-        return MSE.node_impurity(<MSE>self)
+        cdef double impurity = self.sq_sum_total
+
+        impurity -= 0.5 * self.sq_row_sums / self.weighted_n_node_cols
+
+        for k in range(self.n_outputs):
+            impurity -= 0.5 * self.sum_total[k] ** 2 / self.weighted_n_node_samples
+
+        impurity /= self.weighted_n_node_samples * self.weighted_n_node_cols
+
+        return impurity
 
     cdef double proxy_impurity_improvement(self) nogil:
         return MSE.proxy_impurity_improvement(<MSE>self)
-
-    cdef void children_impurity(self, double* impurity_left,
-                                double* impurity_right) nogil:
-        MSE.children_impurity(<MSE>self, impurity_left, impurity_right)
 
     cdef int init(self, const DOUBLE_t[:, ::1] y, DOUBLE_t* sample_weight,
                   double weighted_n_samples, SIZE_t* samples, SIZE_t start,
@@ -1009,10 +1028,14 @@ cdef class LocalMSE(AxisRegressionCriterion):
         cdef SIZE_t j
         cdef SIZE_t q
         cdef DOUBLE_t proxy_y_ij
+        cdef DOUBLE_t y_ij
         cdef DOUBLE_t w_y_ij
         cdef DOUBLE_t wi = 1.0
+        cdef DOUBLE_t wj = 1.0
         cdef DOUBLE_t sqrt_wj = 1.0
+        cdef DOUBLE_t row_sum
 
+        self.sq_row_sums = 0.0
         self.sq_sum_total = 0.0
         memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
 
@@ -1022,20 +1045,24 @@ cdef class LocalMSE(AxisRegressionCriterion):
                 wi = sample_weight[i]
 
             self.weighted_n_node_samples += wi
+            row_sum = 0.0
 
             for q in range(col_start, col_end):
                 j = col_samples[q]
                 if col_sample_weight != NULL:
-                    sqrt_wj = sqrt(col_sample_weight[j])
+                    wj = col_sample_weight[j]
+                    sqrt_wj = sqrt(wj)
 
-                proxy_y_ij = sqrt_wj * y[i, j]
-
+                y_ij = y[i, j]
+                row_sum += wj * y_ij
+                proxy_y_ij = sqrt_wj * y_ij
                 proxy_y[i, q - col_start] = proxy_y_ij
                 w_y_ij = wi * proxy_y_ij
 
                 self.sum_total[q - col_start] += w_y_ij
                 self.sq_sum_total += w_y_ij * proxy_y_ij
-
+            
+            self.sq_row_sums += wi * row_sum * row_sum
 
         self.y = proxy_y
 
@@ -1052,3 +1079,75 @@ cdef class LocalMSE(AxisRegressionCriterion):
         for k in range(self.n_outputs):
             j = self.col_samples[self.col_start + k]
             dest[j] = self.sum_total[k] / self.weighted_n_node_samples
+
+    cdef void children_impurity(self, double* impurity_left,
+                                double* impurity_right) nogil:
+        """Evaluate the impurity in children nodes.
+        i.e. the impurity of the left child (samples[start:pos]) and the
+        impurity the right child (samples[pos:end]).
+        """
+        cdef DOUBLE_t* sample_weight = self.sample_weight
+        cdef SIZE_t* samples = self.samples
+        cdef SIZE_t pos = self.pos
+        cdef SIZE_t start = self.start
+
+        cdef DOUBLE_t* col_sample_weight = self.col_sample_weight
+        cdef SIZE_t* col_samples = self.col_samples
+        cdef SIZE_t col_start = self.col_start
+
+        cdef DOUBLE_t proxy_y_ik
+        cdef DOUBLE_t row_sum
+        cdef DOUBLE_t sq_row_sums_left = 0.0
+        cdef DOUBLE_t sq_row_sums_right
+
+        cdef double sq_sum_left = 0.0
+        cdef double sq_sum_right
+
+        cdef SIZE_t i, k, p, q
+        cdef DOUBLE_t wi = 1.0, wk = 1.0, sqrt_wk = 1.0
+
+        for p in range(start, pos):
+            i = samples[p]
+
+            if sample_weight != NULL:
+                wi = sample_weight[i]
+
+            row_sum = 0.0
+
+            for k in range(self.n_outputs):
+                if col_sample_weight != NULL:
+                    wk = col_sample_weight[col_samples[k + col_start]]
+                    sqrt_wk = sqrt(wk)
+
+                proxy_y_ik = self.y[i, k]
+                sq_sum_left += wi * proxy_y_ik * proxy_y_ik
+                row_sum += sqrt_wk * proxy_y_ik  # wj * y_ij
+            
+            sq_row_sums_left += wi * row_sum * row_sum
+
+        sq_sum_right = self.sq_sum_total - sq_sum_left
+        sq_row_sums_right = self.sq_row_sums - sq_row_sums_left
+        with gil:
+            print('*** sq_row_sums_left', sq_row_sums_left)
+            print('*** sq_row_sums_right', sq_row_sums_right)
+            print('*** sq_row_sums', self.sq_row_sums)
+            print('*** sq_sum_left', sq_sum_left)
+            print('*** sq_sum_total', self.sq_sum_total)
+
+        impurity_left[0] = sq_sum_left
+        impurity_right[0] = sq_sum_right
+        with gil: print('*** imp lr', impurity_left[0], impurity_right[0])
+
+        for k in range(self.n_outputs):
+            impurity_left[0] -= 0.5 * self.sum_left[k] ** 2.0 / self.weighted_n_left
+            impurity_right[0] -= 0.5 * self.sum_right[k] ** 2.0 / self.weighted_n_right
+        
+        with gil: print('*** imp lr', impurity_left[0], impurity_right[0])
+        impurity_left[0] -= 0.5 * sq_row_sums_left / self.weighted_n_node_cols
+        impurity_right[0] -= 0.5 * sq_row_sums_right / self.weighted_n_node_cols
+
+        with gil: print('*** imp lr', impurity_left[0], impurity_right[0])
+        impurity_left[0] /= self.weighted_n_node_cols * self.weighted_n_left
+        impurity_right[0] /= self.weighted_n_node_cols * self.weighted_n_right
+
+        with gil: print('*** imp lr', impurity_left[0], impurity_right[0])

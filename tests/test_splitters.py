@@ -246,8 +246,8 @@ def compare_splitters_1d2d(
 
     if multioutput_1d:
         parent_impurity = 0.5 * (y_.var(1).mean() + y_.var(0).mean())
-        other_axis_imp_left = y_[:pos].var(1).mean()
-        other_axis_imp_right = y_[pos:].var(1).mean()
+        other_axis_imp_left = y_[sorted_indices][:pos].var(1).mean()
+        other_axis_imp_right = y_[sorted_indices][pos:].var(1).mean()
         result1['impurity_left'] += other_axis_imp_left
         result1['impurity_left'] /= 2
         result1['impurity_right'] += other_axis_imp_right
