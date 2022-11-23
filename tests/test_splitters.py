@@ -21,6 +21,8 @@ from hypertrees.tree._splitter_factory import (
 )
 from hypertrees.tree._nd_criterion import (
     PBCTCriterionWrapper,
+    GlobalMSE,
+    LocalMSE,
 )
 from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
@@ -43,7 +45,7 @@ DTYPE_t, DOUBLE_t = np.float32, np.float64
 
 # Default test params
 DEF_PARAMS = dict(
-    seed=0,
+    seed=1,
     shape=(50, 60),
     nattrs=(10, 9),
     nrules=1,
@@ -241,21 +243,28 @@ def compare_splitters_1d2d(
         print('Best split found:')
         pprint(result2)
 
+    if multioutput_1d:
+        parent_impurity = 0.5 * (y_.var(1).mean() + y_.var(0).mean())
+        other_axis_imp_left = y_[:pos].var(1).mean()
+        other_axis_imp_right = y_[pos:].var(1).mean()
+        result1['impurity_left'] += other_axis_imp_left
+        result1['impurity_left'] /= 2
+        result1['impurity_right'] += other_axis_imp_right
+        result1['impurity_right'] /= 2
+        result1['improvement'] = parent_impurity - (
+            pos * result1['impurity_left']
+            + (y.shape[0]-pos) * result1['impurity_right']
+        ) / y.shape[0]
+
+        print('GMO-specific updated target impurities:\n'
+              '* Left:  {impurity_left}\n'
+              '* Right: {impurity_right}\n'
+              '* Improvement: {improvement}'.format(**result1))
+
     assert_allclose(result2['threshold'], result1['threshold'],
                     err_msg='threshold differs from reference.')
     assert_allclose(result2['improvement'], result1['improvement'],
                     err_msg='improvement differs from reference.')
-
-    # HACK: GMO bipartite adapter adds the other axis impurity to avoid getting
-    #       zero if a single row/column is present in a child partition.')
-    if multioutput_1d:
-        other_axis_imp = y_.var(1).mean()
-        result1['impurity_left'] += other_axis_imp
-        result1['impurity_right'] += other_axis_imp
-
-        print('GMO-specific updated target impurities:\n'
-              '* Left:  {impurity_left}\n'
-              '* Right: {impurity_right}'.format(**result1))
 
     assert_allclose(result2['impurity_left'], result1['impurity_left'],
                     err_msg='impurity_left differs from reference.')
@@ -851,7 +860,7 @@ def test_pbct_splitter(**params):
     splitter2d = make_2d_splitter(
         criterion_wrapper_class=PBCTCriterionWrapper,
         splitters=BestSplitter,
-        criteria=MSE,
+        criteria=LocalMSE,
         max_features=params['nattrs'],
         n_samples=params['shape'],
         n_outputs=params['shape'][::-1],
@@ -863,5 +872,25 @@ def test_pbct_splitter(**params):
         splitter1=BestSplitter,
         splitter2=splitter2d,
         multioutput_1d=True,
+        **params,
+    )
+
+
+def test_pbct_splitter_gso(**params):
+    params = DEF_PARAMS | params
+    splitter2d = make_2d_splitter(
+        criterion_wrapper_class=PBCTCriterionWrapper,
+        splitters=BestSplitter,
+        criteria=GlobalMSE,
+        max_features=params['nattrs'],
+        n_samples=params['shape'],
+        n_outputs=params['shape'][::-1],
+        min_samples_leaf=params['min_samples_leaf'],
+        min_weight_leaf=0.,
+    )
+
+    compare_splitters_1d2d(
+        splitter1=BestSplitter,
+        splitter2=splitter2d,
         **params,
     )

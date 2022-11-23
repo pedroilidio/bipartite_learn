@@ -1,8 +1,8 @@
 # cython: boundscheck=True
 from sklearn.tree._criterion cimport RegressionCriterion, Criterion
-# from sklearn.tree._criterion import MSE
 from libc.stdlib cimport malloc, calloc, free, realloc
 from libc.string cimport memset
+from libc.math cimport sqrt
 import numpy as np
 cimport numpy as cnp
 
@@ -62,8 +62,6 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         self.n_outputs = self.splitter_rows.criterion.n_outputs
         self.n_rows = self.splitter_rows.criterion.n_samples
         self.n_cols = self.splitter_cols.criterion.n_samples
-        self.row_samples = NULL
-        self.col_samples = NULL
 
         # Default values
         self.row_sample_weight = NULL
@@ -150,8 +148,8 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         self.row_sample_weight = row_sample_weight
         self.col_sample_weight = col_sample_weight
         self.weighted_n_samples = weighted_n_samples
-        self.row_samples = &self.splitter_rows.samples[0]
-        self.col_samples = &self.splitter_cols.samples[0]
+        self.row_samples = self.splitter_rows.samples
+        self.col_samples = self.splitter_cols.samples
         self.start[0], self.start[1] = start[0], start[1]
         self.end[0], self.end[1] = end[0], end[1]
         self.sq_sum_total = 0.0
@@ -431,16 +429,10 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
     def __cinit__(self, Splitter splitter_rows, Splitter splitter_cols):
         self.splitter_rows = splitter_rows
         self.splitter_cols = splitter_cols
-        self.n_rows = self.splitter_rows.criterion.n_samples
-        self.n_cols = self.splitter_cols.criterion.n_samples
-        self.row_samples = NULL
-        self.col_samples = NULL
-
-        self._aux_len = max(self.n_rows, self.n_cols)
-        # Temporary storage to use in node_value()
-        self._node_value_aux = <double*> malloc(
-            sizeof(double) * self._aux_len
-        )
+        self.criterion_rows = splitter_rows.criterion
+        self.criterion_cols = splitter_cols.criterion
+        self.n_rows = self.criterion_rows.n_samples
+        self.n_cols = self.criterion_cols.n_samples
         self.n_outputs = self.n_rows + self.n_cols
 
         # Default values
@@ -456,8 +448,6 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         self.weighted_n_node_samples = 0.0
         self.weighted_n_node_rows = 0.0
         self.weighted_n_node_cols = 0.0
-
-        self.sum_total = np.zeros(self.n_outputs, dtype=np.float64)
 
     def __dealloc__(self):
         free(self._node_value_aux)
@@ -489,205 +479,561 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         self.row_sample_weight = row_sample_weight
         self.col_sample_weight = col_sample_weight
         self.weighted_n_samples = weighted_n_samples
-        self.row_samples = &self.splitter_rows.samples[0]
-        self.col_samples = &self.splitter_cols.samples[0]
-
-        # FIXME: does not work because of depth first-tree building
-        # Use last split axis to avoid redundantly calculating node impurity
-        # in self.impurity_improvement()
-        # if self.start[0] == start[0] and self.end[0] == end[0]:
-        #     self.last_split_axis = 1
-        # elif self.start[1] == start[1] and self.end[1] == end[1]:
-        #     self.last_split_axis = 0
-        # else:
-        #     self.last_split_axis = -1
+        self.row_samples = self.splitter_rows.samples
+        self.col_samples = self.splitter_cols.samples
 
         self.start[0], self.start[1] = start[0], start[1]
         self.end[0], self.end[1] = end[0], end[1]
         self.sq_sum_total = 0.0
 
-        cdef double[2] wnns  # will be discarded
-        cdef SIZE_t n_node_rows = end[0] - start[0]
-        cdef SIZE_t n_node_cols = end[1] - start[1]
+        cdef double wnns  # will be discarded
 
-        with gil:
-            # FIXME: how to access composite semisupervised criterion?
-            #        a gambiarra is used for now (they set n_outputs again).
-            # HACK
-            self.splitter_rows.criterion.n_outputs = n_node_cols
-            self.splitter_cols.criterion.n_outputs = n_node_rows
-            self.y_2D_rows = np.empty((self.n_rows, n_node_cols))
-            self.y_2D_cols = np.empty((self.n_cols, n_node_rows))
+        self.criterion_rows.set_columns(
+            start[1],
+            end[1],
+            &self.col_samples[0],
+            self.col_sample_weight,
+        )
+        self.splitter_rows.node_reset(start[0], end[0], &wnns)
 
-        for p in range(n_node_rows):
-            i = self.row_samples[p + start[0]]
-            for q in range(n_node_cols):
-                j = self.col_samples[q + start[1]]
-                self.y_2D_rows[i, q] = self.y_2D_cols[j, p] = self.y_2D[i, j]
+        self.criterion_cols.set_columns(
+            start[0],
+            end[0],
+            &self.row_samples[0],
+            self.row_sample_weight,
+        )
+        self.splitter_cols.node_reset(start[1], end[1], &wnns)
 
-        # FIXME: is not this MSE specific?
-        if (self.row_sample_weight!=NULL) or (self.row_sample_weight!=NULL):
-            wi = wj = 1.
-
-            for p in range(n_node_rows):
-                i = self.row_samples[p + start[0]]
-
-                if row_sample_weight != NULL:
-                    wi = row_sample_weight[i]
-
-                for q in range(n_node_cols):
-                    j = self.col_samples[q + start[1]]
-
-                    if col_sample_weight != NULL:
-                        wj = col_sample_weight[j]
-
-                    self.y_2D_rows[i, q] *= wj ** .5
-                    self.y_2D_cols[j, p] *= wi ** .5
-
-        if -1 == self._node_reset_child_splitter(
-            child_splitter=self.splitter_rows,
-            y=self.y_2D_rows,
-            sample_weight=self.row_sample_weight,
-            start=start[0],
-            end=end[0],
-            weighted_n_node_samples=wnns,
-        ):
-            return -1
-
-        if -1 == self._node_reset_child_splitter(
-            child_splitter=self.splitter_cols,
-            y=self.y_2D_cols,
-            sample_weight=self.col_sample_weight,
-            start=start[1],
-            end=end[1],
-            weighted_n_node_samples=wnns+1,
-        ):
-            return -1
-
-        self.weighted_n_node_rows = wnns[0]
-        self.weighted_n_node_cols = wnns[1]
-        self.weighted_n_node_samples = wnns[0] * wnns[1]
-
+        self.weighted_n_node_samples = wnns
         return 0
-
-    cdef int _node_reset_child_splitter(
-            self,
-            Splitter child_splitter,
-            const DOUBLE_t[:, ::1] y,
-            DOUBLE_t* sample_weight,
-            SIZE_t start,
-            SIZE_t end,
-            DOUBLE_t* weighted_n_node_samples,
-    ) nogil except -1:
-        """Substitutes splitter.node_reset() setting child splitter on 2D data.
-        """
-        cdef int ret
-        child_splitter.y = y
-        return child_splitter.node_reset(start, end, weighted_n_node_samples)
 
     cdef void node_value(self, double* dest) nogil:
         """Copy the value (prototype) of node samples into dest.
         """
-        cdef SIZE_t i, j, p, q
-
+        cdef SIZE_t i
         for i in range(self.n_outputs):
             dest[i] = NAN
 
-        self.splitter_cols.node_value(self._node_value_aux)
-
-        # Copy each row's output to their corresponding positions of dest
-        for q in range(self.start[0], self.end[0]):
-            j = self.row_samples[q]
-            dest[j] = self._node_value_aux[q-self.start[0]]
-        
-        self.splitter_rows.node_value(self._node_value_aux)
-
-        # Copy each colum's output to their corresponding positions of dest
-        for p in range(self.start[1], self.end[1]):
-            i = self.col_samples[p]
-            dest[i + self.n_rows] = self._node_value_aux[p-self.start[1]]
+        self.splitter_cols.node_value(dest)
+        self.splitter_rows.node_value(dest + self.n_rows)
 
     cdef double node_impurity(self) nogil:
         """Return the impurity of the current node.
 
         In scikit-learn trees it is only used at the root node.
         """
-        # Will be replaced by impurity_improvement() anyway. We define it here
-        # just for the sake of semantics.
         return (self.splitter_rows.node_impurity()
                 + self.splitter_cols.node_impurity()) / 2
 
     cdef void children_impurity(
-            self,
-            double* impurity_left,
-            double* impurity_right,
-            SIZE_t axis,
+        self,
+        double* impurity_left,
+        double* impurity_right,
+        SIZE_t axis,
     ):
-        # HACK: We add the other axis' node impurity to the result because
-        #       otherwise a 1 by n or n by 1 child partition would receive a
-        #       0-valued impurity, triggering stop criteria in
-        #       ._tree.TreeBuilder before we correct the calculation in
-        #       `self.impurity_improvement()` by reassigning impurity_parent.
-        if axis == 0:
-            other_imp = self.splitter_cols.criterion.node_impurity()
-            self.splitter_rows.criterion.children_impurity(
-                impurity_left, impurity_right)
-            impurity_left[0] += other_imp
-            impurity_right[0] += other_imp
+        cdef:
+            double other_imp_left
+            double other_imp_right
+            double wnns  # Discarded
+            AxisRegressionCriterion criterion
+            AxisRegressionCriterion other_criterion
+            Splitter splitter
+            Splitter other_splitter
+            SIZE_t pos
 
+        if axis == 0:
+            splitter = self.splitter_rows
+            other_splitter = self.splitter_cols
         elif axis == 1:
-            other_imp = self.splitter_rows.criterion.node_impurity()
-            self.splitter_cols.criterion.children_impurity(
-                impurity_left, impurity_right)
-            impurity_left[0] += other_imp
-            impurity_right[0] += other_imp
+            splitter = self.splitter_cols
+            other_splitter = self.splitter_rows
+        else:
+            raise ValueError(f"axis must be 1 or 0 ({axis} received)")
+        
+        criterion = splitter.criterion
+        # XXX
+        # criterion.children_impurity(impurity_left, impurity_right)
+        impurity_left[0] = impurity_right[0] = 0.0  # TODO: remove
+        print()
+        print('*** imp left/right', impurity_left[0], impurity_right[0]) 
+
+        other_criterion = other_splitter.criterion
+        pos = criterion.pos
+        print('*** other\'s col_start, pos, col_end', other_criterion.col_start, pos, other_criterion.col_end)
+        # print('*** start, pos, end', criterion.start, pos, other_criterion.col_end)
+
+        # print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
+        other_criterion.set_columns(
+            self.start[axis],
+            pos,
+            criterion.samples,
+            criterion.sample_weight,
+        )
+        # print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
+        # print('*** self.start[1-axis], self.end[1-axis]',self.start[1-axis], self.end[1-axis])
+        #other_splitter.node_reset(self.start[1-axis], self.end[1-axis], &wnns)
+        other_imp_left = other_splitter.node_impurity()
+        print('* LEFT')
+        print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
+        print('*** othercrit. sq_sum_total, sum_total', other_criterion.sq_sum_total, other_criterion.sum_total[0])
+        print('*** other axis y sum left', np.sum(other_criterion.y))
+
+        # print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
+        other_criterion.set_columns(
+            pos,
+            self.end[axis],
+            criterion.samples,
+            criterion.sample_weight,
+        )
+        other_splitter.node_reset(self.start[1-axis], self.end[1-axis], &wnns)
+        other_imp_right = other_splitter.node_impurity()
+        print('* RIGHT')
+        print('*** othercrit. wnns, wnncols', other_criterion.weighted_n_node_samples, other_criterion.weighted_n_node_cols)
+        print('*** othercrit. sq_sum_total, sum_total', other_criterion.sq_sum_total, other_criterion.sum_total[0])
+        print('*** other axis y sum right', np.sum(other_criterion.y))
+
+        print('*** other axis')
+        cdef SIZE_t i
+        for i in range(self.start[1-axis], other_criterion.pos):
+            print(other_criterion.samples[i], end=' ')
+        print('|', end=' ')
+        for i in range(other_criterion.pos, self.end[1-axis]):
+            print(other_criterion.samples[i], end=' ')
+        print()
+        print('*** current axis')
+        for i in range(self.start[axis], pos):
+            print(criterion.samples[i], end=' ')
+        print('|', end=' ')
+        for i in range(pos, self.end[axis]):
+            print(criterion.samples[i], end=' ')
+        print()
+
+        print(f'*** other_imp_left /right {other_imp_left:<20} {other_imp_right:<20}')
+        print('*** crit. wnns, wnncols', criterion.weighted_n_node_samples, criterion.weighted_n_node_cols)
+        criterion.children_impurity(impurity_left, impurity_right)
+        print(f'*** curr. imp_left /right {impurity_left[0]:<20} {impurity_right[0]:<20}')
+
+        print('*** curr. axis y sum', np.sum(criterion.y))
+
+        impurity_left[0] = 0.5 * (impurity_left[0] + other_imp_left)
+        impurity_right[0] = 0.5 * (impurity_right[0] + other_imp_right)
+        print('*** 9, imp left/right', impurity_left[0], impurity_right[0]) 
 
     cdef double impurity_improvement(
-            self, double impurity_parent, double
-            impurity_left, double impurity_right,
-            SIZE_t axis,
+        self, double impurity_parent, double impurity_left, double impurity_right,
+        SIZE_t axis,
     ) nogil:
         """The final value to express the split quality. 
         """
-        # Since row and col criteria yield different impurity (along rows'
-        # or columns' axis), we recompute the node impurity here,
-        # differently from what it is originally done (reusing children
-        # impurity from the last split as the current's parent impurity).
-
-        # TODO: An alternative to recalculating node impurity would be to
-        #       always get the mean impurity among the two axes, yielding a
-        #       symmetric and apparently more consistent and reasonable metric.
-        #       However, obtaining the impurity along the axis other than the
-        #       used for splitting is not trivial.
-        # TODO: Although not expensive, there is no need to calculate other_imp
-        #       both in children_impurity and here.
-        cdef double other_imp
-
         if axis == 0:
-            # NOTE: recalculating imuprity_parent only under the condition
-            #       below does not work properly because of the depth first
-            #       tree building. However, calculating node impurity is not
-            #       much expensive. 
-            #
-            #       if self.last_split_axis != axis:
-
-            impurity_parent = self.splitter_rows.criterion.node_impurity()
-            other_imp = self.splitter_cols.criterion.node_impurity()
-
-            #  We are actually receiving left_impurity + others_node_impurity
-            #  from children_impurity(), hence the subtraction.
-            return self.splitter_rows.criterion.impurity_improvement(
+            return self.criterion_rows.impurity_improvement(
                 impurity_parent,
-                impurity_left - other_imp,
-                impurity_right - other_imp,
+                impurity_left,
+                impurity_right,
             )
-
-        elif axis == 1:
-            impurity_parent = self.splitter_cols.criterion.node_impurity()
-            other_imp = self.splitter_rows.criterion.node_impurity()
-
-            return self.splitter_cols.criterion.impurity_improvement(
+        if axis == 1:
+            return self.criterion_cols.impurity_improvement(
                 impurity_parent,
-                impurity_left - other_imp,
-                impurity_right - other_imp,
+                impurity_left,
+                impurity_right,
             )
+        with gil:
+            raise ValueError(f"axis must be 1 or 0 ({axis} received)")
+    
+    cdef AxisRegressionCriterion _get_criterion(self, SIZE_t axis):
+        if axis == 0:
+            return self.splitter_rows.criterion
+        if axis == 1:
+            return self.splitter_cols.criterion
+        raise ValueError(f"axis must be 1 or 0 ({axis} received)")
+
+    cdef Splitter _get_splitter(self, SIZE_t axis):
+        if axis == 0:
+            return self.splitter_rows
+        if axis == 1:
+            return self.splitter_cols
+        raise ValueError(f"axis must be 1 or 0 ({axis} received)")
+
+
+cdef class MSE(RegressionCriterion):
+    """Mean squared error impurity criterion.
+        MSE = var_left + var_right
+    """
+
+    cdef double node_impurity(self) nogil:
+        """Evaluate the impurity of the current node.
+        Evaluate the MSE criterion as impurity of the current node,
+        i.e. the impurity of samples[start:end]. The smaller the impurity the
+        better.
+        """
+        cdef double impurity
+        cdef SIZE_t k
+
+        impurity = self.sq_sum_total / self.weighted_n_node_samples
+        for k in range(self.n_outputs):
+            impurity -= (self.sum_total[k] / self.weighted_n_node_samples)**2.0
+
+        return impurity / self.n_outputs
+
+    cdef double proxy_impurity_improvement(self) nogil:
+        """Compute a proxy of the impurity reduction.
+        This method is used to speed up the search for the best split.
+        It is a proxy quantity such that the split that maximizes this value
+        also maximizes the impurity improvement. It neglects all constant terms
+        of the impurity decrease for a given split.
+        The absolute impurity improvement is only computed by the
+        impurity_improvement method once the best split has been found.
+        The MSE proxy is derived from
+            sum_{i left}(y_i - y_pred_L)^2 + sum_{i right}(y_i - y_pred_R)^2
+            = sum(y_i^2) - n_L * mean_{i left}(y_i)^2 - n_R * mean_{i right}(y_i)^2
+        Neglecting constant terms, this gives:
+            - 1/n_L * sum_{i left}(y_i)^2 - 1/n_R * sum_{i right}(y_i)^2
+        """
+        cdef SIZE_t k
+        cdef double proxy_impurity_left = 0.0
+        cdef double proxy_impurity_right = 0.0
+
+        for k in range(self.n_outputs):
+            proxy_impurity_left += self.sum_left[k] * self.sum_left[k]
+            proxy_impurity_right += self.sum_right[k] * self.sum_right[k]
+
+        return (proxy_impurity_left / self.weighted_n_left +
+                proxy_impurity_right / self.weighted_n_right)
+
+    cdef void children_impurity(self, double* impurity_left,
+                                double* impurity_right) nogil:
+        """Evaluate the impurity in children nodes.
+        i.e. the impurity of the left child (samples[start:pos]) and the
+        impurity the right child (samples[pos:end]).
+        """
+        cdef DOUBLE_t* sample_weight = self.sample_weight
+        cdef SIZE_t* samples = self.samples
+        cdef SIZE_t pos = self.pos
+        cdef SIZE_t start = self.start
+
+        cdef DOUBLE_t y_ik
+
+        cdef double sq_sum_left = 0.0
+        cdef double sq_sum_right
+
+        cdef SIZE_t i
+        cdef SIZE_t p
+        cdef SIZE_t k
+        cdef DOUBLE_t w = 1.0
+
+        for p in range(start, pos):
+            i = samples[p]
+
+            if sample_weight != NULL:
+                w = sample_weight[i]
+
+            for k in range(self.n_outputs):
+                y_ik = self.y[i, k]
+                sq_sum_left += w * y_ik * y_ik
+
+        sq_sum_right = self.sq_sum_total - sq_sum_left
+
+        impurity_left[0] = sq_sum_left / self.weighted_n_left
+        impurity_right[0] = sq_sum_right / self.weighted_n_right
+
+        for k in range(self.n_outputs):
+            impurity_left[0] -= (self.sum_left[k] / self.weighted_n_left) ** 2.0
+            impurity_right[0] -= (self.sum_right[k] / self.weighted_n_right) ** 2.0
+
+        impurity_left[0] /= self.n_outputs
+        impurity_right[0] /= self.n_outputs
+
+
+cdef class AxisRegressionCriterion(RegressionCriterion):
+    def __cinit__(self, SIZE_t n_outputs, SIZE_t n_samples):
+        self._columns_are_set = False
+    
+    cdef void set_columns(
+        self,
+        SIZE_t col_start,
+        SIZE_t col_end,
+        SIZE_t* col_samples,
+        DOUBLE_t* col_sample_weight,
+    ) nogil:
+        self.col_start = col_start
+        self.col_end = col_end
+        self.col_samples = col_samples
+        self.col_sample_weight = col_sample_weight
+        self.n_node_cols = col_end - col_start
+        self.weighted_n_node_cols = 0.
+
+        cdef SIZE_t p
+        cdef DOUBLE_t w = 1.0
+
+        for p in range(col_start, col_end):
+            if col_sample_weight != NULL:
+                w = col_sample_weight[col_samples[p]]
+            self.weighted_n_node_cols += w
+
+        self._columns_are_set = True
+
+
+cdef class GlobalMSE(AxisRegressionCriterion):
+    # cdef double node_impurity(self) nogil:
+    #     with gil:
+    #         return MSE.node_impurity(<MSE>self)
+
+    # cdef double proxy_impurity_improvement(self) nogil:
+    #     with gil:
+    #         return MSE.proxy_impurity_improvement(<MSE>self)
+    cdef double node_impurity(self) nogil:
+        """Evaluate the impurity of the current node.
+        Evaluate the MSE criterion as impurity of the current node,
+        i.e. the impurity of samples[start:end]. The smaller the impurity the
+        better.
+        """
+        cdef double impurity
+        cdef SIZE_t k
+        cdef double weighted_n_node_samples
+
+        weighted_n_node_samples = (
+            self.weighted_n_node_samples * self.weighted_n_node_cols
+        )
+
+        impurity = self.sq_sum_total / weighted_n_node_samples
+        # for k in range(self.n_outputs):  # / self.n_outputs  # n_outputs == 1
+        impurity -= (self.sum_total[0] / weighted_n_node_samples)**2.0
+
+        return impurity  # / self.n_outputs  # n_outputs == 1
+
+    cdef double proxy_impurity_improvement(self) nogil:
+        """Compute a proxy of the impurity reduction.
+        This method is used to speed up the search for the best split.
+        It is a proxy quantity such that the split that maximizes this value
+        also maximizes the impurity improvement. It neglects all constant terms
+        of the impurity decrease for a given split.
+        The absolute impurity improvement is only computed by the
+        impurity_improvement method once the best split has been found.
+        The MSE proxy is derived from
+            sum_{i left}(y_i - y_pred_L)^2 + sum_{i right}(y_i - y_pred_R)^2
+            = sum(y_i^2) - n_L * mean_{i left}(y_i)^2 - n_R * mean_{i right}(y_i)^2
+        Neglecting constant terms, this gives:
+            - 1/n_L * sum_{i left}(y_i)^2 - 1/n_R * sum_{i right}(y_i)^2
+        """
+        cdef SIZE_t k
+        cdef double proxy_impurity_left = 0.0
+        cdef double proxy_impurity_right = 0.0
+
+        for k in range(self.n_outputs):
+            proxy_impurity_left += self.sum_left[k] * self.sum_left[k]
+            proxy_impurity_right += self.sum_right[k] * self.sum_right[k]
+
+        return (proxy_impurity_left / self.weighted_n_left +
+                proxy_impurity_right / self.weighted_n_right)
+
+    cdef int init(self, const DOUBLE_t[:, ::1] y, DOUBLE_t* sample_weight,
+                  double weighted_n_samples, SIZE_t* samples, SIZE_t start,
+                  SIZE_t end) nogil except -1:
+        """Initialize the criterion.
+        This initializes the criterion at node samples[start:end] and children
+        samples[start:start] and samples[start:end].
+        """
+        if not self._columns_are_set:
+            with gil:
+                raise RuntimeError("BipartiteCriterion.set_columns() must be "
+                                   "called before Criterion.init()")
+        # Initialize fields
+        self._original_y = y
+        self.samples = samples
+        self.start = start
+        self.end = end
+        self.n_node_samples = end - start
+        self.weighted_n_samples = weighted_n_samples
+        self.weighted_n_node_samples = 0.0
+
+        # cdef int n = y.shape[0]
+        # self._proxy_y = <DOUBLE_t[:n, :1:1]> malloc(sizeof(DOUBLE_t)*y.shape[0])
+        cdef DOUBLE_t[:, ::1] proxy_y
+        with gil:
+            proxy_y = np.zeros_like(y, shape=(y.shape[0], 1))  # n_outputs == 1
+
+        cdef DOUBLE_t* col_sample_weight = self.col_sample_weight
+        cdef SIZE_t* col_samples = self.col_samples
+        cdef SIZE_t col_start = self.col_start
+        cdef SIZE_t col_end = self.col_end
+
+        cdef SIZE_t i, j, p, q
+        cdef DOUBLE_t y_ij
+        cdef DOUBLE_t w_y_ij
+        cdef DOUBLE_t wi = 1.0, wj = 1.0
+        self.sq_sum_total = 0.0
+        memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
+
+        for p in range(start, end):
+            i = samples[p]
+            if sample_weight != NULL:
+                wi = sample_weight[i]
+
+            self.weighted_n_node_samples += wi
+
+            for q in range(col_start, col_end):
+                j = col_samples[q]
+                if col_sample_weight != NULL:
+                    wj = col_sample_weight[j]
+
+                # for k in range(self.n_outputs):  # n_outputs == 1, k == 0
+                y_ij = y[i, j]
+                proxy_y[i, 0] += wj * y_ij
+                w_y_ij = wi * wj * y_ij
+                self.sum_total[0] += w_y_ij
+                self.sq_sum_total += w_y_ij * y_ij
+
+        self.y = proxy_y
+
+        # Reset to pos=start
+        self.reset()
+        self._columns_are_set = False
+        return 0
+        
+    cdef void children_impurity(self, double* impurity_left,
+                                double* impurity_right) nogil:
+        """Evaluate the impurity in children nodes.
+        i.e. the impurity of the left child (samples[start:pos]) and the
+        impurity the right child (samples[pos:end]).
+        """
+        cdef DOUBLE_t* sample_weight = self.sample_weight
+        cdef SIZE_t* samples = self.samples
+        cdef SIZE_t pos = self.pos
+        cdef SIZE_t start = self.start
+
+        cdef DOUBLE_t* col_sample_weight = self.col_sample_weight
+        cdef SIZE_t* col_samples = self.col_samples
+        cdef SIZE_t col_start = self.col_start
+        cdef SIZE_t col_end = self.col_end
+
+        cdef DOUBLE_t y_ij
+        cdef DOUBLE_t weighted_n_left
+        cdef DOUBLE_t weighted_n_right
+
+        cdef double sq_sum_left = 0.0
+        cdef double sq_sum_right
+
+        cdef SIZE_t i, j, p, q
+        cdef DOUBLE_t wi = 1.0, wj = 1.0
+
+        for p in range(start, pos):
+            i = samples[p]
+            if sample_weight != NULL:
+                wi = sample_weight[i]
+
+            for q in range(col_start, col_end):
+                j = col_samples[q]
+                if col_sample_weight != NULL:
+                    wj = col_sample_weight[j]
+
+                y_ij = self._original_y[i, j]
+                sq_sum_left += wi * wj * y_ij * y_ij
+
+        sq_sum_right = self.sq_sum_total - sq_sum_left
+
+        weighted_n_left = self.weighted_n_left * self.weighted_n_node_cols
+        weighted_n_right = self.weighted_n_right * self.weighted_n_node_cols
+
+        impurity_left[0] = sq_sum_left / weighted_n_left
+        impurity_right[0] = sq_sum_right / weighted_n_right
+
+        # for k in range(self.n_outputs):  # n_outputs == 1, k == 0
+        impurity_left[0] -= (self.sum_left[0] / weighted_n_left) ** 2.0
+        impurity_right[0] -= (self.sum_right[0] / weighted_n_right) ** 2.0
+
+        # impurity_left[0] /= self.n_outputs  # n_outputs == 1
+        # impurity_right[0] /= self.n_outputs  # n_outputs == 1
+
+
+cdef class LocalMSE(AxisRegressionCriterion):
+    cdef double node_impurity(self) nogil:
+        return MSE.node_impurity(<MSE>self)
+
+    cdef double proxy_impurity_improvement(self) nogil:
+        return MSE.proxy_impurity_improvement(<MSE>self)
+
+    cdef void children_impurity(self, double* impurity_left,
+                                double* impurity_right) nogil:
+        MSE.children_impurity(<MSE>self, impurity_left, impurity_right)
+
+    cdef int init(self, const DOUBLE_t[:, ::1] y, DOUBLE_t* sample_weight,
+                  double weighted_n_samples, SIZE_t* samples, SIZE_t start,
+                  SIZE_t end) nogil except -1:
+        """Initialize the criterion.
+        This initializes the criterion at node samples[start:end] and children
+        samples[start:start] and samples[start:end].
+        """
+        if not self._columns_are_set:
+            with gil:
+                raise RuntimeError("BipartiteCriterion.set_columns() must be "
+                                   "called before Criterion.init()")
+        # Initialize fields
+        self._original_y = y
+        self.sample_weight = sample_weight
+        self.samples = samples
+        self.start = start
+        self.end = end
+        self.n_node_samples = end - start
+        self.weighted_n_samples = weighted_n_samples
+        self.weighted_n_node_samples = 0.
+        self.n_outputs = self.n_node_cols
+
+        # self.y[:, :] = y[:, 0]  # FIXME: no need to copy, just allocate
+        # cdef int n = y.shape[0]
+        # self._proxy_y = <DOUBLE_t[:n, :1:1]> malloc(sizeof(DOUBLE_t)*y.shape[0])
+        cdef DOUBLE_t[:, ::1] proxy_y
+        with gil:
+            proxy_y = np.zeros_like(y, shape=(y.shape[0], self.n_node_cols))
+        cdef DOUBLE_t* col_sample_weight = self.col_sample_weight
+        cdef SIZE_t* col_samples = self.col_samples
+        cdef SIZE_t col_start = self.col_start
+        cdef SIZE_t col_end = self.col_end
+
+        cdef SIZE_t i
+        cdef SIZE_t p
+        cdef SIZE_t j
+        cdef SIZE_t q
+        cdef DOUBLE_t proxy_y_ij
+        cdef DOUBLE_t w_y_ij
+        cdef DOUBLE_t wi = 1.0
+        cdef DOUBLE_t sqrt_wj = 1.0
+
+        self.sq_sum_total = 0.0
+        memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
+
+        for p in range(start, end):
+            i = samples[p]
+            if sample_weight != NULL:
+                wi = sample_weight[i]
+
+            self.weighted_n_node_samples += wi
+
+            for q in range(col_start, col_end):
+                j = col_samples[q]
+                if col_sample_weight != NULL:
+                    sqrt_wj = sqrt(col_sample_weight[j])
+
+                proxy_y_ij = sqrt_wj * y[i, j]
+
+                proxy_y[i, q - col_start] = proxy_y_ij
+                w_y_ij = wi * proxy_y_ij
+
+                self.sum_total[q - col_start] += w_y_ij
+                self.sq_sum_total += w_y_ij * proxy_y_ij
+
+
+        self.y = proxy_y
+
+        # Reset to pos=start
+        self.reset()
+        self._columns_are_set = False
+        return 0
+
+    cdef void node_value(self, double* dest) nogil:
+        """Compute the node value of samples[start:end] into dest."""
+        cdef SIZE_t k, j
+        # TODO?: cdef double wnns = self.weighted_n_node_samples * self.weighted_n_node_cols
+
+        for k in range(self.n_outputs):
+            j = self.col_samples[self.col_start + k]
+            dest[j] = self.sum_total[k] / self.weighted_n_node_samples

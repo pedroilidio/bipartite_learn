@@ -20,8 +20,8 @@ cdef class CriterionWrapper2D:
 
     cdef DOUBLE_t* row_sample_weight
     cdef DOUBLE_t* col_sample_weight
-    cdef SIZE_t* row_samples
-    cdef SIZE_t* col_samples
+    cdef SIZE_t[::1] row_samples
+    cdef SIZE_t[::1] col_samples
     cdef SIZE_t[2] start
     cdef SIZE_t[2] end
     cdef SIZE_t n_outputs
@@ -90,7 +90,35 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
     cdef SIZE_t last_split_axis
     cdef DOUBLE_t[:, ::1] y_2D_rows
     cdef DOUBLE_t[:, ::1] y_2D_cols
+    cdef AxisRegressionCriterion criterion_rows
+    cdef AxisRegressionCriterion criterion_cols
+
+    cdef AxisRegressionCriterion _get_criterion(self, SIZE_t axis)
+    cdef Splitter _get_splitter(self, SIZE_t axis)
 
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
     cdef Criterion _get_criterion(self, SIZE_t axis)
+
+
+cdef class AxisRegressionCriterion(RegressionCriterion):
+    cdef SIZE_t col_start
+    cdef SIZE_t col_end
+    cdef SIZE_t n_node_cols
+    cdef DOUBLE_t weighted_n_node_cols
+    cdef SIZE_t* col_samples
+    cdef DOUBLE_t* col_sample_weight
+    cdef const DOUBLE_t[:, ::1] _original_y
+
+    # Set to True when set_columns is called and to false in call to init.
+    # Used to ensure set_columns are always called before init.
+    # TODO: consider alternatives if scikit-learn/pull/24678 is merged.
+    cdef bint _columns_are_set
+
+    cdef void set_columns(
+        self,
+        SIZE_t col_start,
+        SIZE_t col_end,
+        SIZE_t* col_samples,
+        DOUBLE_t* col_sample_weight,
+    ) nogil
