@@ -34,7 +34,9 @@ from hypertrees.tree._semisupervised_criterion import (
 from hypertrees.tree._semisupervised_splitter import BestSplitterSFSS
 from hypertrees.tree._experimental_criterion import UD3, UD35
 
-from splitter_test import test_splitter, test_splitter_nd
+from splitter_test import (
+    test_splitter, test_splitter_nd, test_gmo_splitter_symmetry,
+)
 from test_utils import (
     parse_args, stopwatch, gen_mock_data, melt_2d_data,
 )
@@ -895,3 +897,39 @@ def test_pbct_splitter_gso(**params):
         splitter2=splitter2d,
         **params,
     )
+
+
+@pytest.mark.parametrize(
+    'criteria,shape,n_outputs', [
+        (GlobalMSE, (50, 60), 1),
+        (LocalMSE, (60, 50), (50, 60)),
+    ]
+)
+def test_pbct_splitter_symmetry(criteria, shape, n_outputs):
+    params = DEF_PARAMS
+    params['shape'] = shape
+    X, y = gen_mock_data(**params)
+
+    splitter2d = make_2d_splitter(
+        criterion_wrapper_class=PBCTCriterionWrapper,
+        splitters=BestSplitter,
+        criteria=criteria,
+        max_features=params['nattrs'],
+        n_samples=params['shape'],
+        n_outputs=n_outputs,
+        min_samples_leaf=params['min_samples_leaf'],
+        min_weight_leaf=0.,
+    )
+
+    for axis in (0, 1):
+        comparisons = test_gmo_splitter_symmetry(
+            splitter_nd=splitter2d,
+            X=X,
+            y=y,
+            axis=axis,
+            pos=params['shape'][axis]//3,
+        )
+
+        for a, b, msg in comparisons:
+            print(f"* ({axis=}) {msg}: {a} == {b}")
+            assert_allclose(a, b, err_msg=msg)

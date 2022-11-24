@@ -195,22 +195,14 @@ cdef class Splitter2D:
         # (sklearn.tree._splitter.pyx, line 417)
 
         # TODO: DRY. Cumbersome to have an array of Splitters in Cython.
-        with gil: print(
-            '*** ND SPLITTER ROWS start, end msl',
-            self.splitter_rows.start,
-            self.splitter_rows.end,
-            self.splitter_rows.min_samples_leaf,
-        )
         if (
             self.splitter_rows.end - self.splitter_rows.start
             >= 2 * self.splitter_rows.min_samples_leaf
         ):
-            with gil: print('current_split.pos', current_split.pos)
             self.splitter_rows.node_split(impurity, &current_split,
                                           &n_constant_features[0])
             # NOTE: When no nice split have been  found, the child splitter sets
             # the split position at the end.
-            with gil: print('current_split.pos', current_split.pos)
             if current_split.pos < self.splitter_rows.end:
                 # Correct impurities.
                 with gil:
@@ -226,12 +218,6 @@ cdef class Splitter2D:
                     best_split.impurity_right = imp_right
                     best_split.axis = 0
 
-        with gil: print(
-            '*** ND SPLITTER COLS start, end msl',
-            self.splitter_rows.start,
-            self.splitter_rows.end,
-            self.splitter_rows.min_samples_leaf,
-        )
         if (
             self.splitter_cols.end - self.splitter_cols.start
             >= 2 * self.splitter_cols.min_samples_leaf

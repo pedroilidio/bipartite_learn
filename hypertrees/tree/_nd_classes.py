@@ -35,7 +35,9 @@ from sklearn.utils.validation import (
 from sklearn.utils import compute_sample_weight
 from sklearn.utils.multiclass import check_classification_targets
 
-from sklearn.utils._param_validation import Interval, StrOptions, Hidden
+from sklearn.utils._param_validation import (
+    Interval, StrOptions, Hidden, Options,
+)
 
 from sklearn.tree._criterion import Criterion
 from sklearn.tree._splitter import Splitter
@@ -50,7 +52,8 @@ from sklearn.tree._classes import BaseDecisionTree
 from ..base import BaseMultipartiteEstimator, MultipartiteRegressorMixin
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import (
-    CriterionWrapper2D, MSE_Wrapper2D, PBCTCriterionWrapper,
+    CriterionWrapper2D, MSE_Wrapper2D, PBCTCriterionWrapper, GlobalMSE,
+    LocalMSE, AxisRegressionCriterion,
 )
 from ._nd_splitter import Splitter2D
 from ..melter import row_cartesian_product
@@ -491,7 +494,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 
         splitter = self._make_splitter(
             n_samples=(n_rows, n_cols),
-            n_outputs=n_raw_outputs,
+            n_outputs=1 if self.criterion is GlobalMSE else n_raw_outputs,
             sparse=issparse(X),
             min_samples_leaf=min_samples_leaf,
             min_weight_leaf=min_weight_leaf,
@@ -935,6 +938,7 @@ class BipartiteDecisionTreeRegressor(
             StrOptions({"squared_error"}),
             Hidden(StrOptions({"friedman_mse", "absolute_error", "poisson"})),
             Hidden(Criterion),
+            Hidden(Options(type, {LocalMSE, GlobalMSE})),
         ],
     }
 

@@ -7,7 +7,6 @@ from typing import Callable
 import pytest
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.base import clone
-import sklearn.tree
 from sklearn.utils._testing import assert_allclose
 from sklearn.utils.validation import check_symmetric
 
@@ -15,6 +14,7 @@ from hypertrees.tree._nd_classes import (
     BipartiteDecisionTreeRegressor,
     _normalize_weights,
 )
+from hypertrees.tree._nd_criterion import LocalMSE, GlobalMSE
 from hypertrees.melter import row_cartesian_product
 
 from make_examples import make_interaction_regression, make_interaction_data
@@ -340,6 +340,7 @@ def test_leaf_shape(mrl, mcl, **params):
         min_cols_leaf=mcl,
         bipartite_adapter="local_multioutput",
         prediction_weights="raw",
+        criterion=LocalMSE,
     )
     tree.fit(XX, Y)
     pred = tree.predict(XX)
@@ -352,7 +353,11 @@ def test_leaf_shape(mrl, mcl, **params):
 
 
 @pytest.mark.parametrize("mrl,mcl", [(1, 1), (1, 5), (2, 1), (19, 11)])
-def test_leaf_shape_gso(mrl, mcl, **params):
+@pytest.mark.parametrize("adapter,criterion,pw", [
+    ("local_multioutput", GlobalMSE, "leaf_uniform"),
+    ("global_single_output", "squared_error", None),
+])
+def test_leaf_shape_gso(mrl, mcl, adapter, criterion, pw, **params):
     params = DEF_PARAMS | params
     # XX, Y, x, y = gen_mock_data(melt=True, **params)
     rng = np.random.default_rng(params['random_state'])
@@ -386,10 +391,15 @@ def test_leaf_shape_gso(mrl, mcl, **params):
     tree = BipartiteDecisionTreeRegressor(
         min_rows_leaf=mrl,
         min_cols_leaf=mcl,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter=adapter,
+        criterion=criterion,
+        prediction_weights=pw,
     )
     tree.fit(XX, Y)
     leaf_sizes, leaf_values = get_leaves(tree, return_values=True)
+    if adapter == "local_multioutput":
+        leaf_values = leaf_values[:, 0, 0]
+        # leaf_values = tree.tree_.value[tree.tree_.children_left==-1, 0, 0]
     leaf_values = np.sort(leaf_values.reshape(-1))
 
     assert_allclose(leaf_sizes, mrl*mcl)
