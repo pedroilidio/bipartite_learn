@@ -1,3 +1,4 @@
+# cython: profile=True
 # cython: boundscheck=True
 import copy
 import warnings

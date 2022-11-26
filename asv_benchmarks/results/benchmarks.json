@@ -1,0 +1,71 @@
+{
+    "tree.TreeBenchmark.time_fit": {
+        "code": "class TreeBenchmark:\n    def time_fit(self, tree_params, n_samples, n_features):\n        self.tree.fit(self.XX, self.Y)\n\n    def setup(self, tree_params, n_samples, n_features):\n        self.XX, self.Y = make_interaction_regression(\n            n_samples=n_samples,\n            n_features=n_features,\n        )\n        self.tree = BipartiteDecisionTreeRegressor(**tree_params)\n        self.tree.fit(self.XX, self.Y)",
+        "min_run_count": 2,
+        "name": "tree.TreeBenchmark.time_fit",
+        "number": 0,
+        "param_names": [
+            "tree_params",
+            "n_samples",
+            "n_features"
+        ],
+        "params": [
+            [
+                "{'bipartite_adapter': 'local_multioutput', 'criterion': <class 'hypertrees.tree._nd_criterion.GlobalMSE'>, 'prediction_weights': 'leaf_uniform'}",
+                "{'bipartite_adapter': 'global_single_output', 'criterion': 'squared_error', 'prediction_weights': None}"
+            ],
+            [
+                "(30, 20)",
+                "(50, 70)",
+                "(200, 100)",
+                "(200, 300)"
+            ],
+            [
+                "(10, 9)"
+            ]
+        ],
+        "repeat": 30,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "timeout": 60.0,
+        "type": "time",
+        "unit": "seconds",
+        "version": "2d0b82e8e8f45801d1235747493c77a3712e6988ae000af8f3e81ce201a908f7",
+        "warmup_time": -1
+    },
+    "tree.TreeBenchmark.time_predict": {
+        "code": "class TreeBenchmark:\n    def time_predict(self, tree_params, n_samples, n_features):\n        self.tree.predict(self.XX)\n\n    def setup(self, tree_params, n_samples, n_features):\n        self.XX, self.Y = make_interaction_regression(\n            n_samples=n_samples,\n            n_features=n_features,\n        )\n        self.tree = BipartiteDecisionTreeRegressor(**tree_params)\n        self.tree.fit(self.XX, self.Y)",
+        "min_run_count": 2,
+        "name": "tree.TreeBenchmark.time_predict",
+        "number": 0,
+        "param_names": [
+            "tree_params",
+            "n_samples",
+            "n_features"
+        ],
+        "params": [
+            [
+                "{'bipartite_adapter': 'local_multioutput', 'criterion': <class 'hypertrees.tree._nd_criterion.GlobalMSE'>, 'prediction_weights': 'leaf_uniform'}",
+                "{'bipartite_adapter': 'global_single_output', 'criterion': 'squared_error', 'prediction_weights': None}"
+            ],
+            [
+                "(30, 20)",
+                "(50, 70)",
+                "(200, 100)",
+                "(200, 300)"
+            ],
+            [
+                "(10, 9)"
+            ]
+        ],
+        "repeat": 30,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "timeout": 60.0,
+        "type": "time",
+        "unit": "seconds",
+        "version": "e856202d3caed09166ddc0fc40a31151356a8ffae34634101eefc02e83306379",
+        "warmup_time": -1
+    },
+    "version": 2
+}

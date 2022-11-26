@@ -2,6 +2,7 @@ import logging
 import numpy as np
 from itertools import product
 from pprint import pprint
+from timeit import timeit
 from typing import Callable
 
 import pytest

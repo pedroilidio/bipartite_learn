@@ -1,3 +1,5 @@
+# cython: profile=True
+import cython
 from sklearn.tree._criterion cimport Criterion
 from sklearn.tree._splitter cimport Splitter, SplitRecord
 from sklearn.tree._tree cimport SIZE_t, DOUBLE_t
@@ -15,6 +17,30 @@ cimport numpy as np
 
 cdef double INFINITY = np.inf
 
+
+cdef object split_to_dict(SplitRecord split):
+    return dict(
+        impurity_left=split.impurity_left,
+        impurity_right=split.impurity_right,
+        pos=split.pos,
+        feature=split.feature,
+        threshold=split.threshold,
+        improvement=split.improvement,
+    )
+
+
+cdef object split_nd_to_dict(SplitRecordND split):
+    return dict(
+        axis=split.axis,
+        impurity_left=split.impurity_left,
+        impurity_right=split.impurity_right,
+        pos=split.pos,
+        feature=split.feature,
+        threshold=split.threshold,
+        improvement=split.improvement,
+    )
+
+
 cdef inline void _init_split(SplitRecord* self, SIZE_t start_pos) nogil:
     self.impurity_left = INFINITY
     self.impurity_right = INFINITY
@@ -24,7 +50,18 @@ cdef inline void _init_split(SplitRecord* self, SIZE_t start_pos) nogil:
     self.improvement = -INFINITY
 
 
-cpdef test_splitter(
+cdef inline void _init_split_nd(SplitRecordND* self, SIZE_t start_pos) nogil:
+    self.axis = -1
+    self.impurity_left = INFINITY
+    self.impurity_right = INFINITY
+    self.pos = start_pos
+    self.feature = 0
+    self.threshold = 0.
+    self.improvement = -INFINITY
+
+
+# @cython.profile(False)  # Profiling yields segfault
+cpdef object test_splitter(
         Splitter splitter,
         object X, np.ndarray y,
         SIZE_t start=0,
@@ -65,36 +102,35 @@ cpdef test_splitter(
         print('[SPLITTER_TEST] weighted_n_right', splitter.criterion.weighted_n_right)
         print('[SPLITTER_TEST] weighted_n_left', splitter.criterion.weighted_n_left)
 
-    return split
+    return split_to_dict(split)
 
 
-cpdef test_splitter_nd(
+# @cython.profile(False)  # Profiling yields segfault
+cpdef SplitRecordND test_splitter_nd(
         Splitter2D splitter,
         X, y,
         start=None,
         end=None,
-        ndim=None,
         verbose=False,
 ):
     if verbose:
         print('[SPLITTER_TEST] starting splitter_nd test')
-    ndim = ndim or y.ndim
-    cdef SIZE_t* end_ = <SIZE_t*> malloc(ndim * sizeof(SIZE_t))
-    cdef SIZE_t* start_ = <SIZE_t*> malloc(ndim * sizeof(SIZE_t))
-    cdef SIZE_t* ncf = <SIZE_t*> malloc(ndim * sizeof(SIZE_t))
+    cdef SIZE_t[2] end_
+    cdef SIZE_t[2] start_
+    cdef SIZE_t[2] ncf
     cdef SplitRecordND split
     cdef double wnns  # weighted_n_node_samples
     cdef SIZE_t i
 
-    start = start or [0] * ndim
+    start = start or (0, 0)
     end = end or y.shape
 
-    for i in range(ndim):
+    for i in range(2):
         end_[i] = end[i]
         start_[i] = start[i]
         ncf[i] = 0
 
-    _init_split(&split, 0)
+    _init_split_nd(&split, 0)
 
     if verbose:
         print('[SPLITTER_TEST] calling splitter.init(X, y, NULL)')
@@ -125,11 +161,7 @@ cpdef test_splitter_nd(
         print('[SPLITTER_TEST] (rows) weighted_n_left',
               splitter.splitter_rows.criterion.weighted_n_left)
 
-    free(start_)
-    free(end_)
-    free(ncf)
-
-    return split
+    return <SplitRecordND>split
 
 
 cpdef object test_gmo_splitter_symmetry(

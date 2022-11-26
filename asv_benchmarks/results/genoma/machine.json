@@ -1,0 +1,9 @@
+{
+    "arch": "x86_64",
+    "cpu": "Intel(R) Xeon(R) Gold 6230 CPU @ 2.10GHz",
+    "machine": "genoma",
+    "num_cpu": "80",
+    "os": "Linux 5.4.0-131-generic",
+    "ram": "196473456",
+    "version": 1
+}

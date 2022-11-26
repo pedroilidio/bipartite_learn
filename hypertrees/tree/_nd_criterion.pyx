@@ -1,4 +1,6 @@
-# cython: boundscheck=True
+# cython: linetrace=True
+# cython: boundscheck=False
+# distutils: define_macros=CYTHON_TRACE_NOGIL=1
 from sklearn.tree._criterion cimport RegressionCriterion, Criterion
 from libc.stdlib cimport malloc, calloc, free, realloc
 from libc.string cimport memset
@@ -512,12 +514,12 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
     cdef void node_value(self, double* dest) nogil:
         """Copy the value (prototype) of node samples into dest.
         """
-        cdef SIZE_t i
-        for i in range(self.n_outputs):
-            dest[i] = NAN
+        # cdef SIZE_t i
+        # for i in range(self.n_outputs):
+        #     dest[i] = NAN
 
         self.splitter_cols.node_value(dest)
-        self.splitter_rows.node_value(dest + self.n_rows)
+        # FIXME: self.splitter_rows.node_value(dest + self.n_rows)
 
     cdef double node_impurity(self) nogil:
         """Return the impurity of the current node.
@@ -695,6 +697,14 @@ cdef class AxisRegressionCriterion(RegressionCriterion):
 
 
 cdef class GlobalMSE(AxisRegressionCriterion):
+    def __cinit__(self, SIZE_t n_outputs, SIZE_t n_samples):
+        # self._proxy_y = <DOUBLE_t*> malloc(n_samples * sizeof(DOUBLE_t))
+        # self.y = np.empty(size=(n_samples, 1), dtype=DOUBLE_t, contiguous='C')
+        self._proxy_y = np.empty((n_samples, 1), order="C")
+
+    # def __dealloc__(self):
+    #     free(self._proxy_y)
+
     def __init__(self, n_outputs=1, *args, **kwargs):
         if n_outputs != 1:
             raise ValueError(f"{type(self).__name__} only supports n_outputs=1")
@@ -782,9 +792,9 @@ cdef class GlobalMSE(AxisRegressionCriterion):
 
         # cdef int n = y.shape[0]
         # self._proxy_y = <DOUBLE_t[:n, :1:1]> malloc(sizeof(DOUBLE_t)*y.shape[0])
-        cdef DOUBLE_t[:, ::1] proxy_y
-        with gil:
-            proxy_y = np.zeros_like(y, shape=(y.shape[0], 1))  # n_outputs == 1
+        # cdef DOUBLE_t[:, ::1] proxy_y
+        # with gil:
+        #     proxy_y = np.zeros_like(y, shape=(y.shape[0], 1))  # n_outputs == 1
 
         cdef DOUBLE_t* col_sample_weight = self.col_sample_weight
         cdef SIZE_t* col_samples = self.col_samples
@@ -797,9 +807,12 @@ cdef class GlobalMSE(AxisRegressionCriterion):
         cdef DOUBLE_t wi = 1.0, wj = 1.0
         self.sq_sum_total = 0.0
         memset(&self.sum_total[0], 0, self.n_outputs * sizeof(double))
+        cdef DOUBLE_t[:, ::1] proxy_y = self._proxy_y
 
         for p in range(start, end):
             i = samples[p]
+            proxy_y[i, 0] = 0.0
+
             if sample_weight != NULL:
                 wi = sample_weight[i]
 
@@ -812,11 +825,13 @@ cdef class GlobalMSE(AxisRegressionCriterion):
 
                 # for k in range(self.n_outputs):  # n_outputs == 1, k == 0
                 y_ij = y[i, j]
-                proxy_y[i, 0] += wj * y_ij
+                proxy_y[i, 0] = proxy_y[i, 0] + wj * y_ij  # inplace not supported
                 w_y_ij = wi * wj * y_ij
                 self.sum_total[0] += w_y_ij
                 self.sq_sum_total += w_y_ij * y_ij
 
+        # with gil:
+        #     self.y = <DOUBLE_t[:self.n_samples, :1:1]> proxy_y
         self.y = proxy_y
 
         # Reset to pos=start

@@ -1,3 +1,4 @@
+# cython: profile=True
 # distutils: language = c++
 from cpython cimport Py_INCREF, PyObject, PyTypeObject
 from libc.stdint cimport SIZE_MAX

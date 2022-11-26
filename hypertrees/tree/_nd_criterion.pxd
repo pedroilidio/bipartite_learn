@@ -108,6 +108,8 @@ cdef class AxisRegressionCriterion(RegressionCriterion):
     cdef DOUBLE_t weighted_n_node_cols
     cdef SIZE_t* col_samples
     cdef DOUBLE_t* col_sample_weight
+    # cdef DOUBLE_t* _proxy_y
+    cdef DOUBLE_t[:, ::1] _proxy_y
     cdef const DOUBLE_t[:, ::1] _original_y
 
     # Set to True when set_columns is called and to false in call to init.

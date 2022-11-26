@@ -889,7 +889,7 @@ def test_pbct_splitter_gso(**params):
         n_samples=params['shape'],
         n_outputs=1,
         min_samples_leaf=params['min_samples_leaf'],
-        min_weight_leaf=0.,
+        min_weight_leaf=0.0,
     )
 
     compare_splitters_1d2d(
