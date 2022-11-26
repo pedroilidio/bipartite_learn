@@ -95,6 +95,7 @@ cdef class Splitter2D:
         cdef const DOUBLE_t[:, ::1] yT = np.ascontiguousarray(y.T)
         # FIXME: only need to set criterion_wrapper.X* because 
         # BaseDenseSplitter.X is not accessibe (sklearn problem).
+        # TODO: receive in criterion.init
         self.criterion_wrapper.X_rows = np.ascontiguousarray(X[0], dtype=np.float64)
         self.criterion_wrapper.X_cols = np.ascontiguousarray(X[1], dtype=np.float64)
         self.n_row_features = X[0].shape[1]
@@ -163,21 +164,19 @@ cdef class Splitter2D:
             self.y,
             self.row_sample_weight,
             self.col_sample_weight,
-            self.weighted_n_samples,
+            self.weighted_n_rows,
+            self.weighted_n_cols,
             start, end,
         )
 
-        # TODO: Uncomment?
-        # Done in criterion_wrapper.init() by node_reset
-        self.splitter_rows.criterion.reset()
-        self.splitter_cols.criterion.reset()
-
-        weighted_n_node_samples[0] = \
+        weighted_n_node_samples[0] = (
             self.criterion_wrapper.weighted_n_node_samples
-        weighted_n_node_samples[1] = \
-            self.criterion_wrapper.weighted_n_node_rows
-        weighted_n_node_samples[2] = \
-            self.criterion_wrapper.weighted_n_node_cols
+        )
+        # TODO: consider implementing
+        # weighted_n_node_samples[1] = \
+        #     self.criterion_wrapper.weighted_n_node_rows
+        # weighted_n_node_samples[2] = \
+        #     self.criterion_wrapper.weighted_n_node_cols
 
         return 0
 
@@ -205,7 +204,7 @@ cdef class Splitter2D:
             # the split position at the end.
             if current_split.pos < self.splitter_rows.end:
                 # Correct impurities.
-                with gil:
+                with gil:  # TODO: nogil
                     self.criterion_wrapper.children_impurity(
                         &imp_left, &imp_right, 0)
                 imp_improve = self.criterion_wrapper.impurity_improvement(
@@ -229,7 +228,7 @@ cdef class Splitter2D:
             # the split position at the end.
             if current_split.pos < self.splitter_cols.end:
                 # Correct impurities.
-                with gil:
+                with gil:  # TODO: nogil
                     self.criterion_wrapper.children_impurity(
                         &imp_left, &imp_right, 1)
                 imp_improve = self.criterion_wrapper.impurity_improvement(
