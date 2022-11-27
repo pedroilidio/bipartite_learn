@@ -1,6 +1,5 @@
 # cython: boundscheck=True
 from sklearn.tree._criterion cimport RegressionCriterion, Criterion
-# from sklearn.tree._criterion import MSE
 from libc.stdlib cimport malloc, calloc, free, realloc
 from libc.string cimport memset
 import numpy as np
@@ -60,7 +59,6 @@ cdef class CriterionWrapper2D:
 
 
 # TODO: global in the name
-# TODO: ensure n_outputs is always 1
 cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     def __cinit__(
         self,
@@ -396,29 +394,27 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         sq_sum_right = self.sq_sum_total - sq_sum_left
 
         impurity_left[0] = (
-            sq_sum_left
-            - (sum_left * sum_left) / weighted_n_left
-        ) / weighted_n_left
+            (sq_sum_left - (sum_left * sum_left) / weighted_n_left)
+            / weighted_n_left
+        )
 
         impurity_right[0] = (
-            sq_sum_right
-            - (sum_right * sum_right) / weighted_n_right
-        ) / weighted_n_right
+            (sq_sum_right - (sum_right * sum_right) / weighted_n_right)
+            / weighted_n_right
+        )
 
 
 # TODO: should work for classification as well.
-# FIXME: update
-cdef class PBCTCriterionWrapper(CriterionWrapper2D):
+cdef class PBCTCriterionWrapper(RegressionCriterionWrapper2D):
     """Applies Predictive Bi-Clustering Trees method.
 
     See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
     """
-'''  # FIXME
-    def __cinit__(self, Splitter splitter_rows, Splitter splitter_cols):
-        self.splitter_rows = splitter_rows
-        self.splitter_cols = splitter_cols
-        self.n_rows = self.splitter_rows.criterion.n_samples
-        self.n_cols = self.splitter_cols.criterion.n_samples
+    def __cinit__(self, Criterion criterion_rows, Criterion criterion_cols):
+        self.criterion_rows = criterion_rows
+        self.criterion_cols = criterion_cols
+        self.n_rows = self.criterion_rows.n_samples
+        self.n_cols = self.criterion_cols.n_samples
         self.row_samples = NULL
         self.col_samples = NULL
 
@@ -445,23 +441,33 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
 
         self.sum_total = np.zeros(self.n_outputs, dtype=np.float64)
 
+    def __init__(self, *args, **kwargs):
+        pass
+
     def __dealloc__(self):
         free(self._node_value_aux)
 
     def __reduce__(self):
         return (type(self),
-                (self.splitter_rows, self.splitter_cols),
+                (self.criterion_rows, self.criterion_cols),
                 self.__getstate__())
 
     def __getstate__(self):
         return {}
 
     cdef int init(
-            self, const DOUBLE_t[:, ::1] y_2D,
+            self,
+            const DOUBLE_t[:, ::1] X_rows,
+            const DOUBLE_t[:, ::1] X_cols,
+            const DOUBLE_t[:, ::1] y_2D,
             DOUBLE_t* row_sample_weight,
             DOUBLE_t* col_sample_weight,
-            double weighted_n_samples,
-            SIZE_t[2] start, SIZE_t[2] end,
+            double weighted_n_rows,
+            double weighted_n_cols,
+            SIZE_t* row_samples,
+            SIZE_t* col_samples,
+            SIZE_t[2] start,
+            SIZE_t[2] end,
         ) nogil except -1:
         """This function adapts RegressionCriterion.init to 2D data."""
         # NOTE: A problem is sometimes n_outputs is actually treated the
@@ -469,14 +475,20 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         # In 1D, they have the same value, but now we have to discern them.
         cdef SIZE_t i, j, p, q
         cdef DOUBLE_t wi, wj
+        cdef DOUBLE_t* sum_total_rows 
+        cdef DOUBLE_t* sum_total_cols 
 
         # Initialize fields
+        self.X_rows = X_rows
+        self.X_cols = X_cols
         self.y_2D = y_2D
         self.row_sample_weight = row_sample_weight
         self.col_sample_weight = col_sample_weight
-        self.weighted_n_samples = weighted_n_samples
-        self.row_samples = &self.splitter_rows.samples[0]
-        self.col_samples = &self.splitter_cols.samples[0]
+        self.weighted_n_rows = weighted_n_rows
+        self.weighted_n_cols = weighted_n_cols
+        self.weighted_n_samples = weighted_n_rows * weighted_n_cols
+        self.row_samples = row_samples
+        self.col_samples = col_samples
 
         # FIXME: does not work because of depth first-tree building
         # Use last split axis to avoid redundantly calculating node impurity
@@ -492,7 +504,6 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         self.end[0], self.end[1] = end[0], end[1]
         self.sq_sum_total = 0.0
 
-        cdef double[2] wnns  # will be discarded
         cdef SIZE_t n_node_rows = end[0] - start[0]
         cdef SIZE_t n_node_cols = end[1] - start[1]
 
@@ -500,8 +511,8 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
             # FIXME: how to access composite semisupervised criterion?
             #        a gambiarra is used for now (they set n_outputs again).
             # HACK
-            self.splitter_rows.criterion.n_outputs = n_node_cols
-            self.splitter_cols.criterion.n_outputs = n_node_rows
+            self.criterion_rows.n_outputs = n_node_cols
+            self.criterion_cols.n_outputs = n_node_rows
             self.y_2D_rows = np.empty((self.n_rows, n_node_cols))
             self.y_2D_cols = np.empty((self.n_cols, n_node_rows))
 
@@ -510,6 +521,8 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
             for q in range(n_node_cols):
                 j = self.col_samples[q + start[1]]
                 self.y_2D_rows[i, q] = self.y_2D_cols[j, p] = self.y_2D[i, j]
+
+        self.sq_sum_total = 0.0
 
         # FIXME: is not this MSE specific?
         if (self.row_sample_weight!=NULL) or (self.row_sample_weight!=NULL):
@@ -529,47 +542,28 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
 
                     self.y_2D_rows[i, q] *= wj ** .5
                     self.y_2D_cols[j, p] *= wi ** .5
+                    # TODO
+                    self.sq_sum_total += self.y_2D_rows[i, q] * wj ** .5
 
-        if -1 == self._node_reset_child_splitter(
-            child_splitter=self.splitter_rows,
+        self.criterion_rows.init(
             y=self.y_2D_rows,
             sample_weight=self.row_sample_weight,
-            start=start[0],
-            end=end[0],
-            weighted_n_node_samples=wnns,
-        ):
-            return -1
+            weighted_n_samples=self.weighted_n_rows,
+            samples=self.row_samples,
+            start=self.start[1],
+            end=self.end[1],
+        )
 
-        if -1 == self._node_reset_child_splitter(
-            child_splitter=self.splitter_cols,
+        self.criterion_cols.init(
             y=self.y_2D_cols,
             sample_weight=self.col_sample_weight,
-            start=start[1],
-            end=end[1],
-            weighted_n_node_samples=wnns+1,
-        ):
-            return -1
-
-        self.weighted_n_node_rows = wnns[0]
-        self.weighted_n_node_cols = wnns[1]
-        self.weighted_n_node_samples = wnns[0] * wnns[1]
+            weighted_n_samples=self.weighted_n_cols,
+            samples=self.col_samples,
+            start=self.start[1],
+            end=self.end[1],
+        )
 
         return 0
-
-    cdef int _node_reset_child_splitter(
-            self,
-            Splitter child_splitter,
-            const DOUBLE_t[:, ::1] y,
-            DOUBLE_t* sample_weight,
-            SIZE_t start,
-            SIZE_t end,
-            DOUBLE_t* weighted_n_node_samples,
-    ) nogil except -1:
-        """Substitutes splitter.node_reset() setting child splitter on 2D data.
-        """
-        cdef int ret
-        child_splitter.y = y
-        return child_splitter.node_reset(start, end, weighted_n_node_samples)
 
     cdef void node_value(self, double* dest) nogil:
         """Copy the value (prototype) of node samples into dest.
@@ -579,14 +573,14 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         for i in range(self.n_outputs):
             dest[i] = NAN
 
-        self.splitter_cols.node_value(self._node_value_aux)
+        self.criterion_cols.node_value(self._node_value_aux)
 
         # Copy each row's output to their corresponding positions of dest
         for q in range(self.start[0], self.end[0]):
             j = self.row_samples[q]
             dest[j] = self._node_value_aux[q-self.start[0]]
         
-        self.splitter_rows.node_value(self._node_value_aux)
+        self.criterion_rows.node_value(self._node_value_aux)
 
         # Copy each colum's output to their corresponding positions of dest
         for p in range(self.start[1], self.end[1]):
@@ -600,30 +594,30 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         """
         # Will be replaced by impurity_improvement() anyway. We define it here
         # just for the sake of semantics.
-        return (self.splitter_rows.node_impurity()
-                + self.splitter_cols.node_impurity()) / 2
+        return (self.criterion_rows.node_impurity()
+                + self.criterion_cols.node_impurity()) / 2
 
     cdef void children_impurity(
             self,
             double* impurity_left,
             double* impurity_right,
             SIZE_t axis,
-    ):
+    ) nogil:
         # HACK: We add the other axis' node impurity to the result because
         #       otherwise a 1 by n or n by 1 child partition would receive a
         #       0-valued impurity, triggering stop criteria in
         #       ._tree.TreeBuilder before we correct the calculation in
         #       `self.impurity_improvement()` by reassigning impurity_parent.
         if axis == 0:
-            other_imp = self.splitter_cols.criterion.node_impurity()
-            self.splitter_rows.criterion.children_impurity(
+            other_imp = self.criterion_cols.node_impurity()
+            self.criterion_rows.children_impurity(
                 impurity_left, impurity_right)
             impurity_left[0] += other_imp
             impurity_right[0] += other_imp
 
         elif axis == 1:
-            other_imp = self.splitter_rows.criterion.node_impurity()
-            self.splitter_cols.criterion.children_impurity(
+            other_imp = self.criterion_rows.node_impurity()
+            self.criterion_cols.children_impurity(
                 impurity_left, impurity_right)
             impurity_left[0] += other_imp
             impurity_right[0] += other_imp
@@ -657,24 +651,23 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
             #
             #       if self.last_split_axis != axis:
 
-            impurity_parent = self.splitter_rows.criterion.node_impurity()
-            other_imp = self.splitter_cols.criterion.node_impurity()
+            impurity_parent = self.criterion_rows.node_impurity()
+            other_imp = self.criterion_cols.node_impurity()
 
             #  We are actually receiving left_impurity + others_node_impurity
             #  from children_impurity(), hence the subtraction.
-            return self.splitter_rows.criterion.impurity_improvement(
+            return self.criterion_rows.impurity_improvement(
                 impurity_parent,
                 impurity_left - other_imp,
                 impurity_right - other_imp,
             )
 
         elif axis == 1:
-            impurity_parent = self.splitter_cols.criterion.node_impurity()
-            other_imp = self.splitter_rows.criterion.node_impurity()
+            impurity_parent = self.criterion_cols.node_impurity()
+            other_imp = self.criterion_rows.node_impurity()
 
-            return self.splitter_cols.criterion.impurity_improvement(
+            return self.criterion_cols.impurity_improvement(
                 impurity_parent,
                 impurity_left - other_imp,
                 impurity_right - other_imp,
             )
-'''

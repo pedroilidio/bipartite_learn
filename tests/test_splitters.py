@@ -54,7 +54,7 @@ DEF_PARAMS = dict(
     plot=False,
     start=0,
     end=0,
-    verbose=False,
+    verbose=True,
 )
 
 
