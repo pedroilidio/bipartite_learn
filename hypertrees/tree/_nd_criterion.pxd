@@ -36,12 +36,18 @@ cdef class CriterionWrapper2D:
     cdef double weighted_n_node_cols
 
     cdef int init(
-        self, const DOUBLE_t[:, ::1] y_2D,
+        self,
+        const DOUBLE_t[:, ::1] X_rows,
+        const DOUBLE_t[:, ::1] X_cols,
+        const DOUBLE_t[:, ::1] y_2D,
         DOUBLE_t* row_sample_weight,
         DOUBLE_t* col_sample_weight,
         double weighted_n_rows,
         double weighted_n_cols,
-        SIZE_t[2] start, SIZE_t[2] end,
+        SIZE_t* row_samples,
+        SIZE_t* col_samples,
+        SIZE_t[2] start,
+        SIZE_t[2] end,
     ) nogil except -1
 
     cdef void node_value(self, double* dest) nogil

@@ -4,7 +4,7 @@ from sklearn.tree._criterion import MSE
 from sklearn.tree._tree cimport DTYPE_t          # Type of X
 from sklearn.tree._tree cimport DOUBLE_t         # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t           # Type for indices and counters
-from ._nd_criterion cimport RegressionCriterionWrapper2D
+from ._nd_criterion cimport CriterionWrapper2D, RegressionCriterionWrapper2D
 
 
 cdef class BaseDenseSplitter(Splitter):
@@ -42,9 +42,15 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
     cdef public double current_node_impurity
     cdef const DOUBLE_t[:, ::1] full_X
 
-cdef class RegressionCriterionWrapper2DSS(RegressionCriterionWrapper2D):
-    cdef void _set_splitter_y(
-        self,
-        Splitter splitter,
-        const DOUBLE_t[:, ::1] y,
-    )
+cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
+    cdef RegressionCriterion unsupervised_criterion_rows
+    cdef RegressionCriterion unsupervised_criterion_cols
+    cdef RegressionCriterionWrapper2D supervised_bipartite_criterion
+    cdef SIZE_t n_row_features
+    cdef SIZE_t n_col_features
+    cdef public double supervision_rows
+    cdef public double supervision_cols
+    cdef public double _curr_supervision_rows
+    cdef public double _curr_supervision_cols
+    cdef object update_supervision  # callable
+    cdef bint _supervision_is_dynamic

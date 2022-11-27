@@ -21,12 +21,17 @@ cdef class CriterionWrapper2D:
 
     cdef int init(
         self,
+        const DOUBLE_t[:, ::1] X_rows,
+        const DOUBLE_t[:, ::1] X_cols,
         const DOUBLE_t[:, ::1] y_2D,
         DOUBLE_t* row_sample_weight,
         DOUBLE_t* col_sample_weight,
         double weighted_n_rows,
         double weighted_n_cols,
-        SIZE_t[2] start, SIZE_t[2] end,
+        SIZE_t* row_samples,
+        SIZE_t* col_samples,
+        SIZE_t[2] start,
+        SIZE_t[2] end,
     ) nogil except -1:
         return -1
 
@@ -55,7 +60,6 @@ cdef class CriterionWrapper2D:
 
 
 # TODO: global in the name
-# TODO: receive X_rows/cols in init
 # TODO: ensure n_outputs is always 1
 cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     def __cinit__(
@@ -91,6 +95,17 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         self.y_row_sums = np.empty((self.n_rows, 1), dtype=np.float64)
         self.y_col_sums = np.empty((self.n_cols, 1), dtype=np.float64)
 
+    def __init__(self, *args, **kwargs):
+        if (
+            self.criterion_rows.n_outputs != 1
+            or self.criterion_cols.n_outputs != 1
+        ):
+            raise ValueError(
+                "Both rows and columns criteria must have n_outputs == 1. "
+                f"Received {self.criterion_rows.n_outputs} and "
+                f"{self.criterion_cols.n_outputs}, respectively."
+            )
+
     def __reduce__(self):
         return (
             type(self),
@@ -102,11 +117,16 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         return {}
 
     cdef int init(
-            self, const DOUBLE_t[:, ::1] y_2D,
+            self,
+            const DOUBLE_t[:, ::1] X_rows,
+            const DOUBLE_t[:, ::1] X_cols,
+            const DOUBLE_t[:, ::1] y_2D,
             DOUBLE_t* row_sample_weight,
             DOUBLE_t* col_sample_weight,
             double weighted_n_rows,
             double weighted_n_cols,
+            SIZE_t* row_samples,
+            SIZE_t* col_samples,
             SIZE_t[2] start,
             SIZE_t[2] end,
         ) nogil except -1:
@@ -127,25 +147,22 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         cdef DOUBLE_t* y_row_sums = &self.y_row_sums[0, 0]
         cdef DOUBLE_t* y_col_sums = &self.y_col_sums[0, 0]
 
-        cdef SIZE_t* col_samples
-        cdef SIZE_t* row_samples
         cdef SIZE_t start_row = start[0]
         cdef SIZE_t start_col = start[1]
         cdef SIZE_t end_row = end[0]
         cdef SIZE_t end_col = end[1]
 
         # Initialize fields
+        self.X_rows = X_rows
+        self.X_cols = X_cols
         self.y_2D = y_2D
         self.row_sample_weight = row_sample_weight
         self.col_sample_weight = col_sample_weight
-        self.row_samples = self.criterion_rows.samples
-        self.col_samples = self.criterion_cols.samples
         self.weighted_n_rows = weighted_n_rows
         self.weighted_n_cols = weighted_n_cols
         self.weighted_n_samples = weighted_n_rows * weighted_n_cols
-
-        row_samples = self.row_samples
-        col_samples = self.col_samples
+        self.row_samples = row_samples
+        self.col_samples = col_samples
 
         self.start[0] = start_row
         self.start[1] = start_col
@@ -205,7 +222,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
 
         self.sq_sum_total = sq_sum_total
         self.sum_total[0] = sum_total
-        self.weighted_n_samples = (
+        self.weighted_n_node_samples = (
             self.weighted_n_node_rows * self.weighted_n_node_cols
         )
 
@@ -248,10 +265,6 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     ) nogil except -1:
         """Substitutes splitter.node_reset() setting child splitter on 2D data.
         """
-        # TODO: uneeded lines
-        # child_splitter.y = y
-        # child_splitter.sample_weight = sample_weight
-        # child_splitter.weighted_n_samples = self.weighted_n_samples
         criterion.y = y
         criterion.sample_weight = sample_weight
         criterion.samples = samples
@@ -278,7 +291,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         double impurity_parent,
         double impurity_left,
         double impurity_right,
-        SIZE_t axis,
+        SIZE_t axis,  # Needs axis because of weighted_n_left/weighted_n_right.
     ) nogil:
         if axis == 0:
             return self.criterion_rows.impurity_improvement(
@@ -294,7 +307,6 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
 
 
 # TODO: rename SquaredErrorAdapter
-# XXX: improvement
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
 
     cdef double node_impurity(self) nogil:
@@ -311,10 +323,10 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         ) / self.weighted_n_node_samples
 
     cdef void children_impurity(
-            self,
-            double* impurity_left,
-            double* impurity_right,
-            SIZE_t axis,
+        self,
+        double* impurity_left,
+        double* impurity_right,
+        SIZE_t axis,
     ) nogil:
         """Evaluate the impurity in children nodes.
 
@@ -352,12 +364,17 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
             sum_right = self.criterion_rows.sum_right[0]
             weighted_n_left = self.criterion_rows.weighted_n_left
             weighted_n_right = self.criterion_rows.weighted_n_right
+            weighted_n_left *= self.weighted_n_node_cols
+            weighted_n_right *= self.weighted_n_node_cols
             end[0] = self.criterion_rows.pos
+
         elif axis == 1:
             sum_left = self.criterion_cols.sum_left[0]
             sum_right = self.criterion_cols.sum_right[0]
             weighted_n_left = self.criterion_cols.weighted_n_left
             weighted_n_right = self.criterion_cols.weighted_n_right
+            weighted_n_left *= self.weighted_n_node_rows
+            weighted_n_right *= self.weighted_n_node_rows
             end[1] = self.criterion_cols.pos
         else:
             with gil:

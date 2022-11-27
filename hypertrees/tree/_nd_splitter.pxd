@@ -33,6 +33,8 @@ cdef class Splitter2D:
     cdef Splitter splitter_cols
     cdef CriterionWrapper2D criterion_wrapper
     cdef SIZE_t n_row_features      # Number of row features (X[0].shape[0]).
+    cdef const DOUBLE_t[:, ::1] X_rows
+    cdef const DOUBLE_t[:, ::1] X_cols
     cdef const DOUBLE_t[:, ::1] y
     cdef SIZE_t[2] shape
 
@@ -50,6 +52,8 @@ cdef class Splitter2D:
 
     cdef DOUBLE_t* row_sample_weight
     cdef DOUBLE_t* col_sample_weight
+    cdef SIZE_t[::1] row_samples
+    cdef SIZE_t[::1] col_samples
     cdef SIZE_t[2] start
     cdef SIZE_t[2] end
 

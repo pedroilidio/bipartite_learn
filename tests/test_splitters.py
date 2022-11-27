@@ -26,8 +26,8 @@ from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
     SSCompositeCriterionAlves,
     SingleFeatureSSCompositeCriterion,
-    MSE2DSFSS,
-    SFSSMSE,
+    # MSE2DSFSS,
+    # SFSSMSE,
 )
 from hypertrees.tree._semisupervised_splitter import BestSplitterSFSS
 from hypertrees.tree._experimental_criterion import UD3, UD35
@@ -241,6 +241,7 @@ def compare_splitters_1d2d(
         print('Best split found:')
         pprint(result2)
 
+    assert result2['feature'] == result1['feature'], 'feature differs.'
     assert_allclose(result2['threshold'], result1['threshold'],
                     err_msg='threshold differs from reference.')
     assert_allclose(result2['improvement'], result1['improvement'],
