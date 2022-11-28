@@ -26,10 +26,7 @@ from hypertrees.tree._axis_criterion import AxisMSE
 
 from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
-    SSCompositeCriterionAlves,
-    SingleFeatureSSCompositeCriterion,
-    # MSE2DSFSS,
-    # SFSSMSE,
+    # SingleFeatureSSCompositeCriterion,
 )
 from hypertrees.tree._semisupervised_splitter import BestSplitterSFSS
 from hypertrees.tree._experimental_criterion import UD3, UD35
@@ -46,8 +43,8 @@ DTYPE_t, DOUBLE_t = np.float32, np.float64
 # Default test params
 DEF_PARAMS = dict(
     seed=0,
-    shape=(8, 4),
-    # shape=(50, 60),
+    # shape=(10, 10),
+    shape=(50, 60),
     nattrs=(10, 9),
     nrules=1,
     min_samples_leaf=1,
@@ -274,41 +271,11 @@ def compare_splitters_1d2d(
               '* Left:  {impurity_left}\n'
               '* Right: {impurity_right}\n'
               '* Improvement: {improvement}'.format(**result1))
-        # scaff
-        sls = (y_sort[:pos].sum(0)**2).sum()
-        srs = (y_sort[pos:].sum(0)**2).sum()
-        ssl = (y_sort[:pos]**2).sum()
-        ssr = (y_sort[pos:]**2).sum()
-        srsl = (y_sort[:pos].sum(1)**2).sum()
-        srsr = (y_sort[pos:].sum(1)**2).sum()
-        wnr, wnl = y_.shape[0] - pos, pos
-        print('[DEBUGGGGG]')
-        print('*** wnl wnr', wnl, wnr)
-        print('*** sql sqr', ssl, ssr)
-        print('*** row sql sqr', srsl, srsr)
-        il, ir = ssl, ssr
-        print('***', il, ir)
-        il -= 0.5 * sls / wnl
-        ir -= 0.5 * srs / wnr
-        print('*** total total sum', y_sort.sum(0).sum())
-        print('*** total sum', y_sort[:pos].sum(0).sum(),
-              ' | ', y_sort[pos:].sum(0).sum())
-        print('*** total sum sq norm',
-              (y_sort[:pos].sum(0)**2).sum()/2/wnl, ' | ', (y_sort[pos:].sum(0)**2).sum()/2/wnr)
-        print('*** total sum sq',
-              (y_sort[:pos].sum(0)**2).sum(), (y_sort[pos:].sum(0)**2).sum())
-        print('***', il, ir)
-        il -= 0.5 * srsl / y_.shape[1]
-        ir -= 0.5 * srsr / y_.shape[1]
-        print('***', il, ir)
-        il /= y_.shape[1] * wnl
-        ir /= y_.shape[1] * wnr
-        print('***', il, ir)
-        print(*zip(y_sort[:pos].sum(0), y_sort[pos:].sum(0)), sep='\n')
 
-        # breakpoint()
+    # Sometimes a diferent feature yields the same partitioning
+    # (especially with few samples in the dataset).
+    # assert result2['feature'] == result1['feature'], 'feature differs.'
 
-    assert result2['feature'] == result1['feature'], 'feature differs.'
     assert_allclose(result2['threshold'], result1['threshold'],
                     err_msg='threshold differs from reference.')
     assert_allclose(result2['impurity_left'], result1['impurity_left'],

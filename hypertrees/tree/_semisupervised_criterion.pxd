@@ -32,26 +32,26 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     # semisupervised impurity:
     #
     #   final_impurity = (
-    #     sup * self.supervised_criterion.node_impurity() + \
-    #     (1-sup) * self.unsupervised_criterion.node_impurity())
+    #     sup * self.supervised_criterion.node_impurity()
+    #     + (1-sup) * self.unsupervised_criterion.node_impurity()
+    #   )
     #
     # Its value can be dynamically controlled by a Python callable passed to
     # the constructor's update_supervision parameter, which should only receive
     # the current SSCompositeCriterion instance as argument and return a float.
-    cdef public double supervision           # Current supervision amount
-    cdef public double original_supervision  # first supervision value received
+
+    cdef public double _curr_supervision     # Current supervision amount
+    cdef public double supervision           # first supervision value received
     cdef public object update_supervision    # callable to update supervision
 
     # The _supervision_is_dynamic serves merely as a C-typed flag to
     # avoid asking for the GIL if update_supervision was not provided.
     cdef bint _supervision_is_dynamic
 
+    # TODO: explain
     cdef void unpack_y(self, const DOUBLE_t[:, ::1] y) nogil
 
-cdef class SSMSE(SSCompositeCriterion):
-    """Semi-supervised composite criterion with only MSE.
-    """
-
+# FIXME
 cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
     """Uses only the current feature as unsupervised data.
     """
@@ -59,15 +59,18 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
     cdef public double current_node_impurity
     cdef const DOUBLE_t[:, ::1] full_X
 
+# Regression?
 cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
-    cdef RegressionCriterion unsupervised_criterion_rows
-    cdef RegressionCriterion unsupervised_criterion_cols
-    cdef RegressionCriterionWrapper2D supervised_bipartite_criterion
+    cdef Criterion unsupervised_criterion_rows
+    cdef Criterion unsupervised_criterion_cols
+    cdef CriterionWrapper2D supervised_bipartite_criterion
     cdef SIZE_t n_row_features
     cdef SIZE_t n_col_features
     cdef public double supervision_rows
-    cdef public double supervision_cols
+    cdef object supervision_cols  # double or "same"
     cdef public double _curr_supervision_rows
     cdef public double _curr_supervision_cols
     cdef object update_supervision  # callable
     cdef bint _supervision_is_dynamic
+    cdef bint pairwise
+    cdef bint axis_decision_only

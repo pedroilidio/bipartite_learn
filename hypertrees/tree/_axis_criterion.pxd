@@ -16,6 +16,11 @@ cdef class AxisCriterion(Criterion):
     cdef const DOUBLE_t* col_sample_weight
 
     cdef SIZE_t* col_samples
+    # Since indices are reordered by splitters in node_split, indices of
+    # selected columns must be saved during AxisCriterion.init_columns().
+    # Otherwise, Criterion.sum_total will be built in an order that may not
+    # correspond to col_samples anymore when the time of calling
+    # Criterion.init() comes.
     cdef SIZE_t[::1] _col_indices
     cdef SIZE_t col_start
     cdef SIZE_t col_end
@@ -36,6 +41,7 @@ cdef class AxisCriterion(Criterion):
         SIZE_t col_end,
     ) nogil
 
+# (TODO)
 # cdef class ClassificationCriterion(AxisCriterion):
 #     """Abstract criterion for classification."""
 # 
@@ -50,8 +56,11 @@ cdef class AxisRegressionCriterion(AxisCriterion):
     """Abstract regression criterion."""
 
     cdef double sq_sum_total
+    # TODO: sq_row_sums is naturally calculated by the criterion in the other
+    #       axis. We could set it as a pointer to the other axis criterion's
+    #       sum_total.
     cdef double sq_row_sums  # np.sum(sample_weights * np.sum(y, axis=1) ** 2)
 
-    cdef double[::1] sum_total   # The sum of w*y.
-    cdef double[::1] sum_left    # Same as above, but for the left side of the split
-    cdef double[::1] sum_right   # Same as above, but for the right side of the split
+    cdef double[::1] sum_total  # The sum of w*y.
+    cdef double[::1] sum_left   # Same as above, but for the left side of the split
+    cdef double[::1] sum_right  # Same as above, but for the right side of the split

@@ -32,9 +32,12 @@ cdef class Splitter2D:
     problem as described by Pliakos _et al._ (2018).
     """
     def __cinit__(
-            self, Splitter splitter_rows, Splitter splitter_cols,
-            CriterionWrapper2D criterion_wrapper,
-            min_samples_leaf, min_weight_leaf,
+        self,
+        Splitter splitter_rows,
+        Splitter splitter_cols,
+        CriterionWrapper2D criterion_wrapper,
+        min_samples_leaf,
+        min_weight_leaf,
     ):
         """Store each axis' splitter."""
         self.n_samples = 0
@@ -67,10 +70,11 @@ cdef class Splitter2D:
     def __setstate__(self, d):
         pass
 
-    cdef int init(self,
-                  object X,
-                  const DOUBLE_t[:, ::1] y,
-                  DOUBLE_t* sample_weight,
+    cdef int init(
+        self,
+        object X,
+        const DOUBLE_t[:, ::1] y,
+        DOUBLE_t* sample_weight,  # TODO: test sample_weight
     ) except -1:
         """Initialize the axes' splitters.
         Take in the input data X, the target Y, and optional sample weights.
@@ -90,18 +94,16 @@ cdef class Splitter2D:
             samples are fit closer than lower weight samples. If not provided,
             all samples are assumed to have uniform weight.
         """
-        # TODO: avoid copying to yT, X_rows and X_cols, receive references.
+        self.y = y
+        self.n_rows = y.shape[0]
+        self.n_cols = y.shape[1]
+
+        # FIXME: avoid storing y_transposed, X_rows and X_cols (use references)
         self.X_rows = np.ascontiguousarray(X[0], dtype=np.float64)
         self.X_cols = np.ascontiguousarray(X[1], dtype=np.float64)
-        # TODO: use memoryview's .transpose
-        # TODO: test sample_weight
-        cdef const DOUBLE_t[:, ::1] yT = np.ascontiguousarray(y.T)
-        # TODO: receive in criterion.init
-        self.n_row_features = X[0].shape[1]
-        self.shape[0] = y.shape[0]
-        self.shape[1] = y.shape[1]
+        self.y_transposed = y.T.copy()
 
-        self.y = y
+        self.n_row_features = self.X_rows.shape[1]
 
         if sample_weight == NULL:
             self.row_sample_weight = NULL
@@ -110,15 +112,13 @@ cdef class Splitter2D:
             # First self.shape[0] sample weights are rows' the others
             # are columns'.
             self.row_sample_weight = sample_weight
-            self.col_sample_weight = sample_weight + self.shape[0]
+            self.col_sample_weight = sample_weight + self.n_rows
 
-        self.splitter_rows.init(X[0], y, self.row_sample_weight)
-        self.splitter_cols.init(X[1], yT, self.col_sample_weight)
+        self.splitter_rows.init(X[0], self.y, self.row_sample_weight)
+        self.splitter_cols.init(X[1], self.y_transposed, self.col_sample_weight)
         self.row_samples = self.splitter_rows.samples
         self.col_samples = self.splitter_cols.samples
 
-        self.n_rows = self.splitter_rows.n_samples
-        self.n_cols = self.splitter_cols.n_samples
         self.n_samples = self.n_rows * self.n_cols
         self.weighted_n_rows = self.splitter_rows.weighted_n_samples
         self.weighted_n_cols = self.splitter_cols.weighted_n_samples
@@ -126,8 +126,12 @@ cdef class Splitter2D:
 
         return 0
 
-    cdef int node_reset(self, SIZE_t[2] start, SIZE_t[2] end,
-                        double* weighted_n_node_samples) nogil except -1:
+    cdef int node_reset(
+        self,
+        SIZE_t[2] start,
+        SIZE_t[2] end,
+        double* weighted_n_node_samples
+    ) nogil except -1:
         """Reset splitters on node samples[start[0]:end[0], start[1]:end[1]].
         Returns -1 in case of failure to allocate memory (and raise MemoryError)
         or 0 otherwise.
@@ -169,6 +173,7 @@ cdef class Splitter2D:
             self.X_rows,
             self.X_cols,
             self.y,
+            self.y_transposed,
             self.row_sample_weight,
             self.col_sample_weight,
             self.weighted_n_rows,
@@ -190,8 +195,12 @@ cdef class Splitter2D:
 
         return 0
 
-    cdef int node_split(self, double impurity, SplitRecord* split,
-                        SIZE_t[2] n_constant_features) nogil except -1:
+    cdef int node_split(
+        self,
+        double impurity,
+        SplitRecord* split,
+        SIZE_t[2] n_constant_features
+    ) nogil except -1:
         """Find the best split on node samples.
         It should return -1 upon errors.
         """

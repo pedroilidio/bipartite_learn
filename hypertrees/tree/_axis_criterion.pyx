@@ -37,7 +37,7 @@ cdef class AxisCriterion(Criterion):
 
         for q in range(col_start, col_end):
             j = col_samples[q]
-            self._col_indices[q - col_start] = j  # TODO: explain
+            self._col_indices[q - col_start] = j
 
             if col_sample_weight != NULL:
                 w = col_sample_weight[j]
@@ -204,46 +204,31 @@ cdef class AxisRegressionCriterion(AxisCriterion):
         # and that sum_total is known, we are going to update
         # sum_left from the direction that require the least amount
         # of computations, i.e. from pos to new_pos or from end to new_pos.
-        with gil: print('*** pos, new_pos, end', pos, new_pos, end)
         if (new_pos - pos) <= (end - new_pos):
             for p in range(pos, new_pos):
                 i = samples[p]
                 if sample_weight != NULL:
                     wi = sample_weight[i]
 
-                with gil: print('*** sl =')
-                with gil: print(self.sum_left[0], end=' ')
-                with gil: print()
                 for k in range(n_node_cols):
                     j = _col_indices[k]
-                    # with gil: print(wi * self.y[i, j], end=' ')
                     self.sum_left[k] += wi * self.y[i, j]
-                    with gil: print(self.sum_left[k], end=' ')
 
                 self.weighted_n_left += wi
         else:
             self.reverse_reset()
-            with gil: print('*** pos, self pos, new_pos, end', pos, self.pos, new_pos, end)
 
             for p in range(end - 1, new_pos - 1, -1):
                 i = samples[p]
                 if sample_weight != NULL:
                     wi = sample_weight[i]
 
-                with gil: print('*** sl =')
-                with gil: print(self.sum_left[0], end=' ')
-                with gil: print()
                 for k in range(n_node_cols):
                     j = _col_indices[k]
-                    # with gil: print(wi * self.y[i, j], end=' ')
-                    with gil: print(self.sum_left[k], end='->')
                     self.sum_left[k] -= wi * self.y[i, j]
-                    with gil: print(self.sum_left[k], end=' ')
-                with gil: print()
 
                 self.weighted_n_left -= wi
 
-        with gil: print('*** wnns wnl', self.weighted_n_node_samples, self.weighted_n_left)
         self.weighted_n_right = (
             self.weighted_n_node_samples - self.weighted_n_left
         )
@@ -312,6 +297,7 @@ cdef class AxisMSE(AxisRegressionCriterion):
         cdef double proxy_impurity_left = 0.0
         cdef double proxy_impurity_right = 0.0
 
+        # TODO: Use sq_row_sums in proxy as well?
         for k in range(self.n_node_cols):
             proxy_impurity_left += self.sum_left[k] * self.sum_left[k]
             proxy_impurity_right += self.sum_right[k] * self.sum_right[k]
@@ -342,6 +328,8 @@ cdef class AxisMSE(AxisRegressionCriterion):
         cdef double sq_sum_right
         cdef double sq_row_sums_left = 0.0
         cdef double row_sum
+        cdef double col_sums_sq_left = 0.0
+        cdef double col_sums_sq_right = 0.0
 
         cdef SIZE_t i, j, p, k
         cdef DOUBLE_t wi = 1.0, wj = 1.0
@@ -355,7 +343,6 @@ cdef class AxisMSE(AxisRegressionCriterion):
 
             for k in range(n_node_cols):
                 j = _col_indices[k]
-                with gil: print(j, end=' ')
                 if col_sample_weight != NULL:
                     wj = col_sample_weight[j]
 
@@ -364,7 +351,6 @@ cdef class AxisMSE(AxisRegressionCriterion):
                 row_sum += wj * y_ij
             
             sq_row_sums_left += wi * row_sum * row_sum
-            with gil: print()
 
         sq_sum_right = self.sq_sum_total - sq_sum_left
         sq_row_sums_right = self.sq_row_sums - sq_row_sums_left
@@ -372,44 +358,15 @@ cdef class AxisMSE(AxisRegressionCriterion):
         impurity_left[0] = sq_sum_left
         impurity_right[0] = sq_sum_right
 
-        cdef double sum_total_total = 0.0
-        for i in range(self.n_node_cols):
-            sum_total_total += self.sum_total[i]
-
-        with gil: print('*** total_sum', sum_total_total)
-        with gil: print('*** wnl wnr', self.weighted_n_left, self.weighted_n_right)
-        with gil: print('*** sql sqr', sq_sum_left, sq_sum_right, self.sq_sum_total)
-        with gil: print('*** row sql sqr', sq_row_sums_left, sq_row_sums_right, self.sq_row_sums)
-        with gil: print('***', impurity_left[0], impurity_right[0])
-        cdef double suml= 0.0, sumr = 0.0 # FIXME
-        cdef double suml2= 0.0, sumr2 = 0.0 # FIXME
-        cdef double col_sums_sq_left = 0.0, col_sums_sq_right = 0.0
-
-        with gil: print('n_node_cols', self.n_node_cols, n_node_cols)
         for k in range(self.n_node_cols):
-            suml += self.sum_left[k]
-            with gil: print('sl sr', self.sum_left[k], ', |', self.sum_right[k], ',')
-            sumr += self.sum_right[k]
             col_sums_sq_left += self.sum_left[k] * self.sum_left[k]
             col_sums_sq_right += self.sum_right[k] * self.sum_right[k]
-            # impurity_left[0] -= 0.5 * (self.sum_left[k] ** 2.0 / self.weighted_n_left)
-            # impurity_right[0] -= 0.5 * (self.sum_right[k] ** 2.0 / self.weighted_n_right)
-            suml2 += 0.5 * (self.sum_left[k] ** 2.0 / self.weighted_n_left) # XXX
-            sumr2 += 0.5 * (self.sum_right[k] ** 2.0 / self.weighted_n_right) # XXX
         
         impurity_left[0] -= col_sums_sq_left / (2.0 * self.weighted_n_left)
         impurity_right[0] -= col_sums_sq_right / (2.0 * self.weighted_n_right)
         
-        with gil: print('*** total sum', suml, '|', sumr)
-        with gil: print('*** total sum sq norm', suml2, '|', sumr2)
-        with gil: print('*** total sum sq', col_sums_sq_left, '|', col_sums_sq_right)
-        with gil: print('*** wnl wnr', self.weighted_n_left, self.weighted_n_right)
-        with gil: print('***', impurity_left[0], impurity_right[0])
         impurity_left[0] -= 0.5 * sq_row_sums_left / self.weighted_n_node_cols
         impurity_right[0] -= 0.5 * sq_row_sums_right / self.weighted_n_node_cols
 
-        with gil: print('***', impurity_left[0], impurity_right[0])
         impurity_left[0] /= self.weighted_n_node_cols * self.weighted_n_left
         impurity_right[0] /= self.weighted_n_node_cols * self.weighted_n_right
-
-        with gil: print('***', impurity_left[0], impurity_right[0], "\n---")

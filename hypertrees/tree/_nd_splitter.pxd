@@ -36,7 +36,7 @@ cdef class Splitter2D:
     cdef const DOUBLE_t[:, ::1] X_rows
     cdef const DOUBLE_t[:, ::1] X_cols
     cdef const DOUBLE_t[:, ::1] y
-    cdef SIZE_t[2] shape
+    cdef const DOUBLE_t[:, ::1] y_transposed
 
     cdef SIZE_t n_rows
     cdef SIZE_t n_cols

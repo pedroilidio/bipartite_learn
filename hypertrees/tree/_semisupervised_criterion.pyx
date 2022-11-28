@@ -1,6 +1,5 @@
 # cython: boundscheck=True
 import copy, warnings, numbers
-from typing import Callable
 from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 from sklearn.tree._criterion import MSE
@@ -104,7 +103,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
             )
 
         self.supervision = supervision
-        self.original_supervision = supervision
+        self._curr_supervision = supervision
         self.supervised_criterion = supervised_criterion
         self.unsupervised_criterion = unsupervised_criterion
         self.n_outputs = self.supervised_criterion.n_outputs
@@ -128,7 +127,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
                   double weighted_n_samples, SIZE_t* samples, SIZE_t start,
                   SIZE_t end) nogil except -1:
 
-        self.unpack_y(y)
+        self.unpack_y(y)  # FIXME
         self.sample_weight = sample_weight
         self.samples = samples
         self.start = start
@@ -262,10 +261,8 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
 
         return (
             sup * self.supervised_criterion.proxy_impurity_improvement()
-                # / self.supervised_criterion.n_outputs
                 / self.n_outputs  # self.supervised_criterion.n_outputs
             + (1-sup) * self.unsupervised_criterion.proxy_impurity_improvement()
-                # / self.unsupervised_criterion.n_outputs
                 / self.n_features  # self.unsupervised_criterion.n_outputs
         )
 
@@ -284,33 +281,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         return sup*s_imp + (1-sup)*u_imp
 
 
-cdef class SSMSE(SSCompositeCriterion):
-    """Applies MSE both on supervised (X) and unsupervised (y) data.
-    
-    One criteria will receive y in its init() and the other will receive X.
-    Their calculated impurities will then be combined as the final impurity:
-
-        sup*supervised_impurity + (1-sup)*unsupervised_impurity
-
-    where sup is self.supervision.
-    """
-    def __init__(
-        self,
-        double supervision,
-        SIZE_t n_outputs,
-        SIZE_t n_features,
-        SIZE_t n_samples,
-        *args, **kwargs,
-    ):
-        super().__init__(
-            supervision=supervision,
-            criterion=MSE,
-            n_outputs=n_outputs,
-            n_features=n_features,
-            n_samples=n_samples,
-        )
-
-
+# FIXME
 cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
     def __init__(
         self,
@@ -377,92 +348,18 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
             self.set_feature(self.current_feature)
 
 
-cdef class SFSSMSE(SingleFeatureSSCompositeCriterion):
-    def __init__(
-        self,
-        double supervision,
-        SIZE_t n_outputs,
-        SIZE_t n_features,
-        SIZE_t n_samples,
-        *args, **kwargs,
-    ):
-        super().__init__(
-            supervision=supervision,
-            criterion=MSE,
-            n_outputs=n_outputs,
-            n_features=1,
-            n_samples=n_samples,
-        )
-
-    # cdef double proxy_impurity_improvement(self) nogil:
-    #     cdef double sup = self.supervision
-    #     return (
-    #         sup * self.supervised_criterion.node_impurity() + \
-    #         (1-sup) * self.unsupervised_criterion.node_impurity()
-    #     )
-
-
-cdef class SSCompositeCriterionAlves(SSCompositeCriterion):
-    """Unsupervised impurity is only used to decide between rows or columns.
-
-    The split search takes into consideration only the labels, as usual, but
-    after the rows splitter and the columns splitter defines each one's split,
-    unsupervised information is used to decide between them, i.e. the final
-    impurity is semisupervised as in MSE_wrapper2DSS, but the proxy improvement
-    only uses supervised data.
-    """
-
-    cdef double proxy_impurity_improvement(self) nogil:
-        """Compute a proxy of the impurity reduction.
-
-        This method is used to speed up the search for the best split.
-        It is a proxy quantity such that the split that maximizes this value
-        also maximizes the impurity improvement. It neglects all constant terms
-        of the impurity decrease for a given split.
-        The absolute impurity improvement is only computed by the
-        impurity_improvement method once the best split has been found.
-        """
-        return self.supervised_criterion.proxy_impurity_improvement()
-
-    cdef int update(self, SIZE_t new_pos) nogil except -1:
-        """Updated statistics by moving samples[pos:new_pos] to the left child.
-        This updates the collected statistics by moving samples[pos:new_pos]
-        from the right child to the left child.
-        Parameters
-        ----------
-        new_pos : SIZE_t
-            New starting index position of the samples in the right child
-        """
-        if self.supervised_criterion.update(new_pos) == -1:
-            return -1
-        self.pos = new_pos
-        return 0
-
-    cdef void children_impurity(self, double* impurity_left,
-                                double* impurity_right) nogil:
-        """Calculate the impurity of children.
-        Evaluate the impurity in children nodes, i.e. the impurity of
-        samples[start:pos] + the impurity of samples[pos:end].
-
-        Parameters
-        ----------
-        impurity_left : double pointer
-            The memory address where the impurity of the left child should be
-            stored.
-        impurity_right : double pointer
-            The memory address where the impurity of the right child should be
-            stored
-        """
-        # unsupervised criterion is not updated during search.
-        if self.unsupervised_criterion.update(self.pos) == -1:
-            with gil: raise RuntimeError
-
-        SSCompositeCriterion.children_impurity(self, impurity_left,
-                                               impurity_right)
-
+# cdef class SSCompositeCriterionAlves(SSCompositeCriterion):
+#     """Unsupervised impurity is only used to decide between rows or columns.
+# 
+#     The split search takes into consideration only the labels, as usual, but
+#     after the rows splitter and the columns splitter defines each one's split,
+#     unsupervised information is used to decide between them, i.e. the final
+#     impurity is semisupervised as in MSE_wrapper2DSS, but the proxy improvement
+#     only uses supervised data.
+#     """
 
 # =============================================================================
-# 2D Semi-supervised Criterion Wrapper
+# Bipartite Semi-supervised Criterion Wrapper
 # =============================================================================
 
 
@@ -473,11 +370,15 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         Criterion unsupervised_criterion_cols,
         CriterionWrapper2D supervised_bipartite_criterion,
         double supervision_rows,
-        supervision_cols="same",
-        update_supervision=None,
+        object supervision_cols="same",
+        object update_supervision=None,
+        bint pairwise=False,
+        bint axis_decision_only=False,
     ):
         self.supervision_rows = supervision_rows
         self.supervision_cols = supervision_cols
+        self.pairwise = pairwise
+        self.axis_decision_only = axis_decision_only
 
         self._curr_supervision_rows = supervision_rows
         if supervision_cols == "same":
@@ -494,8 +395,10 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         Criterion unsupervised_criterion_cols,
         CriterionWrapper2D supervised_bipartite_criterion,
         double supervision_rows,
-        supervision_cols="same",
-        update_supervision=None,
+        object supervision_cols="same",  # double or "same"
+        object update_supervision=None,  # callable
+        bint pairwise=False,
+        bint axis_decision_only=False,
     ):
         self.unsupervised_criterion_rows = unsupervised_criterion_rows
         self.unsupervised_criterion_cols = unsupervised_criterion_cols
@@ -506,7 +409,8 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             self,
             const DOUBLE_t[:, ::1] X_rows,
             const DOUBLE_t[:, ::1] X_cols,
-            const DOUBLE_t[:, ::1] y_2D,
+            const DOUBLE_t[:, ::1] y,
+            const DOUBLE_t[:, ::1] y_transposed,
             DOUBLE_t* row_sample_weight,
             DOUBLE_t* col_sample_weight,
             double weighted_n_rows,
@@ -520,7 +424,8 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         # Initialize fields
         self.X_rows = X_rows
         self.X_cols = X_cols
-        self.y_2D = y_2D
+        self.y = y
+        self.y_transposed = y_transposed
         self.row_sample_weight = row_sample_weight
         self.col_sample_weight = col_sample_weight
         self.weighted_n_rows = weighted_n_rows
@@ -553,7 +458,8 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         self.supervised_bipartite_criterion.init(
             self.X_rows,
             self.X_cols,
-            self.y_2D,
+            self.y,
+            self.y_transposed,
             self.row_sample_weight,
             self.col_sample_weight,
             self.weighted_n_rows,

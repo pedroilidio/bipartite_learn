@@ -13,7 +13,11 @@ cdef class CriterionWrapper2D:
     """Abstract base class."""
     cdef const DOUBLE_t[:, ::1] X_rows
     cdef const DOUBLE_t[:, ::1] X_cols
-    cdef const DOUBLE_t[:, ::1] y_2D
+    cdef const DOUBLE_t[:, ::1] y
+    # FIXME: Contiguous layout forces us to keep a transposed copy of y in
+    #        Splitter2D. This can represent a significant memory burden for
+    #        large forests.
+    cdef const DOUBLE_t[:, ::1] y_transposed  
 
     cdef DOUBLE_t* row_sample_weight
     cdef DOUBLE_t* col_sample_weight
@@ -21,7 +25,16 @@ cdef class CriterionWrapper2D:
     cdef SIZE_t* col_samples
     cdef SIZE_t[2] start
     cdef SIZE_t[2] end
+
+    # NOTE: A source of confusion is that sometimes n_outputs is actually
+    #       treated as the number of outputs, but sometimes it is just an
+    #       alias for y.shape[1]. In monopartite data, they have the same
+    #       value, but for bipartite interaction data one should have this
+    #       distinction in mind.
     cdef SIZE_t n_outputs
+    cdef SIZE_t n_outputs_rows
+    cdef SIZE_t n_outputs_cols
+
     cdef SIZE_t n_rows
     cdef SIZE_t n_cols
     cdef SIZE_t n_node_rows
@@ -40,7 +53,8 @@ cdef class CriterionWrapper2D:
         self,
         const DOUBLE_t[:, ::1] X_rows,
         const DOUBLE_t[:, ::1] X_cols,
-        const DOUBLE_t[:, ::1] y_2D,
+        const DOUBLE_t[:, ::1] y,
+        const DOUBLE_t[:, ::1] y_transposed,
         DOUBLE_t* row_sample_weight,
         DOUBLE_t* col_sample_weight,
         double weighted_n_rows,
