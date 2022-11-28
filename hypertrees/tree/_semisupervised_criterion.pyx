@@ -78,7 +78,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         SIZE_t n_samples=0,
         supervised_criterion=None,
         unsupervised_criterion=None,
-        *args, **kwargs,
+        object update_supervision=None,  # callable
     ):
         if not (0 <= supervision <= 1):
             # TODO: == 0 only for tests.
@@ -110,6 +110,9 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         self.n_outputs = self.supervised_criterion.n_outputs
         self.n_samples = self.supervised_criterion.n_samples
         self.n_features = self.unsupervised_criterion.n_outputs
+
+        self.update_supervision = update_supervision
+        self._supervision_is_dynamic = self.update_supervision is not None
 
     cdef void unpack_y(self, const DOUBLE_t[:, ::1] y) nogil:
         """Set self.X and self.y from input y.
@@ -144,26 +147,20 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
             self.X, sample_weight, weighted_n_samples, samples, start, end,
         )
 
-        # TODO: the stuff below is also calculated by the second splitter,
+        # TODO: weighted_n_left/right is calculated by both splitters,
         # we should find a good way of calculating it only once.
-        # FIXME: this is probably wrong. Criterion.impurity_improvement fails
-        # when the values below are used.
         self.weighted_n_node_samples = \
             self.supervised_criterion.weighted_n_node_samples
-        self.weighted_n_left = \
-            self.supervised_criterion.weighted_n_left
-        self.weighted_n_right = \
-            self.supervised_criterion.weighted_n_right
 
-        self.update_supervision()
+        if self._supervision_is_dynamic:
+            with gil:
+                self.supervision = self.update_supervision(
+                    weighted_n_samples=self.weighted_n_samples,
+                    weighted_n_node_samples=self.weighted_n_node_samples,
+                    criterion=self,
+                )
 
         return 0
-
-    cdef void update_supervision(self) nogil:
-        """Method to enable dynamic supervision.
-
-        Makes possible to change self.supervision at self.init().
-        """
 
     cdef int reset(self) nogil except -1:
         """Reset the criteria at pos=start."""
@@ -264,10 +261,12 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         cdef double sup = self.supervision
 
         return (
-            sup * self.supervised_criterion.proxy_impurity_improvement() / 
-                  self.supervised_criterion.n_outputs +
-            (1-sup) * self.unsupervised_criterion.proxy_impurity_improvement() /
-                  self.unsupervised_criterion.n_outputs
+            sup * self.supervised_criterion.proxy_impurity_improvement()
+                # / self.supervised_criterion.n_outputs
+                / self.n_outputs  # self.supervised_criterion.n_outputs
+            + (1-sup) * self.unsupervised_criterion.proxy_impurity_improvement()
+                # / self.unsupervised_criterion.n_outputs
+                / self.n_features  # self.unsupervised_criterion.n_outputs
         )
 
     cdef double impurity_improvement(self, double impurity_parent,
@@ -279,7 +278,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         cdef double u_imp = self.unsupervised_criterion.impurity_improvement(
             impurity_parent, impurity_left, impurity_right)
         
-        # Note: both s_imp and u_imp impurities would actually be equal, unless
+        # NOTE: both s_imp and u_imp impurities would actually be equal, unless
         # the two criteria calculates them in different ways.
 
         return sup*s_imp + (1-sup)*u_imp

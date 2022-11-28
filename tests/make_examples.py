@@ -136,6 +136,7 @@ def make_dense_interaction_func(
     n_targets=[list, tuple, Interval(Integral, 1, None, closed="left"), None],
     min_target=[list, tuple, Real],
     max_target=[list, tuple, Real],
+    max_depth=[Interval(Integral, 1, None, closed="left"), None],
     noise=[Interval(Real, 0.0, None, closed="left")],
     return_molten=["boolean"],
     return_tree=["boolean"],
@@ -151,6 +152,7 @@ def make_interaction_regression(
     return_molten=False,
     return_tree=False,
     random_state=None,
+    max_depth=None,
 ):
     if isinstance(n_samples, int):
         n_samples = (n_samples, n_samples)
@@ -169,8 +171,14 @@ def make_interaction_regression(
         + min_target
     )
 
-    tree = ExtraTreeRegressor(min_samples_leaf=1, max_features=1)
-    tree.fit(row_cartesian_product(X), y.reshape(-1))
+    tree = ExtraTreeRegressor(
+        min_samples_leaf=1,
+        max_features=1,
+        max_depth=max_depth,
+    ).fit(
+        row_cartesian_product(X),
+        y.reshape(-1),
+    )
 
     # Make new data
     X = [random_state.random((s, f)) for s, f in zip(n_samples, n_features)]
