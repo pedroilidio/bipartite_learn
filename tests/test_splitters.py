@@ -46,10 +46,12 @@ DTYPE_t, DOUBLE_t = np.float32, np.float64
 # Default test params
 DEF_PARAMS = dict(
     seed=0,
-    shape=(50, 60),
+    shape=(8, 4),
+    # shape=(50, 60),
     nattrs=(10, 9),
     nrules=1,
-    min_samples_leaf=100,
+    min_samples_leaf=1,
+    # min_samples_leaf=100,
     transpose_test=False,
     noise=.5,
     inspect=False,
@@ -219,10 +221,18 @@ def compare_splitters_1d2d(
         print(f'* manual_impurity_left={manual_impurity_left}')
         print(f'* manual_impurity_right={manual_impurity_right}')
 
-        assert_allclose(result1['impurity_left'], manual_impurity_left,
-                        err_msg='Wrong reference impurity left.')
-        assert_allclose(result1['impurity_right'], manual_impurity_right,
-                        err_msg='Wrong reference impurity right.')
+        assert_allclose(
+            result1['impurity_left'],
+            manual_impurity_left,
+            err_msg='Wrong reference impurity left.',
+            atol=1e-7,
+        )
+        assert_allclose(
+            result1['impurity_right'],
+            manual_impurity_right,
+            err_msg='Wrong reference impurity right.',
+            atol=1e-7,
+        )
 
     # Run test 2d
     with stopwatch(f'Testing 2D splitter ({splitter2.__class__.__name__})...'):
@@ -266,7 +276,7 @@ def compare_splitters_1d2d(
               '* Improvement: {improvement}'.format(**result1))
         # scaff
         sls = (y_sort[:pos].sum(0)**2).sum()
-        srs = (y_sort[pos:].sum(0)**2).sum() 
+        srs = (y_sort[pos:].sum(0)**2).sum()
         ssl = (y_sort[:pos]**2).sum()
         ssr = (y_sort[pos:]**2).sum()
         srsl = (y_sort[:pos].sum(1)**2).sum()
@@ -275,31 +285,38 @@ def compare_splitters_1d2d(
         print('[DEBUGGGGG]')
         print('*** wnl wnr', wnl, wnr)
         print('*** sql sqr', ssl, ssr)
-        print('*** row sql sqr', srsl, srsr)       
+        print('*** row sql sqr', srsl, srsr)
         il, ir = ssl, ssr
         print('***', il, ir)
         il -= 0.5 * sls / wnl
         ir -= 0.5 * srs / wnr
+        print('*** total total sum', y_sort.sum(0).sum())
+        print('*** total sum', y_sort[:pos].sum(0).sum(),
+              ' | ', y_sort[pos:].sum(0).sum())
+        print('*** total sum sq norm',
+              (y_sort[:pos].sum(0)**2).sum()/2/wnl, ' | ', (y_sort[pos:].sum(0)**2).sum()/2/wnr)
+        print('*** total sum sq',
+              (y_sort[:pos].sum(0)**2).sum(), (y_sort[pos:].sum(0)**2).sum())
         print('***', il, ir)
         il -= 0.5 * srsl / y_.shape[1]
         ir -= 0.5 * srsr / y_.shape[1]
         print('***', il, ir)
-        il /=  y_.shape[1] * wnl
-        ir /=  y_.shape[1] * wnr
+        il /= y_.shape[1] * wnl
+        ir /= y_.shape[1] * wnr
         print('***', il, ir)
-                                           
-        breakpoint()
+        print(*zip(y_sort[:pos].sum(0), y_sort[pos:].sum(0)), sep='\n')
+
+        # breakpoint()
 
     assert result2['feature'] == result1['feature'], 'feature differs.'
     assert_allclose(result2['threshold'], result1['threshold'],
                     err_msg='threshold differs from reference.')
-    assert_allclose(result2['improvement'], result1['improvement'],
-                    err_msg='improvement differs from reference.')
-
     assert_allclose(result2['impurity_left'], result1['impurity_left'],
                     err_msg='impurity_left differs from reference.')
     assert_allclose(result2['impurity_right'], result1['impurity_right'],
                     err_msg='impurity_right differs from reference.')
+    assert_allclose(result2['improvement'], result1['improvement'],
+                    err_msg='improvement differs from reference.')
 
     return result1, result2
 

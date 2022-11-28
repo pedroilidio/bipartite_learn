@@ -13,9 +13,10 @@ from sklearn.tree._tree cimport UINT32_t        # Unsigned 32 bit integer
 from sklearn.tree._criterion cimport Criterion        # Unsigned 32 bit integer
 
 cdef class AxisCriterion(Criterion):
-    cdef DOUBLE_t* col_sample_weight
+    cdef const DOUBLE_t* col_sample_weight
 
     cdef SIZE_t* col_samples
+    cdef SIZE_t[::1] _col_indices
     cdef SIZE_t col_start
     cdef SIZE_t col_end
 
@@ -30,7 +31,7 @@ cdef class AxisCriterion(Criterion):
     cdef void init_columns(
         self,
         SIZE_t* col_samples,
-        DOUBLE_t* col_sample_weight,
+        const DOUBLE_t* col_sample_weight,
         SIZE_t col_start,
         SIZE_t col_end,
     ) nogil

@@ -13,11 +13,14 @@ cdef double NAN = np.nan
 cdef class AxisCriterion(Criterion):
     def __cinit__(self, SIZE_t n_outputs, SIZE_t n_samples):
         self._columns_are_set = False
+        # TODO: avoid using memory
+        # TODO: remove if splitter can find split without reordering samples
+        self._col_indices = np.empty(n_outputs, dtype=np.intp, order='C')
     
     cdef void init_columns(
         self,
         SIZE_t* col_samples,
-        DOUBLE_t* col_sample_weight,
+        const DOUBLE_t* col_sample_weight,
         SIZE_t col_start,
         SIZE_t col_end,
     ) nogil:
@@ -29,12 +32,15 @@ cdef class AxisCriterion(Criterion):
         self.n_node_cols = col_end - col_start
         self.weighted_n_node_cols = 0.0
 
-        cdef SIZE_t p
+        cdef SIZE_t j, q
         cdef DOUBLE_t w = 1.0
 
-        for p in range(col_start, col_end):
+        for q in range(col_start, col_end):
+            j = col_samples[q]
+            self._col_indices[q - col_start] = j  # TODO: explain
+
             if col_sample_weight != NULL:
-                w = col_sample_weight[col_samples[p]]
+                w = col_sample_weight[j]
             self.weighted_n_node_cols += w
 
         self._columns_are_set = True
@@ -109,12 +115,13 @@ cdef class AxisRegressionCriterion(AxisCriterion):
         self.n_node_samples = end - start
         self.weighted_n_samples = weighted_n_samples
 
-        cdef DOUBLE_t* col_sample_weight = self.col_sample_weight
-        cdef SIZE_t* col_samples = self.col_samples
+        cdef const DOUBLE_t* col_sample_weight = self.col_sample_weight
+        cdef SIZE_t[::1] _col_indices = self._col_indices
         cdef SIZE_t col_start = self.col_start
         cdef SIZE_t col_end = self.col_end
+        cdef SIZE_t n_node_cols = self.n_node_cols
 
-        cdef SIZE_t i, j, p, q
+        cdef SIZE_t i, j, p, k
         cdef DOUBLE_t y_ij
         cdef DOUBLE_t wi = 1.0, wj = 1.0
         cdef DOUBLE_t row_sum
@@ -132,15 +139,15 @@ cdef class AxisRegressionCriterion(AxisCriterion):
             self.weighted_n_node_samples += wi
             row_sum = 0.0
 
-            for q in range(col_start, col_end):
-                j = col_samples[q]
+            for k in range(n_node_cols):
+                j = _col_indices[k]
                 if col_sample_weight != NULL:
                     wj = col_sample_weight[j]
 
                 y_ij = y[i, j]
 
                 row_sum += wj * y_ij
-                self.sum_total[q - col_start] += wi * y_ij
+                self.sum_total[k] += wi * y_ij
                 self.sq_sum_total += wi * wj * y_ij * y_ij
 
             self.sq_row_sums += wi * row_sum * row_sum
@@ -178,13 +185,14 @@ cdef class AxisRegressionCriterion(AxisCriterion):
         cdef SIZE_t* samples = self.samples
         cdef SIZE_t pos = self.pos
         cdef SIZE_t end = self.end
+        cdef SIZE_t n_node_cols = self.n_node_cols
 
-        cdef DOUBLE_t* col_sample_weight = self.col_sample_weight
-        cdef SIZE_t* col_samples = self.col_samples
+        cdef const DOUBLE_t* col_sample_weight = self.col_sample_weight
+        cdef SIZE_t[::1] _col_indices = self._col_indices
         cdef SIZE_t col_start = self.col_start
         cdef SIZE_t col_end = self.col_end
 
-        cdef SIZE_t i, j, p, q
+        cdef SIZE_t i, j, p, k
         cdef DOUBLE_t y_ij
         cdef DOUBLE_t w_y_ij
         cdef DOUBLE_t wi = 1.0, wj = 1.0
@@ -196,36 +204,52 @@ cdef class AxisRegressionCriterion(AxisCriterion):
         # and that sum_total is known, we are going to update
         # sum_left from the direction that require the least amount
         # of computations, i.e. from pos to new_pos or from end to new_pos.
+        with gil: print('*** pos, new_pos, end', pos, new_pos, end)
         if (new_pos - pos) <= (end - new_pos):
             for p in range(pos, new_pos):
                 i = samples[p]
                 if sample_weight != NULL:
                     wi = sample_weight[i]
 
-                self.weighted_n_left += wi
+                with gil: print('*** sl =')
+                with gil: print(self.sum_left[0], end=' ')
+                with gil: print()
+                for k in range(n_node_cols):
+                    j = _col_indices[k]
+                    # with gil: print(wi * self.y[i, j], end=' ')
+                    self.sum_left[k] += wi * self.y[i, j]
+                    with gil: print(self.sum_left[k], end=' ')
 
-                for q in range(col_start, col_end):
-                    j = col_samples[q]
-                    self.sum_left[q - col_start] += wi * self.y[i, j]
+                self.weighted_n_left += wi
         else:
             self.reverse_reset()
+            with gil: print('*** pos, self pos, new_pos, end', pos, self.pos, new_pos, end)
 
             for p in range(end - 1, new_pos - 1, -1):
                 i = samples[p]
                 if sample_weight != NULL:
                     wi = sample_weight[i]
 
+                with gil: print('*** sl =')
+                with gil: print(self.sum_left[0], end=' ')
+                with gil: print()
+                for k in range(n_node_cols):
+                    j = _col_indices[k]
+                    # with gil: print(wi * self.y[i, j], end=' ')
+                    with gil: print(self.sum_left[k], end='->')
+                    self.sum_left[k] -= wi * self.y[i, j]
+                    with gil: print(self.sum_left[k], end=' ')
+                with gil: print()
+
                 self.weighted_n_left -= wi
 
-                for q in range(col_start, col_end):
-                    j = col_samples[q]
-                    self.sum_left[q - col_start] -= wi * self.y[i, j]
+        with gil: print('*** wnns wnl', self.weighted_n_node_samples, self.weighted_n_left)
+        self.weighted_n_right = (
+            self.weighted_n_node_samples - self.weighted_n_left
+        )
 
-        self.weighted_n_right = (self.weighted_n_node_samples -
-                                 self.weighted_n_left)
-
-        for j in range(self.n_node_cols):
-            self.sum_right[j] = self.sum_total[j] - self.sum_left[j]
+        for k in range(n_node_cols):
+            self.sum_right[k] = self.sum_total[k] - self.sum_left[k]
 
         self.pos = new_pos
         return 0
@@ -239,17 +263,14 @@ cdef class AxisRegressionCriterion(AxisCriterion):
 
     cdef void node_value(self, double* dest) nogil:
         """Compute the node value of samples[start:end] into dest."""
-        cdef SIZE_t j, q
+        cdef SIZE_t j, k
 
         for j in range(self.n_outputs):
             dest[j] = NAN
 
-        for q in range(self.col_start, self.col_end):
-            j = self.col_samples[q]
-            dest[j] = (
-                self.sum_total[q - self.col_start]
-                / self.weighted_n_node_samples
-            )
+        for k in range(self.n_node_cols):
+            j = self._col_indices[k]
+            dest[j] = self.sum_total[k] / self.weighted_n_node_samples
 
 
 cdef class AxisMSE(AxisRegressionCriterion):
@@ -310,9 +331,10 @@ cdef class AxisMSE(AxisRegressionCriterion):
         cdef SIZE_t start = self.start
 
         cdef const DOUBLE_t* col_sample_weight = self.col_sample_weight
-        cdef SIZE_t* col_samples = self.col_samples
+        cdef SIZE_t[::1] _col_indices = self._col_indices
         cdef SIZE_t col_start = self.col_start
         cdef SIZE_t col_end = self.col_end
+        cdef SIZE_t n_node_cols = self.n_node_cols
 
         cdef DOUBLE_t y_ij
 
@@ -321,7 +343,7 @@ cdef class AxisMSE(AxisRegressionCriterion):
         cdef double sq_row_sums_left = 0.0
         cdef double row_sum
 
-        cdef SIZE_t i, j, p, q
+        cdef SIZE_t i, j, p, k
         cdef DOUBLE_t wi = 1.0, wj = 1.0
 
         for p in range(start, pos):
@@ -331,8 +353,9 @@ cdef class AxisMSE(AxisRegressionCriterion):
 
             row_sum = 0.0
 
-            for q in range(col_start, col_end):
-                j = col_samples[q]
+            for k in range(n_node_cols):
+                j = _col_indices[k]
+                with gil: print(j, end=' ')
                 if col_sample_weight != NULL:
                     wj = col_sample_weight[j]
 
@@ -341,6 +364,7 @@ cdef class AxisMSE(AxisRegressionCriterion):
                 row_sum += wj * y_ij
             
             sq_row_sums_left += wi * row_sum * row_sum
+            with gil: print()
 
         sq_sum_right = self.sq_sum_total - sq_sum_left
         sq_row_sums_right = self.sq_row_sums - sq_row_sums_left
@@ -348,16 +372,38 @@ cdef class AxisMSE(AxisRegressionCriterion):
         impurity_left[0] = sq_sum_left
         impurity_right[0] = sq_sum_right
 
+        cdef double sum_total_total = 0.0
+        for i in range(self.n_node_cols):
+            sum_total_total += self.sum_total[i]
+
+        with gil: print('*** total_sum', sum_total_total)
         with gil: print('*** wnl wnr', self.weighted_n_left, self.weighted_n_right)
         with gil: print('*** sql sqr', sq_sum_left, sq_sum_right, self.sq_sum_total)
         with gil: print('*** row sql sqr', sq_row_sums_left, sq_row_sums_right, self.sq_row_sums)
         with gil: print('***', impurity_left[0], impurity_right[0])
+        cdef double suml= 0.0, sumr = 0.0 # FIXME
+        cdef double suml2= 0.0, sumr2 = 0.0 # FIXME
+        cdef double col_sums_sq_left = 0.0, col_sums_sq_right = 0.0
 
+        with gil: print('n_node_cols', self.n_node_cols, n_node_cols)
         for k in range(self.n_node_cols):
-            with gil: print(self.sum_left[k], '|', self.sum_right[k])
-            impurity_left[0] -= 0.5 * self.sum_left[k] ** 2.0 / self.weighted_n_left
-            impurity_right[0] -= 0.5 * self.sum_right[k] ** 2.0 / self.weighted_n_right
+            suml += self.sum_left[k]
+            with gil: print('sl sr', self.sum_left[k], ', |', self.sum_right[k], ',')
+            sumr += self.sum_right[k]
+            col_sums_sq_left += self.sum_left[k] * self.sum_left[k]
+            col_sums_sq_right += self.sum_right[k] * self.sum_right[k]
+            # impurity_left[0] -= 0.5 * (self.sum_left[k] ** 2.0 / self.weighted_n_left)
+            # impurity_right[0] -= 0.5 * (self.sum_right[k] ** 2.0 / self.weighted_n_right)
+            suml2 += 0.5 * (self.sum_left[k] ** 2.0 / self.weighted_n_left) # XXX
+            sumr2 += 0.5 * (self.sum_right[k] ** 2.0 / self.weighted_n_right) # XXX
         
+        impurity_left[0] -= col_sums_sq_left / (2.0 * self.weighted_n_left)
+        impurity_right[0] -= col_sums_sq_right / (2.0 * self.weighted_n_right)
+        
+        with gil: print('*** total sum', suml, '|', sumr)
+        with gil: print('*** total sum sq norm', suml2, '|', sumr2)
+        with gil: print('*** total sum sq', col_sums_sq_left, '|', col_sums_sq_right)
+        with gil: print('*** wnl wnr', self.weighted_n_left, self.weighted_n_right)
         with gil: print('***', impurity_left[0], impurity_right[0])
         impurity_left[0] -= 0.5 * sq_row_sums_left / self.weighted_n_node_cols
         impurity_right[0] -= 0.5 * sq_row_sums_right / self.weighted_n_node_cols
