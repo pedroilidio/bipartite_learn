@@ -1,8 +1,8 @@
 from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion
-from sklearn.tree._tree cimport DTYPE_t          # Type of X
-from sklearn.tree._tree cimport DOUBLE_t         # Type of y, sample_weight
-from sklearn.tree._tree cimport SIZE_t           # Type for indices and counters
+from sklearn.tree._tree cimport DTYPE_t         # Type of X
+from sklearn.tree._tree cimport DOUBLE_t        # Type of y, sample_weight
+from sklearn.tree._tree cimport SIZE_t          # Type for indices and counters
 from ._nd_criterion cimport CriterionWrapper2D, RegressionCriterionWrapper2D
 
 
@@ -63,6 +63,10 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
     cdef Criterion unsupervised_criterion_rows
     cdef Criterion unsupervised_criterion_cols
     cdef CriterionWrapper2D supervised_bipartite_criterion
+
+    # References to supervised_bipartite_criterion's components
+    cdef Criterion supervised_criterion_rows
+    cdef Criterion supervised_criterion_cols
 
     cdef SIZE_t n_row_features
     cdef SIZE_t n_col_features

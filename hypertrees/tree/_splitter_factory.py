@@ -139,6 +139,15 @@ def make_2d_splitter(
     )
 
 
+# cdef class SSCompositeCriterionAlves(SSCompositeCriterion):
+#     """Unsupervised impurity is only used to decide between rows or columns.
+# 
+#     The split search takes into consideration only the labels, as usual, but
+#     after the rows splitter and the columns splitter defines each one's split,
+#     unsupervised information is used to decide between them, i.e. the final
+#     impurity is semisupervised as in MSE_wrapper2DSS, but the proxy improvement
+#     only uses supervised data.
+#     """
 def make_2dss_splitter(
     splitters,
     supervised_criteria=None,  # FIXME: validate, cannot pass None
@@ -155,6 +164,8 @@ def make_2dss_splitter(
     ax_min_samples_leaf=1,
     ax_min_weight_leaf=0.0,
     random_state=None,
+    pairwise=False,
+    axis_decision_only=False,
     criterion_wrapper_class=MSE_Wrapper2D,
     ss_criterion_wrapper_class=BipartiteSemisupervisedCriterion,
 ):

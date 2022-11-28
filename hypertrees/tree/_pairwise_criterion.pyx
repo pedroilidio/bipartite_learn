@@ -1,7 +1,7 @@
-from sklearn._tree._criterion cimport Criterion
+from sklearn.tree._criterion cimport Criterion
 
 
-cdef PairwiseCriterion(Criterion):
+cdef class PairwiseCriterion(Criterion):
     """Unsupervision-focused criterion to use with pairwise data.
 
     It wraps an AxisCriterion instance and selects the columns corresponding
@@ -9,7 +9,7 @@ cdef PairwiseCriterion(Criterion):
 
     It is intended to pass an square (pairwise) X as the y argument of init().
     """
-    cdef __cinit__(AxisCriterion criterion):
+    def __cinit__(self, AxisCriterion criterion):
         self.criterion = criterion
         self.n_outputs = criterion.n_outputs
         self.n_samples = criterion.n_samples
@@ -23,12 +23,10 @@ cdef PairwiseCriterion(Criterion):
         SIZE_t start,
         SIZE_t end,
     ) nogil except -1:
-
-    self.criterion.init_columns(samples, sample_weight, start, end)
-
-    return self.criterion.init(
-        self, y, sample_weight, weighted_n_samples, samples, start, end,
-    )
+        self.criterion.init_columns(samples, sample_weight, start, end)
+        return self.criterion.init(
+            y, sample_weight, weighted_n_samples, samples, start, end,
+        )
 
     cdef int reset(self) nogil except -1:
         return self.criterion.reset()

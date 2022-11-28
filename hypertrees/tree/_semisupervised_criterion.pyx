@@ -1,5 +1,5 @@
 # cython: boundscheck=True
-import copy, warnings, numbers
+import warnings
 from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 from sklearn.tree._criterion import MSE
@@ -348,16 +348,6 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
             self.set_feature(self.current_feature)
 
 
-# cdef class SSCompositeCriterionAlves(SSCompositeCriterion):
-#     """Unsupervised impurity is only used to decide between rows or columns.
-# 
-#     The split search takes into consideration only the labels, as usual, but
-#     after the rows splitter and the columns splitter defines each one's split,
-#     unsupervised information is used to decide between them, i.e. the final
-#     impurity is semisupervised as in MSE_wrapper2DSS, but the proxy improvement
-#     only uses supervised data.
-#     """
-
 # =============================================================================
 # Bipartite Semi-supervised Criterion Wrapper
 # =============================================================================
@@ -375,8 +365,6 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
     ):
         self.supervision_rows = supervision_rows
         self.supervision_cols = supervision_cols
-        self.pairwise = pairwise
-        self.axis_decision_only = axis_decision_only
 
         self._curr_supervision_rows = supervision_rows
         if supervision_cols == "same":
@@ -388,7 +376,15 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
 
         self.unsupervised_criterion_rows = unsupervised_criterion_rows
         self.unsupervised_criterion_cols = unsupervised_criterion_cols
+
         self.supervised_bipartite_criterion = supervised_bipartite_criterion
+        self.supervised_criterion_rows = (
+            supervised_bipartite_criterion.criterion_rows
+        )
+        self.supervised_criterion_cols = (
+            supervised_bipartite_criterion.criterion_cols
+        )
+
         self.update_supervision = update_supervision
 
     # TODO: improve validation
@@ -400,7 +396,6 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         double supervision_rows,
         object supervision_cols="same",  # double or "same"
         object update_supervision=None,  # callable
-        bint axis_decision_only=False,
     ):
         pass
 
@@ -442,7 +437,7 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             y=self.X_rows,
             sample_weight=self.row_sample_weight,
             weighted_n_samples=self.weighted_n_rows,
-            samples=self._row_samples_copy,
+            samples=self.row_samples,
             start=self.start[0],
             end=self.end[0],
         )
@@ -450,7 +445,7 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             y=self.X_cols,
             sample_weight=self.col_sample_weight,
             weighted_n_samples=self.weighted_n_cols,
-            samples=self._col_samples_copy,
+            samples=self.col_samples,
             start=self.start[1],
             end=self.end[1],
         )
@@ -463,8 +458,8 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             self.col_sample_weight,
             self.weighted_n_rows,
             self.weighted_n_cols,
-            self._row_samples_copy,
-            self._col_samples_copy,
+            self.row_samples,
+            self.col_samples,
             self.start,
             self.end,
         )
@@ -530,9 +525,19 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         cdef double n_feat, other_n_feat, n_total_feat
         cdef double u_imp_left, u_imp_right
         cdef double wu, other_wu, ws
+        cdef SIZE_t pos
 
         if axis == 0:
             other_u_imp = self.unsupervised_criterion_cols.node_impurity()
+
+            # There is no guarantee that the splitters are using the
+            # unsupervised criteria, it is a valid option to use it only for
+            # choosing an axis, calculating the unsupervised impurity only
+            # here. Therefore, we must ensure the unsupervised criterion is in
+            # the right position.
+            pos = self.supervised_criterion_rows.pos
+            self.unsupervised_criterion_rows.update(pos)
+
             self.unsupervised_criterion_rows.children_impurity(
                 &u_imp_left, &u_imp_right,
             )
@@ -543,6 +548,11 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
 
         elif axis == 1:
             other_u_imp = self.unsupervised_criterion_rows.node_impurity()
+
+            # See the previous comment.
+            pos = self.supervised_criterion_cols.pos
+            self.unsupervised_criterion_cols.update(pos)
+
             self.unsupervised_criterion_cols.children_impurity(
                 &u_imp_left, &u_imp_right,
             )
