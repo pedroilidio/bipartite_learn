@@ -22,6 +22,8 @@ from hypertrees.tree._splitter_factory import (
 from hypertrees.tree._nd_criterion import (
     PBCTCriterionWrapper,
 )
+from hypertrees.tree._axis_criterion import AxisMSE
+
 from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
     SSCompositeCriterionAlves,
@@ -241,22 +243,58 @@ def compare_splitters_1d2d(
         print('Best split found:')
         pprint(result2)
 
+    if multioutput_1d:
+        y_sort = y_[sorted_indices]
+        result1['feature'] += ax * XX[0].shape[1]
+        parent_impurity = 0.5 * (y_sort.var(1).mean() + y_sort.var(0).mean())
+
+        other_axis_imp_left = y_sort[:pos].var(1).mean()
+        other_axis_imp_right = y_sort[pos:].var(1).mean()
+
+        result1['impurity_left'] += other_axis_imp_left
+        result1['impurity_left'] /= 2
+        result1['impurity_right'] += other_axis_imp_right
+        result1['impurity_right'] /= 2
+        result1['improvement'] = parent_impurity - (
+            pos * result1['impurity_left']
+            + (y_.shape[0]-pos) * result1['impurity_right']
+        ) / y_.shape[0]
+
+        print('GMO-specific updated target impurities:\n'
+              '* Left:  {impurity_left}\n'
+              '* Right: {impurity_right}\n'
+              '* Improvement: {improvement}'.format(**result1))
+        # scaff
+        sls = (y_sort[:pos].sum(0)**2).sum()
+        srs = (y_sort[pos:].sum(0)**2).sum() 
+        ssl = (y_sort[:pos]**2).sum()
+        ssr = (y_sort[pos:]**2).sum()
+        srsl = (y_sort[:pos].sum(1)**2).sum()
+        srsr = (y_sort[pos:].sum(1)**2).sum()
+        wnr, wnl = y_.shape[0] - pos, pos
+        print('[DEBUGGGGG]')
+        print('*** wnl wnr', wnl, wnr)
+        print('*** sql sqr', ssl, ssr)
+        print('*** row sql sqr', srsl, srsr)       
+        il, ir = ssl, ssr
+        print('***', il, ir)
+        il -= 0.5 * sls / wnl
+        ir -= 0.5 * srs / wnr
+        print('***', il, ir)
+        il -= 0.5 * srsl / y_.shape[1]
+        ir -= 0.5 * srsr / y_.shape[1]
+        print('***', il, ir)
+        il /=  y_.shape[1] * wnl
+        ir /=  y_.shape[1] * wnr
+        print('***', il, ir)
+                                           
+        breakpoint()
+
     assert result2['feature'] == result1['feature'], 'feature differs.'
     assert_allclose(result2['threshold'], result1['threshold'],
                     err_msg='threshold differs from reference.')
     assert_allclose(result2['improvement'], result1['improvement'],
                     err_msg='improvement differs from reference.')
-
-    # HACK: GMO bipartite adapter adds the other axis impurity to avoid getting
-    #       zero if a single row/column is present in a child partition.')
-    if multioutput_1d:
-        other_axis_imp = y_.var(1).mean()
-        result1['impurity_left'] += other_axis_imp
-        result1['impurity_right'] += other_axis_imp
-
-        print('GMO-specific updated target impurities:\n'
-              '* Left:  {impurity_left}\n'
-              '* Right: {impurity_right}'.format(**result1))
 
     assert_allclose(result2['impurity_left'], result1['impurity_left'],
                     err_msg='impurity_left differs from reference.')
@@ -852,12 +890,12 @@ def test_pbct_splitter(**params):
     splitter2d = make_2d_splitter(
         criterion_wrapper_class=PBCTCriterionWrapper,
         splitters=BestSplitter,
-        criteria=MSE,
+        criteria=AxisMSE,
         max_features=params['nattrs'],
         n_samples=params['shape'],
         n_outputs=params['shape'][::-1],
         min_samples_leaf=params['min_samples_leaf'],
-        min_weight_leaf=0.,
+        min_weight_leaf=0.0,
     )
 
     compare_splitters_1d2d(

@@ -6,6 +6,7 @@ from sklearn.tree._tree cimport DOUBLE_t        # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t          # Type for indices and counters
 
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion
+from ._axis_criterion cimport AxisCriterion
 
 
 cdef class CriterionWrapper2D:
@@ -78,9 +79,6 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     cdef DOUBLE_t[:, ::1] y_row_sums
     cdef DOUBLE_t[:, ::1] y_col_sums
 
-    cdef DOUBLE_t* total_row_sample_weight
-    cdef DOUBLE_t* total_col_sample_weight
-
     cdef inline int _init_child_criterion(
             self,
             RegressionCriterion criterion,
@@ -100,11 +98,8 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
 
     See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
     """
-    cdef double* _node_value_aux  # Temporary storage to use in node_value()
-    cdef SIZE_t _aux_len
-    cdef SIZE_t last_split_axis
-    cdef DOUBLE_t[:, ::1] y_2D_rows
-    cdef DOUBLE_t[:, ::1] y_2D_cols
+    cdef AxisCriterion criterion_rows
+    cdef AxisCriterion criterion_cols
 
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):

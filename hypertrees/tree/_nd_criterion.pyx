@@ -4,10 +4,9 @@ from libc.stdlib cimport malloc, calloc, free, realloc
 from libc.string cimport memset
 import numpy as np
 cimport numpy as cnp
+from ._axis_criterion cimport AxisCriterion
 
 np.import_array()
-
-cdef DOUBLE_t NAN = np.nan
 
 
 class InvalidAxisError(ValueError):
@@ -405,12 +404,16 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
 
 
 # TODO: should work for classification as well.
-cdef class PBCTCriterionWrapper(RegressionCriterionWrapper2D):
+cdef class PBCTCriterionWrapper(CriterionWrapper2D):
     """Applies Predictive Bi-Clustering Trees method.
 
     See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
     """
-    def __cinit__(self, Criterion criterion_rows, Criterion criterion_cols):
+    def __cinit__(
+        self,
+        AxisCriterion criterion_rows,
+        AxisCriterion criterion_cols,
+    ):
         self.criterion_rows = criterion_rows
         self.criterion_cols = criterion_cols
         self.n_rows = self.criterion_rows.n_samples
@@ -418,11 +421,6 @@ cdef class PBCTCriterionWrapper(RegressionCriterionWrapper2D):
         self.row_samples = NULL
         self.col_samples = NULL
 
-        self._aux_len = max(self.n_rows, self.n_cols)
-        # Temporary storage to use in node_value()
-        self._node_value_aux = <double*> malloc(
-            sizeof(double) * self._aux_len
-        )
         self.n_outputs = self.n_rows + self.n_cols
 
         # Default values
@@ -443,9 +441,6 @@ cdef class PBCTCriterionWrapper(RegressionCriterionWrapper2D):
 
     def __init__(self, *args, **kwargs):
         pass
-
-    def __dealloc__(self):
-        free(self._node_value_aux)
 
     def __reduce__(self):
         return (type(self),
@@ -470,13 +465,6 @@ cdef class PBCTCriterionWrapper(RegressionCriterionWrapper2D):
             SIZE_t[2] end,
         ) nogil except -1:
         """This function adapts RegressionCriterion.init to 2D data."""
-        # NOTE: A problem is sometimes n_outputs is actually treated the
-        # number of outputs, but sometimes it is just an alias for y.shape[1].
-        # In 1D, they have the same value, but now we have to discern them.
-        cdef SIZE_t i, j, p, q
-        cdef DOUBLE_t wi, wj
-        cdef DOUBLE_t* sum_total_rows 
-        cdef DOUBLE_t* sum_total_cols 
 
         # Initialize fields
         self.X_rows = X_rows
@@ -502,60 +490,38 @@ cdef class PBCTCriterionWrapper(RegressionCriterionWrapper2D):
 
         self.start[0], self.start[1] = start[0], start[1]
         self.end[0], self.end[1] = end[0], end[1]
-        self.sq_sum_total = 0.0
 
         cdef SIZE_t n_node_rows = end[0] - start[0]
         cdef SIZE_t n_node_cols = end[1] - start[1]
 
-        with gil:
-            # FIXME: how to access composite semisupervised criterion?
-            #        a gambiarra is used for now (they set n_outputs again).
-            # HACK
-            self.criterion_rows.n_outputs = n_node_cols
-            self.criterion_cols.n_outputs = n_node_rows
-            self.y_2D_rows = np.empty((self.n_rows, n_node_cols))
-            self.y_2D_cols = np.empty((self.n_cols, n_node_rows))
-
-        for p in range(n_node_rows):
-            i = self.row_samples[p + start[0]]
-            for q in range(n_node_cols):
-                j = self.col_samples[q + start[1]]
-                self.y_2D_rows[i, q] = self.y_2D_cols[j, p] = self.y_2D[i, j]
-
-        self.sq_sum_total = 0.0
-
-        # FIXME: is not this MSE specific?
-        if (self.row_sample_weight!=NULL) or (self.row_sample_weight!=NULL):
-            wi = wj = 1.
-
-            for p in range(n_node_rows):
-                i = self.row_samples[p + start[0]]
-
-                if row_sample_weight != NULL:
-                    wi = row_sample_weight[i]
-
-                for q in range(n_node_cols):
-                    j = self.col_samples[q + start[1]]
-
-                    if col_sample_weight != NULL:
-                        wj = col_sample_weight[j]
-
-                    self.y_2D_rows[i, q] *= wj ** .5
-                    self.y_2D_cols[j, p] *= wi ** .5
-                    # TODO
-                    self.sq_sum_total += self.y_2D_rows[i, q] * wj ** .5
-
+        self.criterion_rows.init_columns(
+            self.col_samples,
+            self.col_sample_weight,
+            self.start[1],
+            self.end[1],
+        )
         self.criterion_rows.init(
-            y=self.y_2D_rows,
+            y=self.y_2D,
             sample_weight=self.row_sample_weight,
             weighted_n_samples=self.weighted_n_rows,
             samples=self.row_samples,
-            start=self.start[1],
-            end=self.end[1],
+            start=self.start[0],
+            end=self.end[0],
         )
 
+        self.criterion_cols.init_columns(
+            self.row_samples,
+            self.row_sample_weight,
+            self.start[0],
+            self.end[0],
+        )
+
+        cdef DOUBLE_t[:, ::1] yT
+        with gil:
+            yT = y_2D.T.copy()  # FIXME
+
         self.criterion_cols.init(
-            y=self.y_2D_cols,
+            y=yT,
             sample_weight=self.col_sample_weight,
             weighted_n_samples=self.weighted_n_cols,
             samples=self.col_samples,
@@ -568,34 +534,15 @@ cdef class PBCTCriterionWrapper(RegressionCriterionWrapper2D):
     cdef void node_value(self, double* dest) nogil:
         """Copy the value (prototype) of node samples into dest.
         """
-        cdef SIZE_t i, j, p, q
-
-        for i in range(self.n_outputs):
-            dest[i] = NAN
-
-        self.criterion_cols.node_value(self._node_value_aux)
-
-        # Copy each row's output to their corresponding positions of dest
-        for q in range(self.start[0], self.end[0]):
-            j = self.row_samples[q]
-            dest[j] = self._node_value_aux[q-self.start[0]]
-        
-        self.criterion_rows.node_value(self._node_value_aux)
-
-        # Copy each colum's output to their corresponding positions of dest
-        for p in range(self.start[1], self.end[1]):
-            i = self.col_samples[p]
-            dest[i + self.n_rows] = self._node_value_aux[p-self.start[1]]
+        self.criterion_cols.node_value(dest)
+        self.criterion_rows.node_value(dest + self.n_rows)
 
     cdef double node_impurity(self) nogil:
         """Return the impurity of the current node.
 
         In scikit-learn trees it is only used at the root node.
         """
-        # Will be replaced by impurity_improvement() anyway. We define it here
-        # just for the sake of semantics.
-        return (self.criterion_rows.node_impurity()
-                + self.criterion_cols.node_impurity()) / 2
+        return self.criterion_rows.node_impurity()
 
     cdef void children_impurity(
             self,
@@ -603,71 +550,34 @@ cdef class PBCTCriterionWrapper(RegressionCriterionWrapper2D):
             double* impurity_right,
             SIZE_t axis,
     ) nogil:
-        # HACK: We add the other axis' node impurity to the result because
-        #       otherwise a 1 by n or n by 1 child partition would receive a
-        #       0-valued impurity, triggering stop criteria in
-        #       ._tree.TreeBuilder before we correct the calculation in
-        #       `self.impurity_improvement()` by reassigning impurity_parent.
         if axis == 0:
-            other_imp = self.criterion_cols.node_impurity()
             self.criterion_rows.children_impurity(
                 impurity_left, impurity_right)
-            impurity_left[0] += other_imp
-            impurity_right[0] += other_imp
-
         elif axis == 1:
-            other_imp = self.criterion_rows.node_impurity()
             self.criterion_cols.children_impurity(
                 impurity_left, impurity_right)
-            impurity_left[0] += other_imp
-            impurity_right[0] += other_imp
+        else:
+            with gil:
+                raise InvalidAxisError
 
     cdef double impurity_improvement(
-            self, double impurity_parent, double
-            impurity_left, double impurity_right,
-            SIZE_t axis,
+        self,
+        double impurity_parent,
+        double impurity_left,
+        double impurity_right,
+        SIZE_t axis,
     ) nogil:
         """The final value to express the split quality. 
         """
-        # Since row and col criteria yield different impurity (along rows'
-        # or columns' axis), we recompute the node impurity here,
-        # differently from what it is originally done (reusing children
-        # impurity from the last split as the current's parent impurity).
-
-        # TODO: An alternative to recalculating node impurity would be to
-        #       always get the mean impurity among the two axes, yielding a
-        #       symmetric and apparently more consistent and reasonable metric.
-        #       However, obtaining the impurity along the axis other than the
-        #       used for splitting is not trivial.
-        # TODO: Although not expensive, there is no need to calculate other_imp
-        #       both in children_impurity and here.
-        cdef double other_imp
-
         if axis == 0:
-            # NOTE: recalculating imuprity_parent only under the condition
-            #       below does not work properly because of the depth first
-            #       tree building. However, calculating node impurity is not
-            #       much expensive. 
-            #
-            #       if self.last_split_axis != axis:
-
-            impurity_parent = self.criterion_rows.node_impurity()
-            other_imp = self.criterion_cols.node_impurity()
-
-            #  We are actually receiving left_impurity + others_node_impurity
-            #  from children_impurity(), hence the subtraction.
             return self.criterion_rows.impurity_improvement(
                 impurity_parent,
-                impurity_left - other_imp,
-                impurity_right - other_imp,
+                impurity_left,
+                impurity_right,
             )
-
         elif axis == 1:
-            impurity_parent = self.criterion_cols.node_impurity()
-            other_imp = self.criterion_rows.node_impurity()
-
             return self.criterion_cols.impurity_improvement(
                 impurity_parent,
-                impurity_left - other_imp,
-                impurity_right - other_imp,
+                impurity_left,
+                impurity_right,
             )
