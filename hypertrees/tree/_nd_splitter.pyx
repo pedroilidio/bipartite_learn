@@ -109,8 +109,8 @@ cdef class Splitter2D:
             self.row_sample_weight = NULL
             self.col_sample_weight = NULL
         else:
-            # First self.shape[0] sample weights are rows' the others
-            # are columns'.
+            # First self.n_rows sample weights refer to rows, the others
+            # refer to columns.
             self.row_sample_weight = sample_weight
             self.col_sample_weight = sample_weight + self.n_rows
 

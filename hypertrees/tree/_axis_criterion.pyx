@@ -11,6 +11,8 @@ cdef double NAN = np.nan
 
 
 cdef class AxisCriterion(Criterion):
+    """Enables selecting subset of columns to calculate impurities on."""
+
     def __cinit__(self, SIZE_t n_outputs, SIZE_t n_samples):
         self._columns_are_set = False
         # TODO: avoid using memory

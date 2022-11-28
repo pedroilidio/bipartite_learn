@@ -1,4 +1,4 @@
-from ._axis_criterion import AxisCriterion
+from sklearn._tree._criterion cimport Criterion
 
 
 cdef PairwiseCriterion(Criterion):

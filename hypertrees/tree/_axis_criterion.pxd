@@ -16,14 +16,24 @@ cdef class AxisCriterion(Criterion):
     cdef const DOUBLE_t* col_sample_weight
 
     cdef SIZE_t* col_samples
-    # Since indices are reordered by splitters in node_split, indices of
+    cdef SIZE_t col_start
+    cdef SIZE_t col_end
+
+    # Since samples are reordered by splitters in node_split, indices of
     # selected columns must be saved during AxisCriterion.init_columns().
     # Otherwise, Criterion.sum_total will be built in an order that may not
     # correspond to col_samples anymore when the time of calling
     # Criterion.init() comes.
+
+    # In principle, only row_samples needs to be copied, since
+    # Splitter2D cals splitter_rows.node_reset() before
+    # splitter_cols.node_reset(). However, we choose to copy both
+    # to be independent of this specific order.
+
+    # FIXME: If splitters become able of finding the best split without
+    # reordering, this strategy can be dropped and we avoid the memory
+    # burden.
     cdef SIZE_t[::1] _col_indices
-    cdef SIZE_t col_start
-    cdef SIZE_t col_end
 
     # cdef SIZE_t n_cols  # n_outputs represents the number of columns
     # cdef double weighted_n_cols  # TODO: not needed for now

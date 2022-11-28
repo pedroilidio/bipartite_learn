@@ -372,8 +372,6 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         double supervision_rows,
         object supervision_cols="same",
         object update_supervision=None,
-        bint pairwise=False,
-        bint axis_decision_only=False,
     ):
         self.supervision_rows = supervision_rows
         self.supervision_cols = supervision_cols
@@ -388,6 +386,11 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
 
         self._supervision_is_dynamic = update_supervision is not None
 
+        self.unsupervised_criterion_rows = unsupervised_criterion_rows
+        self.unsupervised_criterion_cols = unsupervised_criterion_cols
+        self.supervised_bipartite_criterion = supervised_bipartite_criterion
+        self.update_supervision = update_supervision
+
     # TODO: improve validation
     def __init__(
         self,
@@ -397,13 +400,9 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         double supervision_rows,
         object supervision_cols="same",  # double or "same"
         object update_supervision=None,  # callable
-        bint pairwise=False,
         bint axis_decision_only=False,
     ):
-        self.unsupervised_criterion_rows = unsupervised_criterion_rows
-        self.unsupervised_criterion_cols = unsupervised_criterion_cols
-        self.supervised_bipartite_criterion = supervised_bipartite_criterion
-        self.update_supervision = update_supervision
+        pass
 
     cdef int init(
             self,
@@ -443,7 +442,7 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             y=self.X_rows,
             sample_weight=self.row_sample_weight,
             weighted_n_samples=self.weighted_n_rows,
-            samples=self.row_samples,
+            samples=self._row_samples_copy,
             start=self.start[0],
             end=self.end[0],
         )
@@ -451,7 +450,7 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             y=self.X_cols,
             sample_weight=self.col_sample_weight,
             weighted_n_samples=self.weighted_n_cols,
-            samples=self.col_samples,
+            samples=self._col_samples_copy,
             start=self.start[1],
             end=self.end[1],
         )
@@ -464,8 +463,8 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             self.col_sample_weight,
             self.weighted_n_rows,
             self.weighted_n_cols,
-            self.row_samples,
-            self.col_samples,
+            self._row_samples_copy,
+            self._col_samples_copy,
             self.start,
             self.end,
         )
