@@ -30,7 +30,8 @@ logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 DEF_PARAMS = dict(
     n_samples=(50, 60),
     n_features=(10, 9),
-    noise=0.1,
+    # noise=0.1,
+    noise=0.0,
     random_state=None,
 )
 

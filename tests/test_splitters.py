@@ -18,6 +18,7 @@ from sklearn.utils._testing import assert_allclose
 from hypertrees.tree._splitter_factory import (
     make_2d_splitter,
     make_2dss_splitter,
+    make_semisupervised_criterion,
 )
 from hypertrees.tree._nd_criterion import (
     PBCTCriterionWrapper,
@@ -361,7 +362,7 @@ def test_ss_1d2d(supervision, **params):
     params = DEF_PARAMS | params
 
     splitter1 = BestSplitter(
-        criterion=SSCompositeCriterion(
+        criterion=make_semisupervised_criterion(
             supervision=supervision,
             supervised_criterion=MSE,
             unsupervised_criterion=MSE,
@@ -786,53 +787,7 @@ def test_sfssmse_1d2d(**params):
     )
 
 
-def test_ss_alves_1d2d(**params):
-    print('*** test_ss_alves_1d2d')
-    params = DEF_PARAMS | params
-
-    supervision = params.get('supervision', -1.)
-    if supervision == -1.0:
-        supervision = check_random_state(params['seed']).random()
-
-    splitter1 = BestSplitter(
-        criterion=SSCompositeCriterionAlves(
-            supervision=supervision,
-            supervised_criterion=MSE,
-            unsupervised_criterion=MSE,
-            n_features=sum(params['nattrs']),
-            n_samples=np.prod(params['shape']),
-            n_outputs=1,
-        ),
-        max_features=np.sum(params['nattrs']),
-        min_samples_leaf=params['min_samples_leaf'],
-        min_weight_leaf=0.,
-        random_state=check_random_state(params['seed']),
-    )
-
-    splitter2d = make_2dss_splitter(
-        splitters=BestSplitter,
-        ss_criteria=SSCompositeCriterionAlves,
-        supervised_criteria=MSE,
-        unsupervised_criteria=MSE,
-        supervision=supervision,
-        max_features=params['nattrs'],
-        n_features=params['nattrs'],
-        n_samples=params['shape'],
-        n_outputs=1,
-        min_samples_leaf=params['min_samples_leaf'],
-        min_weight_leaf=0.,
-        random_state=check_random_state(params['seed']),
-    )
-
-    return compare_splitters_1d2d(
-        splitter1=splitter1,
-        splitter2=splitter2d,
-        semisupervised_1d=True,
-        **params,
-    )
-
-
-def test_ss_alves_1d(**params):
+def test_ss_axis_decision_only(supervision, **params):
     """Test axis decision-semisupervision
 
     Assert that axis decision semisupervision chooses the split based only on
@@ -841,13 +796,8 @@ def test_ss_alves_1d(**params):
     print('*** test_ss_alves_1d')
     params = DEF_PARAMS | params
 
-    supervision = params.get('supervision', -1.)
-    if supervision == -1.0:
-        supervision = check_random_state(params['seed']).random()
-
     splitter2d = make_2dss_splitter(
         splitters=BestSplitter,
-        ss_criteria=SSCompositeCriterionAlves,
         supervised_criteria=MSE,
         unsupervised_criteria=MSE,
         supervision=supervision,
@@ -857,11 +807,12 @@ def test_ss_alves_1d(**params):
         n_outputs=1,
         random_state=check_random_state(params['seed']),
         min_samples_leaf=params['min_samples_leaf'],
-        min_weight_leaf=0.,
+        min_weight_leaf=0.0,
+        axis_decision_only=True,
     )
 
     # The equal thresholds will still be asserted.
-    with raises(AssertionError, match=r'improvement differs from reference\.'):
+    with raises(AssertionError, match=r'improvement'):
         compare_splitters_1d2d(
             splitter1=BestSplitter,
             splitter2=splitter2d,

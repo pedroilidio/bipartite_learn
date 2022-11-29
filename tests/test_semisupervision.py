@@ -15,8 +15,8 @@ from hypertrees.tree._splitter_factory import (
     make_semisupervised_criterion,
 ) 
 from hypertrees.tree._semisupervised_criterion import (
-    SSMSE, SSCompositeCriterion,
-    SingleFeatureSSCompositeCriterion, MSE2DSFSS,
+    SSCompositeCriterion,
+    SingleFeatureSSCompositeCriterion,
 )
 
 from hypertrees.tree._semisupervised_classes import (
@@ -293,7 +293,6 @@ def test_single_feature_semisupervision_1d2d(supervision=None, **params):
         random_state=check_random_state(params['random_state']),
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.,
-        criterion_wrapper_class=MSE2DSFSS,
     )
 
     tree1 = DecisionTreeRegressorSS(

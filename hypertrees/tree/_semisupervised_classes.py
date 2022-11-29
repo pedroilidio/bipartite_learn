@@ -59,12 +59,7 @@ from sklearn.tree._classes import (
 from ._semisupervised_criterion import (
     SemisupervisedCriterion,
     SSCompositeCriterion,
-    SingleFeatureSSCompositeCriterion,
-    SSCompositeCriterionAlves,
-    SSMSE,
-    SFSSMSE,
-    MSE_Wrapper2DSS,
-    MSE2DSFSS,
+    BipartiteSemisupervisedCriterion,
 )
 
 from ._dynamic_supervision_criterion import DynamicSSMSE
@@ -99,17 +94,11 @@ SINGLE_FEATURE_SPLITTERS = {
 }
 
 BIPARTITE_CRITERIA = {
-    "global_single_output": MSE_Wrapper2DSS,
-    # "sfss_squared_error": MSE2DSFSS,
+    "global_single_output": MSE_Wrapper2D,
 }
 
 CRITERIA_SS = {
     "default": SSCompositeCriterion,
-    "composite_alves": SSCompositeCriterionAlves,
-    "squared_error": SSMSE,
-    "dynamic_ssmse": DynamicSSMSE,
-    "single_feature_ss": SingleFeatureSSCompositeCriterion,
-    "sfssmse": SFSSMSE,
 }
 
 
@@ -1834,31 +1823,47 @@ class BaseDecisionTree2DSS(
         else:  # str
             ss_adapter = self.ss_adapter
 
-        semisupervised_criterion_rows = self._check_criterion(
-            n_samples=n_samples[0],
-            n_features=self.n_row_features_in_,
-            ss_adapter=ss_adapter,
-            criterion=self.criterion,
-            unsupervised_criterion=self.unsupervised_criterion_rows,
-        )
-        semisupervised_criterion_cols = self._check_criterion(
-            n_samples=n_samples[1],
-            n_features=self.n_col_features_in_,
-            ss_adapter=ss_adapter,
-            criterion=self.criterion,
-            unsupervised_criterion=self.unsupervised_criterion_cols,
-        )
+        # TODO: check str in ._splitter_factory
+        if isinstance(self.criterion, str):
+            CRITERIA = CRITERIA_CLF if is_classifier(self) else CRITERIA_REG
+            criterion = CRITERIA[self.criterion]
+        else:
+            criterion = deepcopy(self.criterion)
+
+        if isinstance(self.unsupervised_criterion_rows, str):
+            # TODO: specify if classifier or regression unsupervised criterion
+            CRITERIA = CRITERIA_CLF | CRITERIA_REG
+            unsup_criterion_rows = CRITERIA[self.unsupervised_criterion_rows]
+        else:
+            unsup_criterion_rows = deepcopy(self.unsupervised_criterion_rows)
+
+        if isinstance(self.unsupervised_criterion_cols, str):
+            # TODO: specify if classifier or regression unsupervised criterion
+            CRITERIA = CRITERIA_CLF | CRITERIA_REG
+            unsup_criterion_cols = CRITERIA[self.unsupervised_criterion_cols]
+        else:
+            unsup_criterion_cols = deepcopy(self.unsupervised_criterion_cols)
 
         SPLITTERS = SPARSE_SPLITTERS if sparse else DENSE_SPLITTERS
         splitter = SPLITTERS[self.splitter]
 
         splitter = make_2dss_splitter(
             splitters=splitter,
-            ss_criteria=(
-                semisupervised_criterion_rows,
-                semisupervised_criterion_cols,
-            ),
+            supervised_criteria=criterion,
+            unsupervised_criteria=[
+                unsup_criterion_rows,
+                unsup_criterion_cols,
+            ],
+            # ss_criteria=ss_adapter,  # TODO: Remove option?
+            # ss_criteria=(
+            #     semisupervised_criterion_rows,
+            #     semisupervised_criterion_cols,
+            # ),
             n_samples=n_samples,
+            n_features=[
+                self.n_row_features_in_,
+                self.n_col_features_in_,
+            ],
             n_outputs=n_outputs,
             max_features=ax_max_features,
             min_samples_leaf=min_samples_leaf,

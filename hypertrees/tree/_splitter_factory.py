@@ -1,3 +1,4 @@
+from typing import Type
 import warnings
 import copy
 from numbers import Integral, Real
@@ -17,10 +18,6 @@ from ._semisupervised_criterion import (
 )
 
 
-CriterionConstraints = [
-]
-
-
 def _duplicate_single_parameters(*params, ndim=2):
     result = []
 
@@ -30,13 +27,63 @@ def _duplicate_single_parameters(*params, ndim=2):
                 raise ValueError(
                     f"param {param=} has length {len(param)}, expected {ndim}."
                 )
-            result.append(param)
+            result.append(list(param))
         else:
             result.append([copy.deepcopy(param) for _ in range(ndim)])
 
     return result
 
 
+def check_criterion(
+    criterion: str | Criterion | Type[Criterion],
+    n_samples: int | None = None,
+    n_outputs: int | None = None,
+    kind: str | None = None,
+    classification: bool = False,
+    pairwise: bool = False,
+    axis: bool = False,
+) -> Criterion:
+
+    if not isinstance(criterion, str) and kind is not None:
+        warnings.warn(
+            f"{kind=} parameter is being ignored since {criterion=} is "
+            "not a string."
+        )
+    if isinstance(criterion, type):
+        if n_samples is None or n_outputs is None:
+            raise ValueError(
+                "'n_samples' and 'n_outputs' must be provided if 'criterion' "
+                f"is a type. Received {n_samples=}, {n_outputs=} and "
+                f"{criterion=}."
+            )
+        if not issubclass(criterion, Criterion):
+            raise ValueError(
+                f"Type {criterion=} provided is not a subclass of Criterion."
+            )
+        return criterion(
+            n_outputs=n_outputs,
+            n_samples=n_samples,
+        )
+    elif isinstance(criterion, str):
+        raise NotImplementedError
+    
+    elif isinstance(criterion, Criterion):
+        if n_samples is not None:
+            warnings.warn(
+                f"{n_samples=} parameter is being ignored since {criterion=} "
+                "is already a Criterion instance."
+            )
+        if n_outputs is not None:
+            warnings.warn(
+                f"{n_outputs=} parameter is being ignored since {criterion=} "
+                "is already a Criterion instance."
+            )
+        return criterion
+    else:  # Should never run because of @validate_params
+        raise ValueError(f"Unknown criterion type ({criterion=}).")
+
+
+# TODO:
 # @validate_params(dict(
 #     splitters=[list, tuple, Splitter],
 #     criteria=[list, tuple, Criterion],
@@ -93,23 +140,14 @@ def make_2d_splitter(
     random_state = check_random_state(random_state)
 
     for ax in range(2):
-        # Make criterion
-        if isinstance(criteria[ax], type):
-            if n_samples[ax] is None:
-                raise ValueError(
-                    f"n_samples[{ax}] must be provided if criteria"
-                    f"[{ax}]={criteria[ax]} is a Criterion type.")
-
-            criteria[ax] = criteria[ax](
-                n_outputs=n_outputs[ax],
-                n_samples=n_samples[ax],
-            )
-
-        elif not isinstance(criteria[ax], Criterion):
-            raise TypeError
+        criteria[ax] = check_criterion(
+            criteria[ax],
+            n_samples=n_samples[ax],
+            n_outputs=n_outputs[ax],
+        )
 
         # Make splitter
-        if isinstance(splitters[ax], type):
+        if issubclass(splitters[ax], Splitter):
             if max_features[ax] is None:
                 raise ValueError(
                     f"max_features[{ax}] must be provided if splitters"
@@ -126,8 +164,7 @@ def make_2d_splitter(
                           " criteria[ax] is being ignored.")
 
     # Wrap criteria.
-    criterion_wrapper = \
-        criterion_wrapper_class(criteria[0], criteria[1])
+    criterion_wrapper = criterion_wrapper_class(criteria[0], criteria[1])
 
     # Wrap splitters.
     return Splitter2D(
@@ -139,7 +176,7 @@ def make_2d_splitter(
     )
 
 
-# cdef class SSCompositeCriterionAlves(SSCompositeCriterion):
+# TODO: docs
 #     """Unsupervised impurity is only used to decide between rows or columns.
 # 
 #     The split search takes into consideration only the labels, as usual, but
@@ -204,44 +241,84 @@ def make_2dss_splitter(
     random_state = check_random_state(random_state)
 
     # Make semi-supervised criteria
-    # TODO: warn about skipped arguments
     for ax in range(2):
         if isinstance(splitters[ax], Splitter):
+            if (supervised_criteria[ax] is not None):
+                warnings.warn(
+                    f"Since {splitters[ax]=} is not a class, the provided "
+                    f"{supervised_criteria[ax]=} is being ignored."
+                )
+            if (unsupervised_criteria[ax] is not None):
+                warnings.warn(
+                    f"Since {splitters[ax]=} is not a class, the provided "
+                    f"{unsupervised_criteria[ax]=} is being ignored."
+                )
             continue
+        # TODO: validate params
         elif not issubclass(splitters[ax], Splitter):  # TODO: use duck typing?
             raise ValueError(
-                "splitter must be instance or subclass of "
+                "splitter must be an instance or subclass of "
                 "sklearn.tree._splitter.Splitter"
             )
-
-        if ss_criteria[ax] is None:
-            ss_criteria[ax] = SSCompositeCriterion
-
-        if not isinstance(ss_criteria[ax], SemisupervisedCriterion):
-            ss_criteria[ax] = make_semisupervised_criterion(
-                ss_class=ss_criteria[ax],
-                supervision=supervision[ax],
-                supervised_criterion=supervised_criteria[ax],
-                unsupervised_criterion=unsupervised_criteria[ax],
+        if axis_decision_only:  
+            supervised_criteria[ax] = check_criterion(
+                supervised_criteria[ax],
                 n_outputs=n_outputs[ax],
-                n_features=n_features[ax],
+                n_samples=n_samples[ax],
+            )
+            unsupervised_criteria[ax] = check_criterion(
+                unsupervised_criteria[ax],
+                n_outputs=n_features[ax],
                 n_samples=n_samples[ax],
             )
 
-        splitters[ax] = splitters[ax](
-            criterion=ss_criteria[ax],
-            max_features=max_features[ax],
-            min_samples_leaf=ax_min_samples_leaf[ax],
-            min_weight_leaf=ax_min_weight_leaf[ax],
-            random_state=random_state,
-        )
+            if (ss_criteria[ax] is not None):
+                warnings.warn(
+                    f"Since {axis_decision_only=}, the provided "
+                    f"{ss_criteria[ax]=} is being ignored."
+                )
+            # The Splitter will not consider unsupevised data when searching
+            # for a split.
+            splitters[ax] = splitters[ax](
+                criterion=supervised_criteria[ax],
+                max_features=max_features[ax],
+                min_samples_leaf=ax_min_samples_leaf[ax],
+                min_weight_leaf=ax_min_weight_leaf[ax],
+                random_state=random_state,
+            )
+
+        else:
+            if ss_criteria[ax] is None:
+                ss_criteria[ax] = SSCompositeCriterion
+
+            if not isinstance(ss_criteria[ax], SemisupervisedCriterion):
+                ss_criteria[ax] = make_semisupervised_criterion(
+                    ss_class=ss_criteria[ax],
+                    supervision=supervision[ax],
+                    supervised_criterion=supervised_criteria[ax],
+                    unsupervised_criterion=unsupervised_criteria[ax],
+                    n_outputs=n_outputs[ax],
+                    n_features=n_features[ax],
+                    n_samples=n_samples[ax],
+                )
+            
+                supervised_criteria[ax] = ss_criteria[ax].supervised_criterion
+                unsupervised_criteria[ax] = ss_criteria[ax].unsupervised_criterion
+
+            splitters[ax] = splitters[ax](
+                criterion=ss_criteria[ax],
+                max_features=max_features[ax],
+                min_samples_leaf=ax_min_samples_leaf[ax],
+                min_weight_leaf=ax_min_weight_leaf[ax],
+                random_state=random_state,
+            )
     
     criterion_wrapper = ss_criterion_wrapper_class(
-        unsupervised_criterion_rows=ss_criteria[0].unsupervised_criterion,
-        unsupervised_criterion_cols=ss_criteria[1].unsupervised_criterion,
+        unsupervised_criterion_rows=unsupervised_criteria[0],
+        unsupervised_criterion_cols=unsupervised_criteria[1],
         supervised_bipartite_criterion=criterion_wrapper_class(
-            criterion_rows=ss_criteria[0].supervised_criterion,
-            criterion_cols=ss_criteria[1].supervised_criterion,
+            criterion_rows=supervised_criteria[0],
+            criterion_cols=supervised_criteria[1],
         ),
         supervision_rows=supervision[0],
         supervision_cols=supervision[1],
@@ -258,43 +335,48 @@ def make_2dss_splitter(
 
 
 @validate_params(dict(
+    supervised_criterion=[Criterion, type(Criterion)],
+    unsupervised_criterion=[Criterion, type(Criterion)],
     supervision=[Interval(Real, 0.0, 1.0, closed="both")],
     n_outputs=[Interval(Integral, 1, None, closed="left"), None],
     n_features=[Interval(Integral, 1, None, closed="left"), None],
     n_samples=[Interval(Integral, 1, None, closed="left"), None],
-    ss_class=[type(SemisupervisedCriterion)],
-    supervised_criterion=[Criterion, type(Criterion)],
-    unsupervised_criterion=[Criterion, type(Criterion)],
     update_supervision=[callable, None],
+    ss_class=[type(SemisupervisedCriterion), None],
 ))
 def make_semisupervised_criterion(
     supervision,
-    ss_class,
+    supervised_criterion,
+    unsupervised_criterion,
     n_outputs=None,
     n_features=None,
     n_samples=None,
-    supervised_criterion=None,
-    unsupervised_criterion=None,
     update_supervision=None,
+    ss_class=SSCompositeCriterion,
 ):
-    if isinstance(supervised_criterion, type):
-        if not n_outputs or not n_samples:
-            raise ValueError('If supervised_criterion is a class, one must'
-                             ' provide both n_outputs (received '
-                             f'{n_outputs}) and n_samples ({n_samples}).')
-        supervised_criterion = supervised_criterion(
-            n_outputs=n_outputs,
-            n_samples=n_samples,
-        )
+    # Facilitate setting the default ss_class as simply None
+    ss_class = SSCompositeCriterion if ss_class is None else ss_class
+
+    supervised_criterion = check_criterion(
+        criterion=supervised_criterion,
+        n_outputs=n_outputs,
+        n_samples=n_samples,
+    )
+
+    # Catch before check_criterion() to make it clear that it was the
+    # n_features which was missing.
     if isinstance(unsupervised_criterion, type):
         if not n_features or not n_samples:
-            raise ValueError('If unsupervised_criterion is a class, one mu'
-                             'st provide both n_features (received '
-                             f'{n_features}) and n_samples ({n_samples}).')
-        unsupervised_criterion = unsupervised_criterion(
-            n_outputs=n_features,
-            n_samples=n_samples,
-        )
+            raise ValueError(
+                'If unsupervised_criterion is a class, one must provide both '
+                f'n_features (received {n_features}) and n_samples ({n_samples}).'
+            )
+
+    unsupervised_criterion = check_criterion(
+        criterion=unsupervised_criterion,
+        n_outputs=n_features,
+        n_samples=n_samples,
+    )
 
     return ss_class(
         supervision=supervision,

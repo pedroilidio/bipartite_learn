@@ -55,6 +55,7 @@ from ._nd_criterion import (
 from ._nd_splitter import Splitter2D
 from ..melter import row_cartesian_product
 from ..utils import check_similarity_matrix, _X_is_multipartite
+from ._axis_criterion import AxisMSE
 from ._splitter_factory import make_2d_splitter
 
 
@@ -71,6 +72,10 @@ __all__ = [
 BIPARTITE_CRITERIA = {
     "global_single_output": MSE_Wrapper2D,
     "local_multioutput": PBCTCriterionWrapper,
+}
+
+AXIS_CRITERIA_REG = {
+    "squared_error": AxisMSE,
 }
 
 SPARSE_SPLITTERS = {}
@@ -491,7 +496,9 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 
         splitter = self._make_splitter(
             n_samples=(n_rows, n_cols),
-            n_outputs=n_raw_outputs,
+            # FIXME
+            n_outputs=1 if self.bipartite_adapter == "global_single_output" else (n_cols, n_rows),
+            # n_outputs=n_raw_outputs,
             sparse=issparse(X),
             min_samples_leaf=min_samples_leaf,
             min_weight_leaf=min_weight_leaf,
@@ -574,9 +581,16 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         criterion = self.criterion
         if isinstance(criterion, str):
             if is_classifier(self):
-                criterion = CRITERIA_CLF[criterion]
+                if self.bipartite_adapter == "local_multioutput":
+                    raise NotImplementedError
+                    # criterion = AXIS_CRITERIA_CLF[criterion]
+                else:
+                    criterion = CRITERIA_CLF[criterion]
             else:
-                criterion = CRITERIA_REG[criterion]
+                if self.bipartite_adapter == "local_multioutput":
+                    criterion = AXIS_CRITERIA_REG[criterion]
+                else:
+                    criterion = CRITERIA_REG[criterion]
         else:
             criterion = copy.deepcopy(criterion)
 

@@ -60,20 +60,21 @@ cdef class CriterionWrapper2D:
 
 # TODO: global in the name
 cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
+    def __reduce__(self):
+        return (
+            type(self),
+            (self.criterion_rows, self.criterion_cols),
+            self.__getstate__(),
+        )
+
+    def __getstate__(self):
+        return {}
+
     def __cinit__(
         self,
         RegressionCriterion criterion_rows,
         RegressionCriterion criterion_cols,
     ):
-        # Only single interaction label supported
-        self.n_outputs = 1
-        self.n_outputs_rows = 1
-        self.n_outputs_cols = 1
-
-        self.criterion_rows = criterion_rows
-        self.criterion_cols = criterion_cols
-        self.n_rows = criterion_rows.n_samples
-        self.n_cols = criterion_cols.n_samples
         self.row_samples = NULL
         self.col_samples = NULL
 
@@ -91,31 +92,34 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         self.weighted_n_node_rows = 0.0
         self.weighted_n_node_cols = 0.0
 
+    def __init__(
+        self,
+        RegressionCriterion criterion_rows,
+        RegressionCriterion criterion_cols,
+    ):
+        # Objects must be set here, to ensure they are fully initialised
+        self.criterion_rows = criterion_rows
+        self.criterion_cols = criterion_cols
+
+        # Only single interaction label supported
+        self.n_outputs_rows = self.criterion_rows.n_outputs
+        self.n_outputs_cols = self.criterion_cols.n_outputs
+        self.n_outputs = self.n_outputs_rows + self.n_outputs_cols
+
+        if (self.n_outputs_rows != 1) or (self.n_outputs_cols != 1):
+            raise ValueError(
+                "Both rows and columns criteria must have n_outputs == 1. "
+                f"Received {self.n_outputs_rows} and "
+                f"{self.n_outputs_cols}, respectively."
+            )
+
+        self.n_rows = criterion_rows.n_samples
+        self.n_cols = criterion_cols.n_samples
+
         # Because n_outputs == 1
         self.sum_total = np.empty(1, dtype=np.float64)
         self.y_row_sums = np.empty((self.n_rows, 1), dtype=np.float64)
         self.y_col_sums = np.empty((self.n_cols, 1), dtype=np.float64)
-
-    def __init__(self, *args, **kwargs):
-        if (
-            self.criterion_rows.n_outputs != 1
-            or self.criterion_cols.n_outputs != 1
-        ):
-            raise ValueError(
-                "Both rows and columns criteria must have n_outputs == 1. "
-                f"Received {self.criterion_rows.n_outputs} and "
-                f"{self.criterion_cols.n_outputs}, respectively."
-            )
-
-    def __reduce__(self):
-        return (
-            type(self),
-            (self.criterion_rows, self.criterion_cols),
-            self.__getstate__(),
-        )
-
-    def __getstate__(self):
-        return {}
 
     cdef int init(
         self,
@@ -219,6 +223,8 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
 
         self.sq_sum_total = sq_sum_total
         self.sum_total[0] = sum_total
+
+        # Will be used by the Splitter2D to set the Tree object
         self.weighted_n_node_samples = (
             self.weighted_n_node_rows * self.weighted_n_node_cols
         )
@@ -409,21 +415,23 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
 
     See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
     """
+    def __reduce__(self):
+        return (
+            type(self),
+            (self.criterion_rows, self.criterion_cols),
+            self.__getstate__(),
+        )
+
+    def __getstate__(self):
+        return {}
+
     def __cinit__(
         self,
         AxisCriterion criterion_rows,
         AxisCriterion criterion_cols,
     ):
-        self.criterion_rows = criterion_rows
-        self.criterion_cols = criterion_cols
-        self.n_rows = self.criterion_rows.n_samples
-        self.n_cols = self.criterion_cols.n_samples
-        self.n_outputs_rows = self.criterion_rows.n_outputs
-        self.n_outputs_cols = self.criterion_cols.n_outputs
         self.row_samples = NULL
         self.col_samples = NULL
-
-        self.n_outputs = self.n_outputs_rows + self.n_outputs_cols
 
         # Default values
         self.row_sample_weight = NULL
@@ -441,16 +449,20 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
 
         self.sum_total = np.zeros(self.n_outputs, dtype=np.float64)
 
-    def __init__(self, *args, **kwargs):
-        pass
+    def __init__(
+        self,
+        AxisCriterion criterion_rows,
+        AxisCriterion criterion_cols,
+    ):
+        # Objects must be set here, to ensure they are fully initialised
+        self.criterion_rows = criterion_rows
+        self.criterion_cols = criterion_cols
 
-    def __reduce__(self):
-        return (type(self),
-                (self.criterion_rows, self.criterion_cols),
-                self.__getstate__())
-
-    def __getstate__(self):
-        return {}
+        self.n_rows = self.criterion_rows.n_samples
+        self.n_cols = self.criterion_cols.n_samples
+        self.n_outputs_rows = self.criterion_rows.n_outputs
+        self.n_outputs_cols = self.criterion_cols.n_outputs
+        self.n_outputs = self.n_outputs_rows + self.n_outputs_cols
 
     cdef int init(
             self,
@@ -527,6 +539,14 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
             samples=self.col_samples,
             start=self.start[1],
             end=self.end[1],
+        )
+
+        self.weighted_n_node_rows = self.criterion_rows.weighted_n_node_samples
+        self.weighted_n_node_cols = self.criterion_cols.weighted_n_node_samples
+
+        # Will be used by the Splitter2D to set the Tree object
+        self.weighted_n_node_samples = (
+            self.weighted_n_node_rows * self.weighted_n_node_cols
         )
 
         return 0

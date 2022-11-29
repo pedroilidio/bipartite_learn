@@ -87,8 +87,8 @@ cdef class CriterionWrapper2D:
 
 cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     # FIXME: We need X here because BaseDenseSplitter.X is not accessible.
-    cdef RegressionCriterion criterion_rows
-    cdef RegressionCriterion criterion_cols
+    cdef public RegressionCriterion criterion_rows
+    cdef public RegressionCriterion criterion_cols
 
     cdef DOUBLE_t[:, ::1] y_row_sums
     cdef DOUBLE_t[:, ::1] y_col_sums

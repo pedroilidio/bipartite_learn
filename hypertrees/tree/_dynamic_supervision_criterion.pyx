@@ -6,7 +6,6 @@ from sklearn.tree._tree cimport SIZE_t
 from sklearn.tree._criterion import MSE
 
 from ._semisupervised_criterion cimport SSCompositeCriterion
-from ._semisupervised_criterion import SSMSE
 
 
 cdef class DynamicSSMSE(SSCompositeCriterion):

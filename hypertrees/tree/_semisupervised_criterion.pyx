@@ -55,12 +55,10 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         return (
             type(self),
             (
-                self.supervision,
-                0,
-                0,
-                0,
                 self.supervised_criterion,
                 self.unsupervised_criterion,
+                self.supervision,
+                self.update_supervision,
             ),
             self.__getstate__(),
         )
@@ -68,47 +66,21 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     def __getstate__(self):
         return {}
 
-    # TODO: We maybe should make __init__ simpler.
-    def __init__(
+    def __cinit__(
         self,
+        Criterion supervised_criterion,
+        Criterion unsupervised_criterion,
         double supervision,
-        SIZE_t n_outputs=0,
-        SIZE_t n_features=0,
-        SIZE_t n_samples=0,
-        supervised_criterion=None,
-        unsupervised_criterion=None,
         object update_supervision=None,  # callable
     ):
-        if not (0 <= supervision <= 1):
-            # TODO: == 0 only for tests.
-            raise ValueError("supervision must be in [0, 1] interval.")
-
-        if isinstance(supervised_criterion, type):
-            if not n_outputs or not n_samples:
-                raise ValueError('If supervised_criterion is a class, one must'
-                                 ' provide both n_outputs (received '
-                                 f'{n_outputs}) and n_samples ({n_samples}).')
-            supervised_criterion = supervised_criterion(
-                n_outputs=n_outputs,
-                n_samples=n_samples,
-            )
-        if isinstance(unsupervised_criterion, type):
-            if not n_features or not n_samples:
-                raise ValueError('If unsupervised_criterion is a class, one mu'
-                                 'st provide both n_features (received '
-                                 f'{n_features}) and n_samples ({n_samples}).')
-            unsupervised_criterion = unsupervised_criterion(
-                n_outputs=n_features,
-                n_samples=n_samples,
-            )
-
-        self.supervision = supervision
-        self._curr_supervision = supervision
         self.supervised_criterion = supervised_criterion
         self.unsupervised_criterion = unsupervised_criterion
         self.n_outputs = self.supervised_criterion.n_outputs
         self.n_samples = self.supervised_criterion.n_samples
         self.n_features = self.unsupervised_criterion.n_outputs
+
+        self.supervision = supervision
+        self._curr_supervision = supervision
 
         self.update_supervision = update_supervision
         self._supervision_is_dynamic = self.update_supervision is not None
@@ -372,6 +344,17 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         else:
             self._curr_supervision_cols = supervision_cols
 
+        
+    # TODO: improve validation
+    def __init__(
+        self,
+        Criterion unsupervised_criterion_rows,
+        Criterion unsupervised_criterion_cols,
+        CriterionWrapper2D supervised_bipartite_criterion,
+        double supervision_rows,
+        object supervision_cols="same",  # double or "same"
+        object update_supervision=None,  # callable
+    ):
         self._supervision_is_dynamic = update_supervision is not None
 
         self.unsupervised_criterion_rows = unsupervised_criterion_rows
@@ -386,18 +369,6 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         )
 
         self.update_supervision = update_supervision
-
-    # TODO: improve validation
-    def __init__(
-        self,
-        Criterion unsupervised_criterion_rows,
-        Criterion unsupervised_criterion_cols,
-        CriterionWrapper2D supervised_bipartite_criterion,
-        double supervision_rows,
-        object supervision_cols="same",  # double or "same"
-        object update_supervision=None,  # callable
-    ):
-        pass
 
     cdef int init(
             self,
@@ -482,6 +453,18 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
                     current_supervision=self._curr_supervision_cols,
                     original_supervision=self.supervision_cols,
                 )
+
+        self.weighted_n_node_rows = (
+            self.supervised_bipartite_criterion.weighted_n_node_rows
+        )
+        self.weighted_n_node_cols = (
+            self.supervised_bipartite_criterion.weighted_n_node_cols
+        )
+
+        # Will be used by the Splitter2D to set the Tree object
+        self.weighted_n_node_samples = (
+            self.supervised_bipartite_criterion.weighted_n_node_samples
+        )
 
     cdef void node_value(self, double* dest) nogil:
         self.supervised_bipartite_criterion.node_value(dest)
