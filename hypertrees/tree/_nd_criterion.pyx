@@ -297,11 +297,20 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         SIZE_t axis,  # Needs axis because of weighted_n_left/weighted_n_right.
     ) nogil:
         if axis == 0:
-            return self.criterion_rows.impurity_improvement(
+            with gil:
+                print(
+                    '*** wns, wnns, wnl, wnr',
+                    self.criterion_rows.weighted_n_samples,
+                    self.criterion_rows.weighted_n_node_samples,
+                    self.criterion_rows.weighted_n_left,
+                    self.criterion_rows.weighted_n_right,
+                )
+            return (
+                self.n_node_cols / self.n_cols * self.criterion_rows.impurity_improvement(
                 impurity_parent, impurity_left, impurity_right,
             )
         elif axis == 1:
-            return self.criterion_cols.impurity_improvement(
+            return self.n_node_rows / self.n_rows * self.criterion_cols.impurity_improvement(
                 impurity_parent, impurity_left, impurity_right,
             )
         else:

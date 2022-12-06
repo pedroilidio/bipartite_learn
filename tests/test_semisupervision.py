@@ -37,149 +37,94 @@ logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 
 # Default test params
 DEF_PARAMS = dict(
-    n_samples=(150, 160),
+    # n_samples=(150, 160),
+    n_samples=(50, 60),
     n_features=(10, 9),
     # n_targets=(2, 1),
     min_target=0.0,
     max_target=100.0,
     min_samples_leaf=100,
     noise=0.0,
-    random_state=0,
 )
 
 
-@pytest.fixture(
-    params=[0.0, 0.00001, 0.1, 0.2328, 0.569, 0.782, 0.995, 1.0])
+@pytest.fixture(params=[0.0, 0.00001, 0.1, 0.2328, 0.569, 0.782, 0.995, 1.0])
 def supervision(request):
     return request.param
 
 
-@pytest.fixture(
-    params=[2, 5, None])
-def max_depth(request):
+@pytest.fixture(params=[2, 5, None])
+def gen_tree_max_depth(request):
     """max depth of dataset's generator random tree"""
     return request.param
 
 
-def test_monopartite_semisupervised(supervision, **params):
+@pytest.fixture(params=range(3))
+def random_state(request):
+    # return request.param
+    return 0
+
+
+@pytest.fixture(params=[1, 5, 10, .1])
+def msl(request):  # min_samples_leaf parameter
+    return request.param
+
+
+def test_monopartite_semisupervised(supervision, msl, random_state, **params):
     params = DEF_PARAMS | params
 
-    treess = DecisionTreeRegressorSS(
+    tree_ss = DecisionTreeRegressorSS(
         supervision=supervision,
-        min_samples_leaf=params['min_samples_leaf'],
-        random_state=params['random_state'],
+        min_samples_leaf=msl,
+        random_state=random_state,
+    )
+    tree1 = DecisionTreeRegressor(
+        min_samples_leaf=msl,
+        random_state=random_state,
     )
 
     return compare_trees(
-        tree1=DecisionTreeRegressor,
-        tree2=treess,
+        tree1=tree1,
+        tree2=tree_ss,
         tree2_is_2d=False,
         supervision=supervision,
+        random_state=random_state,
         **params,
     )
 
 
-def test_supervised_component(**params):
-    params = DEF_PARAMS | params
-
-    treess = DecisionTreeRegressorSS(
-        supervision=1.0,
-        min_samples_leaf=params['min_samples_leaf'],
-        random_state=params['random_state'],
-    )
-
-    return compare_trees(
-        tree1=DecisionTreeRegressor,
-        tree2=treess,
-        tree2_is_2d=False,
-        supervision=1.0,
-        **params,
-    )
-
-
-@pytest.mark.parametrize('random_state', range(10))
-def test_unsupervised_component(random_state, max_depth, **params):
-    params = DEF_PARAMS | params
-    params['random_state'] = random_state
-    params['max_depth'] = max_depth
-
-    treess = DecisionTreeRegressorSS(
-        supervision=0,
-        min_samples_leaf=params['min_samples_leaf'],
-        random_state=params['random_state'],
-    )
-    return compare_trees(
-        tree1=DecisionTreeRegressor,
-        tree2=treess,
-        tree2_is_2d=False,
-        supervision=0.0,
-        **params,
-    )
-
-
-# FIXME: Fails for some seeds if make_interraction_data is used instead of
+# FIXME: supervision=1 fails for some seeds if make_interraction_data is used instead of
 #        make_interaction_regression in test_nd_classes.py::compare_trees().
 #        On the other hand, intermediate supervision values (not 0 or 1) fail
 #        more often.
-@pytest.mark.parametrize('random_state', range(10))
-def test_supervised_component_2d(random_state, max_depth, **params):
+def test_semisupervision_1d2d(
+    supervision,
+    random_state,
+    msl,
+    gen_tree_max_depth,
+    **params,
+):
     params = DEF_PARAMS | params
-    params['random_state'] = random_state
-    params['max_depth'] = max_depth
-
-    treess = DecisionTreeRegressor2DSS(
-        supervision=1.,
-        min_samples_leaf=params['min_samples_leaf'],
-        random_state=params['random_state'],
-    )
-    return compare_trees(
-        tree1=DecisionTreeRegressor,
-        tree2=treess,
-        tree2_is_2d=True,
-        supervision=1.0,
-        **params,
-    )
-
-
-def test_unsupervised_component_2d(**params):
-    params = DEF_PARAMS | params
-
-    treess = DecisionTreeRegressor2DSS(
-        supervision=0.,
-        min_samples_leaf=params['min_samples_leaf'],
-        random_state=params['random_state'],
-    )
-    return compare_trees(
-        tree1=DecisionTreeRegressor,
-        tree2=treess,
-        tree2_is_2d=True,
-        supervision=0.0,
-        **params,
-    )
-
-
-def test_semisupervision_1d2d(supervision, max_depth, **params):
-    params = DEF_PARAMS | params
-    print('Supervision level:', supervision)
     params['noise'] = 0.0
-    params['max_depth'] = max_depth
+    print('* Supervision level:', supervision)
 
     tree1 = DecisionTreeRegressorSS(
         supervision=supervision,
-        min_samples_leaf=params['min_samples_leaf'],
-        random_state=params['random_state'],
+        min_samples_leaf=msl,
+        random_state=random_state,
     )
     tree2 = DecisionTreeRegressor2DSS(
         supervision=supervision,
-        min_samples_leaf=params['min_samples_leaf'],
-        random_state=params['random_state'],
+        min_samples_leaf=msl,
+        random_state=random_state,
     )
 
     return compare_trees(
         tree1=tree1,
         tree2=tree2,
         tree2_is_2d=True,
-        supervision=1.0,  # tree1 will multiply the supervision
+        supervision=1.0,  # tree1 will already apply the supervision
+        random_state=random_state,
         **params,
     )
 
@@ -224,6 +169,7 @@ def test_dynamic_supervision_1d2d(supervision, max_depth, **params):
         tree2=tree2,
         tree2_is_2d=True,
         supervision=1.0,
+        random_state=random_state,
         **params,
     )
 
@@ -306,6 +252,7 @@ def test_single_feature_semisupervision_1d2d(supervision=None, **params):
         tree1=tree1,
         tree2=tree2,
         tree2_is_2d=True,
+        random_state=random_state,
         **params,
     )
 
@@ -332,11 +279,6 @@ def test_single_feature_semisupervision_1d2d_classes(**params):
 
 def main(**params):
     params = DEF_PARAMS | params
-    test_supervised_component(**params)
-    test_unsupervised_component(**params)
-    test_supervised_component_2d(**params)
-    test_unsupervised_component_2d(**params)
-
     # FIXME: random_state=82; random_state=3 nrules=3
     # FIXME: --random_state 2133 --supervision .03
     # FIXME: --random_state 82 --supervision .5

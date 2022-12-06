@@ -6,14 +6,16 @@ from pathlib import Path
 from typing import Callable
 import warnings
 import pytest
+from numbers import Real, Integral, Number
 
 import numpy as np
 from pytest import raises
 
 from sklearn.tree._criterion import MSE
-from sklearn.tree._splitter import BestSplitter
+from sklearn.tree._splitter import BestSplitter, RandomSplitter
 from sklearn.utils.validation import check_random_state
 from sklearn.utils._testing import assert_allclose
+from sklearn.utils._param_validation import Interval, validate_params
 
 from hypertrees.tree._splitter_factory import (
     make_2d_splitter,
@@ -24,13 +26,13 @@ from hypertrees.tree._nd_criterion import (
     PBCTCriterionWrapper,
 )
 from hypertrees.tree._axis_criterion import AxisMSE
-
 from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
     # SingleFeatureSSCompositeCriterion,
 )
 from hypertrees.tree._semisupervised_splitter import BestSplitterSFSS
 from hypertrees.tree._experimental_criterion import UD3, UD35
+from make_examples import make_interaction_regression
 
 from splitter_test import test_splitter, test_splitter_nd
 from test_utils import (
@@ -56,14 +58,130 @@ DEF_PARAMS = dict(
     plot=False,
     start=0,
     end=0,
-    verbose=True,
+    verbose=False,
 )
 
 
 @pytest.fixture(
-    params=[0.0, 0.00001, 0.1, 0.2328, 0.569, 0.782, 0.995, 1.0])
+    params=[0.0, 0.00001, 0.1, 0.2328, 0.569, 0.782, 0.995, 1.0]
+)
 def supervision(request):
     return request.param
+
+
+@pytest.fixture(
+    params=range(10)
+)
+def random_state(request):
+    return request.param
+
+
+def assert_equal_dicts(
+    d1: dict, d2: dict, ignore=None, tol=1e-7, warn=False,
+):
+    ignore = ignore or set()
+    keys = {*d1.keys(), *d2.keys()} - set(ignore)
+    assertions = []
+    value_pairs = []
+    names = []
+
+    for key in keys:
+        if key not in d1:
+            if warn:
+                warnings.warn(f"Key {key!r} not in first dict.")
+            continue
+        if key not in d2:
+            if warn:
+                warnings.warn(f"Key {key!r} not in second dict.")
+            continue
+
+        v1, v2 = d1[key], d2[key]
+
+        if not isinstance(v1, Number) or not isinstance(v2, Number):
+            warnings.warn(
+                f"{key!r} not a numeric attribute (values: {v1} {v2})."
+            )
+            continue
+
+        names.append(key)
+        value_pairs.append((v1, v2))
+        assertions.append(abs(v1-v2) < tol)
+        
+    differing = [n for n, a in zip(names, assertions) if not a]
+
+    if differing:
+        text = differing.pop()
+    if differing:
+        text += ' and ' + differing.pop()
+    if differing:
+        text = ', '.join(differing) + ', ' + text
+
+    assert all(assertions), (
+        text
+        + ' values differ.\n'
+        + '\n'.join(
+            f"{n}: {v[0]} {'==' if a else '!='} {v[1]}"
+            for n, v, a in zip(names, value_pairs, assertions)
+        )
+    )
+        
+
+@validate_params({
+    'X': ['array-like'],
+    'y': ['array-like'],
+    'start': [Interval(Integral, 0, None, closed='left')],
+    'end': [Interval(Integral, 0, None, closed='left')],
+    'feature': [Interval(Integral, 0, None, closed='left')],
+    'supervision': [Interval(Real, 0.0, 1.0, closed='both')],
+    'average_both_axes': ['boolean'],
+})
+def manual_split_eval_mse(
+    X,
+    y,
+    start,
+    end,
+    pos,
+    feature,
+    supervision=1.0,
+    average_both_axes=False,
+):
+    result = {}
+
+    x_ = X[start:end]
+    y_ = y[start:end]
+    pos = pos - start
+
+    result['impurity_parent'] = y_.var(0).mean()
+
+    sorted_indices = x_[:, feature].argsort()
+    y_sort = y_[sorted_indices]
+    x_sort = x_[sorted_indices]
+    result['impurity_left'] = y_sort[:pos].var(0).mean()
+    result['impurity_right'] = y_sort[pos:].var(0).mean()
+
+    if average_both_axes:
+        result['impurity_parent'] += y_.var(1).mean()
+        result['impurity_parent'] /= 2
+        result['impurity_left'] += y_sort[:pos].var(1).mean()
+        result['impurity_left'] /= 2
+        result['impurity_right'] += y_sort[pos:].var(1).mean()
+        result['impurity_right'] /= 2
+
+    if supervision < 1.0:
+        result['impurity_parent'] *= supervision
+        result['impurity_parent'] += (1-supervision) * x_.var(0).mean()
+        result['impurity_left'] *= supervision
+        result['impurity_left'] += (1-supervision) * x_sort[:pos].var(0).mean()
+        result['impurity_right'] *= supervision
+        result['impurity_right'] += (1-supervision) * \
+            x_sort[pos:].var(0).mean()
+
+    result['improvement'] = result['impurity_parent'] - (
+        pos * result['impurity_left']
+        + (y_.shape[0] - pos) * result['impurity_right']
+    ) / y_.shape[0]
+
+    return result
 
 
 def compare_splitters_1d2d_ideal(
@@ -290,7 +408,6 @@ def compare_splitters_1d2d(
 
 
 def test_1d2d_ideal(**params):
-    print('*** test_1d2d_ideal')
     params = DEF_PARAMS | params
     return compare_splitters_1d2d_ideal(
         splitter1=BestSplitter,
@@ -299,14 +416,131 @@ def test_1d2d_ideal(**params):
     )
 
 
-def test_1d2d(**params):
-    print('*** test_1d2d')
+def test_1d2d(random_state, **params):
     params = DEF_PARAMS | params
-    return compare_splitters_1d2d(
-        splitter1=BestSplitter,
-        splitter2=BestSplitter,
-        **params,
+
+    X, Y, x, y, tree = make_interaction_regression(
+        return_molten=True,
+        return_tree=True,
+        n_features=params['nattrs'],
+        n_samples=params['shape'],
+        random_state=check_random_state(random_state),
     )
+    y = y.reshape((-1, 1))
+    x = x.astype(np.float32)
+    start = 0
+    end = y.shape[0]
+
+    splitter1 = BestSplitter(
+        criterion=MSE(n_outputs=y.shape[1], n_samples=x.shape[0]),
+        max_features=x.shape[1],
+        min_samples_leaf=1,
+        min_weight_leaf=0.0,
+        random_state=check_random_state(random_state),
+    )
+    splitter2 = make_2d_splitter(
+        splitters=BestSplitter,
+        criteria=MSE,
+        max_features=params['nattrs'],
+        n_samples=Y.shape,
+        n_outputs=1,
+        random_state=check_random_state(random_state),
+    )
+    result1 = test_splitter(
+        splitter1,
+        x,
+        y,
+        start=start,
+        end=end,
+        verbose=params['verbose'],
+    )
+    result2 = test_splitter_nd(
+        splitter2,
+        X,
+        Y,
+        start=[0, 0],
+        end=Y.shape,
+        verbose=params['verbose'],
+    )
+
+    manual_result = manual_split_eval_mse(
+        x, y, start, end, result1['pos'], result1['feature'],
+    )
+
+    assert_equal_dicts(result1, manual_result)
+    assert_equal_dicts(result1, result2, ignore=['pos'])
+
+
+@pytest.mark.skip(reason="FIXME")
+@pytest.mark.parametrize(
+    'splitter', [BestSplitter, RandomSplitter],
+)
+def test_semisupervised_1d2d(random_state, splitter, supervision, **params):
+    params = DEF_PARAMS | params
+
+    X, Y, x, y, tree = make_interaction_regression(
+        return_molten=True,
+        return_tree=True,
+        n_features=params['nattrs'],
+        n_samples=params['shape'],
+        random_state=check_random_state(random_state),
+    )
+    y = y.reshape((-1, 1))
+    x = x.astype(np.float32)
+    start = 0
+    end = y.shape[0]
+
+    splitter1 = BestSplitter(
+        criterion=MSE(n_outputs=y.shape[1], n_samples=x.shape[0]),
+        max_features=x.shape[1],
+        min_samples_leaf=1,
+        min_weight_leaf=0.0,
+        random_state=check_random_state(random_state),
+    )
+    splitter2 = make_2d_splitter(
+        splitters=BestSplitter,
+        criteria=MSE,
+        max_features=params['nattrs'],
+        n_samples=Y.shape,
+        n_outputs=1,
+        random_state=check_random_state(random_state),
+    )
+
+    wu = np.sqrt((1-supervision) * (x.shape[1] + y.shape[1]) / x.shape[1])
+    ws = np.sqrt(supervision * (x.shape[1] + y.shape[1]) / y.shape[1])
+    # wu = np.sqrt((1-supervision))
+    # ws = np.sqrt(supervision)
+    # wu = ws = 2
+
+    result1 = test_splitter(
+        splitter1,
+        x,
+        np.hstack((wu * x, ws * y)),
+        start=start,
+        end=end,
+        verbose=params['verbose'],
+    )
+    result2 = test_splitter_nd(
+        splitter2,
+        X,
+        Y,
+        start=[0, 0],
+        end=Y.shape,
+        verbose=params['verbose'],
+    )
+
+    manual_result = manual_split_eval_mse(
+        X=x,
+        y=y,
+        start=start,
+        end=end,
+        pos=result1['pos'],
+        feature=result1['feature'],
+        supervision=supervision,
+    )
+
+    assert_equal_dicts(result1, manual_result)
+    assert_equal_dicts(result1, result2, ignore=['pos'])
 
 
 def test_ss_1d2d_sup(**params):
@@ -333,7 +567,6 @@ def test_ss_1d2d_sup(**params):
 
 
 def test_ss_1d2d_unsup(**params):
-    print('*** test_ss_1d2d_unsup')
     params = DEF_PARAMS | params
     ss2d_splitter = make_2dss_splitter(
         splitters=BestSplitter,
@@ -358,7 +591,6 @@ def test_ss_1d2d_unsup(**params):
 def test_ss_1d2d(supervision, **params):
     """Compare 1D to 2D version of semisupervised MSE splitter.
     """
-    print('*** test_ss_1d2d')
     params = DEF_PARAMS | params
 
     splitter1 = BestSplitter(
@@ -787,39 +1019,6 @@ def test_sfssmse_1d2d(**params):
     )
 
 
-def test_ss_axis_decision_only(supervision, **params):
-    """Test axis decision-semisupervision
-
-    Assert that axis decision semisupervision chooses the split based only on
-    supervised data, integrating unsupervised score after it is found.
-    """
-    print('*** test_ss_alves_1d')
-    params = DEF_PARAMS | params
-
-    splitter2d = make_2dss_splitter(
-        splitters=BestSplitter,
-        supervised_criteria=MSE,
-        unsupervised_criteria=MSE,
-        supervision=supervision,
-        max_features=params['nattrs'],
-        n_features=params['nattrs'],
-        n_samples=params['shape'],
-        n_outputs=1,
-        random_state=check_random_state(params['seed']),
-        min_samples_leaf=params['min_samples_leaf'],
-        min_weight_leaf=0.0,
-        axis_decision_only=True,
-    )
-
-    # The equal thresholds will still be asserted.
-    with raises(AssertionError, match=r'improvement'):
-        compare_splitters_1d2d(
-            splitter1=BestSplitter,
-            splitter2=splitter2d,
-            **params,
-        )
-
-
 def test_pbct_splitter(**params):
     params = DEF_PARAMS | params
     splitter2d = make_2d_splitter(
@@ -839,3 +1038,79 @@ def test_pbct_splitter(**params):
         multioutput_1d=True,
         **params,
     )
+
+
+# FIXME: unsupervised obviously will not match.
+def test_ss_axis_decision_only(supervision, random_state, **params):
+    """Test axis decision-semisupervision
+
+    Assert that axis decision semisupervision chooses the split based only on
+    supervised data, integrating unsupervised score after it is found.
+    """
+    params = DEF_PARAMS | params
+
+    X, Y, x, y, gen_tree = make_interaction_regression(
+        return_molten=True,
+        return_tree=True,
+        n_features=params['nattrs'],
+        n_samples=params['shape'],
+        random_state=check_random_state(random_state),
+        max_depth=1,
+        max_target=100,
+    )
+    y = y.reshape((-1, 1))
+    x = x.astype(np.float32)
+    start = 0
+    end = y.shape[0]
+
+    splitter1 = BestSplitter(
+        criterion=MSE(n_outputs=y.shape[1], n_samples=x.shape[0]),
+        max_features=x.shape[1],
+        min_samples_leaf=1,
+        min_weight_leaf=0.0,
+        random_state=check_random_state(random_state),
+    )
+    splitter2 = make_2dss_splitter(
+        splitters=BestSplitter,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
+        supervision=supervision,
+        max_features=params['nattrs'],
+        n_features=params['nattrs'],
+        n_samples=params['shape'],
+        n_outputs=1,
+        random_state=check_random_state(params['seed']),
+        min_samples_leaf=params['min_samples_leaf'],
+        min_weight_leaf=0.0,
+        axis_decision_only=True,
+    )
+    result1 = test_splitter(
+        splitter1,
+        x,
+        y,
+        start=start,
+        end=end,
+        verbose=params['verbose'],
+    )
+    result2 = test_splitter_nd(
+        splitter2,
+        X,
+        Y,
+        start=[0, 0],
+        end=Y.shape,
+        verbose=params['verbose'],
+    )
+
+    manual_result = manual_split_eval_mse(
+        x, y, start, end, result1['pos'], result1['feature'],
+    )
+
+    assert_equal_dicts(result1, manual_result)
+    
+    # Compare only feature and threshold
+    assert_equal_dicts(
+        result1,
+        result2,
+        ignore=['pos', 'impurity_left', 'impurity_right', 'improvement'],
+    )
+

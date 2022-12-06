@@ -1761,6 +1761,8 @@ class BaseDecisionTree2DSS(
         unsupervised_criterion_rows="squared_error",
         unsupervised_criterion_cols="squared_error",
         update_supervision=None,
+        pairwise_X=False,
+        axis_decision_only=False,
     ):
         self.supervision = supervision
         self.ss_adapter = ss_adapter

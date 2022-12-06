@@ -147,7 +147,7 @@ def make_interaction_regression(
     n_features=50,
     n_targets=None,
     min_target=0.0,
-    max_target=1.0,
+    max_target=100.0,
     noise=0.0,
     return_molten=False,
     return_tree=False,
@@ -181,7 +181,10 @@ def make_interaction_regression(
     )
 
     # Make new data
-    X = [random_state.random((s, f)) for s, f in zip(n_samples, n_features)]
+    X = [
+        random_state.random((s, f)).astype(np.float32)
+        for s, f in zip(n_samples, n_features)
+    ]
     X_molten = row_cartesian_product(X)
     Y_molten = tree.predict(X_molten)
     if noise > 0.0:

@@ -9,7 +9,7 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.base import clone
 import sklearn.tree
 from sklearn.utils._testing import assert_allclose
-from sklearn.utils.validation import check_symmetric
+from sklearn.utils.validation import check_symmetric, check_random_state
 
 from hypertrees.tree._nd_classes import (
     BipartiteDecisionTreeRegressor,
@@ -28,12 +28,16 @@ logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 
 # Default test params
 DEF_PARAMS = dict(
-    n_samples=(50, 60),
+    n_samples=(51, 60),
     n_features=(10, 9),
-    # noise=0.1,
-    noise=0.0,
-    random_state=None,
+    noise=0.1,
+    # noise=0.0,  # makes it unable to reach 1 sample per leaf
 )
+
+
+@pytest.fixture(params=range(10))
+def random_state(request):
+    return request.param
 
 
 def get_leaves(tree, verbose=True, return_values=False):
@@ -58,11 +62,12 @@ def get_leaves(tree, verbose=True, return_values=False):
 
 # TODO: parameter description.
 def compare_trees(
-    tree1=DecisionTreeRegressor,
-    tree2=BipartiteDecisionTreeRegressor,
+    tree1,
+    tree2,
+    random_state,
     tree2_is_2d=True,
     supervision=1.0,
-    min_samples_leaf=1,
+    max_gen_depth=None,
     **params,
 ):
     """Test hypertreesDecisionTreeRegressor2D
@@ -90,9 +95,10 @@ def compare_trees(
             n_samples=params['n_samples'],
             n_features=params['n_features'],
             noise=params['noise'],
-            random_state=params['random_state'],
-            max_depth=params.get('max_depth'),
+            random_state=random_state,
+            max_depth=max_gen_depth,
             n_targets=params.get('n_targets'),
+            max_target=1000,
         )
         # XX, Y = make_interaction_data(
         #     shape=params['n_samples'],
@@ -100,18 +106,6 @@ def compare_trees(
         # )
         x, y = row_cartesian_product(XX), Y.reshape(-1)
 
-    # ######### Instantiate trees
-    if isinstance(tree2, Callable):
-        tree2 = tree2(
-            min_samples_leaf=min_samples_leaf,
-            random_state=params['random_state'],
-        )
-
-    if isinstance(tree1, Callable):
-        tree1 = tree1(
-            min_samples_leaf=min_samples_leaf,
-            random_state=params['random_state'],
-        )
     # NOTE on ExtraTrees:
     # Even with the same random_state, the way 2d splitter uses this random
     # state will be different (same random state for each axis), thus yielding
@@ -130,7 +124,8 @@ def compare_trees(
             Xy = np.hstack((x.copy(), y.copy().reshape(-1, 1)))
             # Xy.shape[1] == n_features + n_outputs = n_features + 1
             Xy[:, -1] *= np.sqrt(supervision * Xy.shape[1])
-            Xy[:, :-1] *= np.sqrt((1-supervision) * Xy.shape[1] / (Xy.shape[1]-1))
+            Xy[:, :-1] *= np.sqrt((1-supervision) *
+                                  Xy.shape[1] / (Xy.shape[1]-1))
             tree1.fit(x, Xy)
 
     with stopwatch(f'Fitting {tree2.__class__.__name__}...'):
@@ -171,17 +166,23 @@ def compare_trees(
 
 
 @pytest.mark.parametrize('msl', [1, 20, 100])
-def test_simple_tree_1d2d(
-    msl,
-    tree1=DecisionTreeRegressor,
-    tree2=BipartiteDecisionTreeRegressor,
-    **params,
-):
+def test_simple_tree_1d2d(msl, random_state, **params):
     params = DEF_PARAMS | params
-    return compare_trees(
-        tree1=DecisionTreeRegressor,
-        tree2=BipartiteDecisionTreeRegressor,
+
+    tree2 = BipartiteDecisionTreeRegressor(
         min_samples_leaf=msl,
+        random_state=check_random_state(random_state),
+    )
+
+    tree1 = DecisionTreeRegressor(
+        min_samples_leaf=msl,
+        random_state=check_random_state(random_state),
+    )
+
+    return compare_trees(
+        tree1=tree1,
+        tree2=tree2,
+        random_state=random_state,
         **params,
     )
 
@@ -315,10 +316,10 @@ def test_weight_normalization():
 
 
 @pytest.mark.parametrize("mrl,mcl", [(1, 5), (2, 1), (11, 19)])
-def test_leaf_shape(mrl, mcl, **params):
+def test_leaf_shape(mrl, mcl, random_state, **params):
     params = DEF_PARAMS | params
     # XX, Y, x, y = gen_mock_data(melt=True, **params)
-    rng = np.random.default_rng(params['random_state'])
+    rng = check_random_state(random_state)
     n_clusters = 10, 10
     Y_unique = np.arange(np.prod(n_clusters), dtype=float).reshape(n_clusters)
     Y = Y_unique.repeat(mrl, axis=0).repeat(mcl, axis=1)
@@ -353,10 +354,10 @@ def test_leaf_shape(mrl, mcl, **params):
 
 
 @pytest.mark.parametrize("mrl,mcl", [(1, 1), (1, 5), (2, 1), (19, 11)])
-def test_leaf_shape_gso(mrl, mcl, **params):
+def test_leaf_shape_gso(mrl, mcl, random_state, **params):
     params = DEF_PARAMS | params
     # XX, Y, x, y = gen_mock_data(melt=True, **params)
-    rng = np.random.default_rng(params['random_state'])
+    rng = check_random_state(random_state)
     n_clusters = 10, 10
     Y_unique = np.arange(np.prod(n_clusters), dtype=float).reshape(n_clusters)
     Y = Y_unique.repeat(mrl, axis=0).repeat(mcl, axis=1)

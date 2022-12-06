@@ -494,11 +494,15 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                 n_raw_outputs,
             )
 
+        # FIXME: organize. substitute n_raw_outputs?
+        if self.bipartite_adapter == "global_single_output":
+            ax_n_outputs = 1
+        else:
+            ax_n_outputs = (n_cols, n_rows)
+
         splitter = self._make_splitter(
             n_samples=(n_rows, n_cols),
-            # FIXME
-            n_outputs=1 if self.bipartite_adapter == "global_single_output" else (n_cols, n_rows),
-            # n_outputs=n_raw_outputs,
+            n_outputs=ax_n_outputs,
             sparse=issparse(X),
             min_samples_leaf=min_samples_leaf,
             min_weight_leaf=min_weight_leaf,
