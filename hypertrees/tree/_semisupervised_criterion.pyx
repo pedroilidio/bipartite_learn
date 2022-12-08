@@ -66,7 +66,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     def __getstate__(self):
         return {}
 
-    def __cinit__(
+    def __init__(
         self,
         Criterion supervised_criterion,
         Criterion unsupervised_criterion,
@@ -125,10 +125,11 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
 
         if self._supervision_is_dynamic:
             with gil:
-                self.supervision = self.update_supervision(
+                self._curr_supervision = self.update_supervision(
                     weighted_n_samples=self.weighted_n_samples,
                     weighted_n_node_samples=self.weighted_n_node_samples,
-                    criterion=self,
+                    current_supervision=self._curr_supervision,
+                    original_supervision=self.supervision,
                 )
 
         return 0
@@ -171,7 +172,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         This is the primary function of the criterion class. The smaller the
         impurity the better.
         """
-        cdef double sup = self.supervision
+        cdef double sup = self._curr_supervision
 
         return (
             sup * self.supervised_criterion.node_impurity() + \
@@ -195,7 +196,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         """
         cdef double s_impurity_left, s_impurity_right
         cdef double u_impurity_left, u_impurity_right
-        cdef double sup = self.supervision
+        cdef double sup = self._curr_supervision
 
         self.supervised_criterion.children_impurity(
             &s_impurity_left, &s_impurity_right,
@@ -229,7 +230,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         The absolute impurity improvement is only computed by the
         impurity_improvement method once the best split has been found.
         """
-        cdef double sup = self.supervision
+        cdef double sup = self._curr_supervision
 
         return (
             sup * self.supervised_criterion.proxy_impurity_improvement()
@@ -241,7 +242,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     cdef double impurity_improvement(self, double impurity_parent,
                                      double impurity_left,
                                      double impurity_right) nogil:
-        cdef double sup = self.supervision
+        cdef double sup = self._curr_supervision
         cdef double s_imp = self.supervised_criterion.impurity_improvement(
             impurity_parent, impurity_left, impurity_right)
         cdef double u_imp = self.unsupervised_criterion.impurity_improvement(
@@ -326,35 +327,30 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
 
 
 cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
-    def __cinit__(
-        self,
-        Criterion unsupervised_criterion_rows,
-        Criterion unsupervised_criterion_cols,
-        CriterionWrapper2D supervised_bipartite_criterion,
-        double supervision_rows,
-        object supervision_cols="same",
-        object update_supervision=None,
-    ):
-        self.supervision_rows = supervision_rows
-        self.supervision_cols = supervision_cols
-
-        self._curr_supervision_rows = supervision_rows
-        if supervision_cols == "same":
-            self._curr_supervision_cols = supervision_rows
-        else:
-            self._curr_supervision_cols = supervision_cols
-
-        
     # TODO: improve validation
     def __init__(
         self,
+        *,
         Criterion unsupervised_criterion_rows,
         Criterion unsupervised_criterion_cols,
         CriterionWrapper2D supervised_bipartite_criterion,
         double supervision_rows,
         object supervision_cols="same",  # double or "same"
         object update_supervision=None,  # callable
+        SemisupervisedCriterion ss_criterion_rows=None,
+        SemisupervisedCriterion ss_criterion_cols=None,
     ):
+        self.supervision_rows = supervision_rows
+        self.supervision_cols = supervision_cols
+
+        self._curr_supervision_rows = supervision_rows
+
+        if supervision_cols == "same":
+            self._curr_supervision_cols = supervision_rows
+        else:
+            self._curr_supervision_cols = supervision_cols
+
+        self.update_supervision = update_supervision
         self._supervision_is_dynamic = update_supervision is not None
 
         self.unsupervised_criterion_rows = unsupervised_criterion_rows
@@ -368,7 +364,8 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             supervised_bipartite_criterion.criterion_cols
         )
 
-        self.update_supervision = update_supervision
+        self.ss_criterion_rows = ss_criterion_rows
+        self.ss_criterion_cols = ss_criterion_cols
 
     cdef int init(
             self,
@@ -438,22 +435,6 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         self.n_row_features = self.unsupervised_criterion_rows.n_outputs
         self.n_col_features = self.unsupervised_criterion_cols.n_outputs
 
-        # Update supervision amount
-        if self._supervision_is_dynamic:
-            with gil:
-                self._curr_supervision_rows = self.update_supervision(
-                    weighted_n_samples=self.weighted_n_rows,
-                    weighted_n_node_samples=self.weighted_n_node_rows,
-                    current_supervision=self._curr_supervision_rows,
-                    original_supervision=self.supervision_rows,
-                )
-                self._curr_supervision_cols = self.update_supervision(
-                    weighted_n_samples=self.weighted_n_cols,
-                    weighted_n_node_samples=self.weighted_n_node_cols,
-                    current_supervision=self._curr_supervision_cols,
-                    original_supervision=self.supervision_cols,
-                )
-
         self.weighted_n_node_rows = (
             self.supervised_bipartite_criterion.weighted_n_node_rows
         )
@@ -461,10 +442,44 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             self.supervised_bipartite_criterion.weighted_n_node_cols
         )
 
-        # Will be used by the Splitter2D to set the Tree object
+        # Will be stored in the Tree object by the Splitter2D 
         self.weighted_n_node_samples = (
             self.supervised_bipartite_criterion.weighted_n_node_samples
         )
+
+        # Update supervision amount
+        if self._supervision_is_dynamic:
+            with gil:
+                # self._curr_supervision_rows = self.update_supervision(
+                #     weighted_n_samples=self.weighted_n_rows,
+                #     weighted_n_node_samples=self.weighted_n_node_rows,
+                #     current_supervision=self._curr_supervision_rows,
+                #     original_supervision=self.supervision_rows,
+                # )
+                # self._curr_supervision_cols = self.update_supervision(
+                #     weighted_n_samples=self.weighted_n_cols,
+                #     weighted_n_node_samples=self.weighted_n_node_cols,
+                #     current_supervision=self._curr_supervision_cols,
+                #     original_supervision=self.supervision_cols,  # if != "same"
+                # )
+
+                # XXX
+                self._curr_supervision_rows = self.update_supervision(
+                    weighted_n_samples=self.weighted_n_samples,
+                    weighted_n_node_samples=self.weighted_n_node_samples,
+                    current_supervision=self._curr_supervision_rows,
+                    original_supervision=self.supervision_rows,
+                )
+                self._curr_supervision_cols = self._curr_supervision_rows
+
+                # FIXME: if criteria is composite (axis_decision_only=False),
+                # they will not update supervision to use in proxy imp imp!
+                if self.ss_criterion_rows is not None:
+                    self.ss_criterion_rows._curr_supervision \
+                        = self._curr_supervision_rows
+                if self.ss_criterion_cols is not None:
+                    self.ss_criterion_cols._curr_supervision \
+                        = self._curr_supervision_cols
 
     cdef void node_value(self, double* dest) nogil:
         self.supervised_bipartite_criterion.node_value(dest)
@@ -548,8 +563,8 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             with gil:
                 raise InvalidAxisError
 
-        wu = n_feat * (1-sup)
-        other_wu = other_n_feat * (1-other_sup)
+        wu = n_feat * (1.0 - sup)
+        other_wu = other_n_feat * (1.0 - other_sup)
         n_total_feat = n_feat + other_n_feat
 
         u_imp_left = (
@@ -559,13 +574,13 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             (wu * u_imp_right + other_wu * other_u_imp) / n_total_feat
         )
 
-        ws = (sup + other_sup) / 2
+        ws = 0.5 * (sup + other_sup)
         self.supervised_bipartite_criterion.children_impurity(
             impurity_left, impurity_right, axis,
         )
-
         impurity_left[0] =  u_imp_left + ws * impurity_left[0]
         impurity_right[0] =  u_imp_right + ws * impurity_right[0]
+
 
     cdef double impurity_improvement(
         self,

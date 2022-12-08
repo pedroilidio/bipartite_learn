@@ -57,6 +57,13 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
     cdef Criterion unsupervised_criterion_cols
     cdef CriterionWrapper2D supervised_bipartite_criterion
 
+    # TODO: we need to get access to the wrappers owned by the splitters to
+    # dynamically change the supervision, since supervision is utilized in
+    # proxy_impurity_improvement(). Ideally, we would like to drop this
+    # dependency.
+    cdef SemisupervisedCriterion ss_criterion_rows
+    cdef SemisupervisedCriterion ss_criterion_cols
+
     # References to supervised_bipartite_criterion's components
     cdef Criterion supervised_criterion_rows
     cdef Criterion supervised_criterion_cols

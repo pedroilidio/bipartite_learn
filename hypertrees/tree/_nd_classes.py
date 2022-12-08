@@ -501,9 +501,9 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             ax_n_outputs = (n_cols, n_rows)
 
         splitter = self._make_splitter(
+            X=X,
             n_samples=(n_rows, n_cols),
             n_outputs=ax_n_outputs,
-            sparse=issparse(X),
             min_samples_leaf=min_samples_leaf,
             min_weight_leaf=min_weight_leaf,
             ax_max_features=(max_row_features, max_col_features),
@@ -560,18 +560,19 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 
         return self
 
+    # TODO: implement signature consistent to monopartite semisupervised tree
     def _make_splitter(
         self,
         *,
+        X,
         n_samples,
         n_outputs,
-        sparse=False,
-        min_samples_leaf=1,
-        min_weight_leaf=0.,
-        ax_max_features=None,
-        ax_min_samples_leaf=1,
-        ax_min_weight_leaf=0.,
-        random_state=None,
+        min_samples_leaf,
+        min_weight_leaf,
+        ax_max_features,
+        ax_min_samples_leaf,
+        ax_min_weight_leaf,
+        random_state,
     ):
         if isinstance(self.splitter, Splitter2D):
             # Make a deepcopy in case the splitter has mutable attributes that
@@ -598,15 +599,17 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         else:
             criterion = copy.deepcopy(criterion)
 
-        SPLITTERS = SPARSE_SPLITTERS if sparse else DENSE_SPLITTERS
-
         splitter = self.splitter
+
         # User is able to specify a splitter for each axis
         if not isinstance(splitter, (tuple, list)):
             splitter = [splitter, splitter]
         for ax in range(2):
             if isinstance(splitter[ax], str):
-                splitter[ax] = SPLITTERS[splitter[ax]]
+                if issparse(X[ax]):
+                    splitter[ax] = SPARSE_SPLITTERS[splitter[ax]]
+                else:
+                    splitter[ax] = DENSE_SPLITTERS[splitter[ax]]
             else:  # is a Splitter instance
                 splitter[ax] = copy.deepcopy(splitter[ax])
 

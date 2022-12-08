@@ -227,12 +227,10 @@ cdef class Splitter2D:
             (<Splitter>splitters[ax]).node_split(
                 impurity, &current_split, &n_constant_features[ax],
             )
-            with gil: print("*** curr split, ax", current_split, ax)
 
             # When no valid split has been found, the child splitter sets
             # the split position at the end of the current node.
             if current_split.pos == self.end[ax]:
-                with gil: print("*** not found on ax", ax)
                 continue
 
             self.criterion_wrapper.children_impurity(
@@ -242,7 +240,6 @@ cdef class Splitter2D:
                 impurity, imp_left, imp_right, axis=ax,
             )
 
-            with gil: print("*** imp l r improv", impurity, imp_left, imp_right, imp_improve)
             if imp_improve > best_split.improvement:
                 best_split = current_split
                 best_split.improvement = imp_improve

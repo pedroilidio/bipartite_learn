@@ -16,6 +16,7 @@ from ._semisupervised_criterion import (
     SSCompositeCriterion,
     BipartiteSemisupervisedCriterion,
 )
+from ._pairwise_criterion import PairwiseCriterion
 
 
 def _duplicate_single_parameters(*params, ndim=2):
@@ -41,7 +42,7 @@ def check_criterion(
     kind: str | None = None,
     classification: bool = False,
     pairwise: bool = False,
-    axis: bool = False,
+    axis: bool = False,  # Useful with str criterion only
 ) -> Criterion:
 
     if not isinstance(criterion, str) and kind is not None:
@@ -60,10 +61,15 @@ def check_criterion(
             raise ValueError(
                 f"Type {criterion=} provided is not a subclass of Criterion."
             )
-        return criterion(
+        final_criterion = criterion(
             n_outputs=n_outputs,
             n_samples=n_samples,
         )
+        if pairwise:
+            final_criterion = PairwiseCriterion(final_criterion)
+
+        return final_criterion
+
     elif isinstance(criterion, str):
         raise NotImplementedError
     
@@ -191,7 +197,7 @@ def make_2dss_splitter(
     unsupervised_criteria=None,
     ss_criteria=None,
     supervision=0.5,
-    update_supervision=None,
+    update_supervision=None,  # TODO: for each axis
     n_features=None,
     n_samples=None,
     max_features=None,
@@ -224,6 +230,7 @@ def make_2dss_splitter(
         ss_criteria,
         supervised_criteria,
         unsupervised_criteria,
+        pairwise,
     ) = _duplicate_single_parameters(
         n_samples,
         n_features,
@@ -236,6 +243,7 @@ def make_2dss_splitter(
         ss_criteria,
         supervised_criteria,
         unsupervised_criteria,
+        pairwise,
     )
 
     random_state = check_random_state(random_state)
@@ -270,11 +278,12 @@ def make_2dss_splitter(
                 unsupervised_criteria[ax],
                 n_outputs=n_features[ax],
                 n_samples=n_samples[ax],
+                pairwise=pairwise[ax],
             )
 
             if (ss_criteria[ax] is not None):
                 warnings.warn(
-                    f"Since {axis_decision_only=}, the provided "
+                    f"Since {axis_decision_only=} is not None, the provided "
                     f"{ss_criteria[ax]=} is being ignored."
                 )
             # The Splitter will not consider unsupevised data when searching
@@ -295,11 +304,13 @@ def make_2dss_splitter(
                 ss_criteria[ax] = make_semisupervised_criterion(
                     ss_class=ss_criteria[ax],
                     supervision=supervision[ax],
+                    update_supervision=update_supervision,
                     supervised_criterion=supervised_criteria[ax],
                     unsupervised_criterion=unsupervised_criteria[ax],
                     n_outputs=n_outputs[ax],
                     n_features=n_features[ax],
                     n_samples=n_samples[ax],
+                    pairwise=pairwise[ax],
                 )
             
                 supervised_criteria[ax] = ss_criteria[ax].supervised_criterion
@@ -323,6 +334,8 @@ def make_2dss_splitter(
         supervision_rows=supervision[0],
         supervision_cols=supervision[1],
         update_supervision=update_supervision,
+        ss_criterion_rows=ss_criteria[0],
+        ss_criterion_cols=ss_criteria[1],
     )
 
     return Splitter2D(
@@ -343,6 +356,7 @@ def make_2dss_splitter(
     n_samples=[Interval(Integral, 1, None, closed="left"), None],
     update_supervision=[callable, None],
     ss_class=[type(SemisupervisedCriterion), None],
+    pairwise=["boolean"],
 ))
 def make_semisupervised_criterion(
     supervision,
@@ -353,6 +367,7 @@ def make_semisupervised_criterion(
     n_samples=None,
     update_supervision=None,
     ss_class=SSCompositeCriterion,
+    pairwise=False,
 ):
     # Facilitate setting the default ss_class as simply None
     ss_class = SSCompositeCriterion if ss_class is None else ss_class
@@ -376,6 +391,7 @@ def make_semisupervised_criterion(
         criterion=unsupervised_criterion,
         n_outputs=n_features,
         n_samples=n_samples,
+        pairwise=pairwise,
     )
 
     return ss_class(

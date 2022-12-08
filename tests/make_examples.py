@@ -8,6 +8,7 @@ import numpy as np
 from sklearn.tree import ExtraTreeRegressor
 from sklearn.utils import check_random_state
 from sklearn.utils._param_validation import validate_params, Interval
+from sklearn.datasets import make_blobs
 from hypertrees.melter import row_cartesian_product
 
 DIR_HERE = Path(__file__).resolve().parent
@@ -181,6 +182,7 @@ def make_interaction_regression(
     )
 
     # Make new data
+    # TODO: option to keep one sample per leaf
     X = [
         random_state.random((s, f)).astype(np.float32)
         for s, f in zip(n_samples, n_features)
@@ -197,5 +199,57 @@ def make_interaction_regression(
         ret += [X_molten, Y_molten]
     if return_tree:
         ret.append(tree.tree_)
+
+    return tuple(ret)
+
+
+@validate_params(dict(
+    n_samples=[list, tuple, Interval(Integral, 1, None, closed="left")],
+    n_features=[list, tuple, Interval(Integral, 1, None, closed="left")],
+    return_molten=["boolean"],
+    random_state=["random_state"],
+    row_kwargs=[dict, None],
+    col_kwargs=[dict, None],
+))
+def make_interaction_blobs(
+    n_samples=100,
+    n_features=50,
+    return_molten=False,
+    random_state=None,
+    row_kwargs=None,
+    col_kwargs=None,
+):
+    if isinstance(n_samples, int):
+        n_samples = (n_samples, n_samples)
+    if isinstance(n_features, int):
+        n_features = (n_features, n_features)
+
+    random_state = check_random_state(random_state)
+
+    row_kwargs = row_kwargs or {}
+    col_kwargs = col_kwargs or {}
+
+    X_rows, y_rows = make_blobs(
+        n_samples=n_samples[0],
+        n_features=n_features[0],
+        random_state=random_state,
+        **row_kwargs,
+    )
+    X_cols, y_cols = make_blobs(
+        n_samples=n_samples[1],
+        n_features=n_features[1],
+        random_state=random_state,
+        **col_kwargs,
+    )
+
+    # Final labels will be the enumeration of row-column cluster pairs.
+    n_col_clusters = y_cols.max() + 1
+    y = y_rows.reshape(-1, 1) * n_col_clusters + y_cols
+    X = [X_rows, X_cols]
+
+    ret = [X, y]
+
+    if return_molten:
+        ret += [row_cartesian_product(X), y.reshape(-1)]
 
     return tuple(ret)

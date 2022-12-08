@@ -1,11 +1,14 @@
-from make_examples import make_interaction_data
-from hypertrees.melter import row_cartesian_product
-
-from time import time
+import warnings
+from numbers import Number
 from argparse import ArgumentParser
 from contextlib import contextmanager
-import numpy as np
 from pprint import pformat
+from time import time
+
+import numpy as np
+from sklearn.utils._testing import assert_allclose
+from make_examples import make_interaction_data
+from hypertrees.melter import row_cartesian_product
 
 DTYPE_t, DOUBLE_t = np.float32, np.float64
 
@@ -95,3 +98,89 @@ def gen_mock_data(melt=False, return_intervals=False, **PARAMS):
 
 def melt_2d_data(XX, Y):
     return row_cartesian_product(XX), Y.reshape(-1, 1)
+
+
+def comparison_text(a, b, tol=1e-7):
+    a_is_array = isinstance(a, np.ndarray)
+    b_is_array = isinstance(b, np.ndarray)
+
+    if (a_is_array and b_is_array and a.shape != b.shape):
+        return f"shape mismatch: {a.shape} != {b.shape}"
+
+    differing = np.abs(a - b) >= tol
+
+    if a_is_array or b_is_array:
+        n_diff = differing.sum()
+        if n_diff == 0:
+            return (
+                f"{np.array2string(a, edgeitems=2, threshold=5) if a_is_array else a} "
+                f"== {np.array2string(b, edgeitems=2, threshold=5) if b_is_array  else b}"
+            )
+        return (
+            f"{n_diff} differing elements."
+            f"\n\tdiff positions: {np.nonzero(differing)[0]}"
+            "\n\tdiff: "
+            + ', '.join(
+                f"{a.reshape(-1)[i] if a_is_array else a}"
+                f"|{b.reshape(-1)[i] if b_is_array else b}"
+                for i, is_diff in enumerate(differing) if is_diff
+            )
+        )
+    return f"{a} {'!=' if differing else '=='} {b}"
+
+
+def assert_equal_dicts(d1: dict, d2: dict, ignore=None, warn=False):
+    ignore = ignore or set()
+    keys = {*d1.keys(), *d2.keys()} - set(ignore)
+    assertions = []
+    value_pairs = []
+    names = []
+
+    for key in keys:
+        if key not in d1:
+            if warn:
+                warnings.warn(f"Key {key!r} not in first dict.")
+            continue
+        if key not in d2:
+            if warn:
+                warnings.warn(f"Key {key!r} not in second dict.")
+            continue
+
+        v1, v2 = d1[key], d2[key]
+
+        if (
+            not isinstance(v1, (Number, np.ndarray))
+            or not isinstance(v2, (Number, np.ndarray))
+        ):
+            warnings.warn(
+                f"{key!r} not numeric or array attribute (values: {v1} {v2})."
+            )
+            continue
+
+        names.append(key)
+        value_pairs.append((v1, v2))
+        # assertions.append(abs(v1-v2) < tol)
+        try:
+            assert_allclose(v1, v2, atol=1e-7, verbose=False)
+            assertions.append(None)
+        except AssertionError as e:
+            assertions.append(e)
+        
+    differing = [repr(n) for n, a in zip(names, assertions) if a is not None]
+
+    if differing:
+        text = differing.pop()
+    if differing:
+        text += ' and ' + differing.pop()
+    if differing:
+        text = ', '.join(differing) + ', ' + text
+
+    assert all(A is None for A in assertions), (
+        text
+        + ' values differ.\n'
+        + '\n'.join(
+            f"{n}: {comparison_text(v[0], v[1])}"  # \n{a}"
+            for n, v, a in zip(names, value_pairs, assertions)
+        )
+    )
+ 

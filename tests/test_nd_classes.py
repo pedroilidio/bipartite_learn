@@ -8,6 +8,7 @@ import pytest
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.base import clone
 import sklearn.tree
+# from sklearn.tree._tree import Tree
 from sklearn.utils._testing import assert_allclose
 from sklearn.utils.validation import check_symmetric, check_random_state
 
@@ -18,7 +19,7 @@ from hypertrees.tree._nd_classes import (
 from hypertrees.melter import row_cartesian_product
 
 from make_examples import make_interaction_regression, make_interaction_data
-from test_utils import stopwatch, parse_args, gen_mock_data, melt_2d_data
+from test_utils import assert_equal_dicts, stopwatch, parse_args, gen_mock_data, melt_2d_data
 
 # from sklearn.tree._tree import DTYPE_t, DOUBLE_t
 DTYPE_t, DOUBLE_t = np.float32, np.float64
@@ -40,24 +41,42 @@ def random_state(request):
     return request.param
 
 
-def get_leaves(tree, verbose=True, return_values=False):
-    wn_samples = tree.tree_.weighted_n_node_samples
-    ch_left = tree.tree_.children_left
-    ch_right = tree.tree_.children_right
-    n_samples_per_leaf = wn_samples[ch_left == ch_right]
-    leaf_values = tree.tree_.value[ch_left == ch_right]
+def get_leaves(tree: sklearn.tree._tree.Tree):
+    # the Tree object can be accessed from tree estimators with estimator.tree_
+    ch_left = tree.children_left
+    ch_right = tree.children_right
+    leaf_mask = ch_right == ch_left  # == -1 == sklearn.tree._tree.TREE_LEAF
 
-    if verbose:
-        print('==> Class name:', tree.__class__.__name__)
-        print('Estimator params:')
-        pprint(tree.get_params())
-        print('n_nodes:', tree.tree_.node_count)
-        print('n_leaves:', n_samples_per_leaf.shape[0])
-        print('weighted_n_node_samples:', n_samples_per_leaf)
+    return dict(
+        value=tree.value[leaf_mask],
+        impurity=tree.impurity[leaf_mask],
+        n_node_samples=tree.n_node_samples[leaf_mask],
+        weighted_n_node_samples=tree.weighted_n_node_samples[leaf_mask],
+    )
 
-    if return_values:
-        return n_samples_per_leaf, leaf_values
-    return n_samples_per_leaf
+
+def assert_equal_leaves(tree1, tree2, verbose=False, ignore=None):
+    assert tree1.n_leaves == tree2.n_leaves, 'Number of leaves differ.'
+    leaves1 = get_leaves(tree1)
+    leaves2 = get_leaves(tree2)
+
+    for leaves in (leaves1, leaves2):
+        # It is normal for the last leaves to differ in their order.
+        keys_to_order = [
+            leaves['impurity'].reshape(-1),
+            leaves['weighted_n_node_samples'].reshape(-1),
+        ]
+        if ignore is None or 'value' not in ignore:
+            keys_to_order.append(leaves['value'].reshape(-1))
+
+        order = np.lexsort(np.vstack(keys_to_order))
+
+        for k, v in leaves.items():
+            leaves[k] = v[order]
+            # leaves[k] = np.sort(leaves[k].flatten())
+            # leaves[k] = np.sort(np.unique(leaves[k].flatten()))
+
+    assert_equal_dicts(leaves1, leaves2, ignore=ignore)
 
 
 # TODO: parameter description.
@@ -68,9 +87,10 @@ def compare_trees(
     tree2_is_2d=True,
     supervision=1.0,
     max_gen_depth=None,
+    verbose=False,
     **params,
 ):
-    """Test hypertreesDecisionTreeRegressor2D
+    """Fit and compare trees.
 
     Fit hypertreesDecisionTreeRegressor2D on mock data and assert the grown
     tree is identical to the one built by sklearn.DecisionTreeRegressor.
@@ -86,7 +106,12 @@ def compare_trees(
         noise : float
     """
     print('Starting with settings:')
-    pprint(params)
+    pprint(dict(
+        random_state=random_state,
+        tree2_is_2d=tree2_is_2d,
+        supervision=supervision,
+        max_gen_depth=max_gen_depth,
+    ) | params)
 
     with stopwatch():
         XX, Y, x, y, gen_tree = make_interaction_regression(
@@ -100,10 +125,6 @@ def compare_trees(
             n_targets=params.get('n_targets'),
             max_target=1000,
         )
-        # XX, Y = make_interaction_data(
-        #     shape=params['n_samples'],
-        #     nattrs=params['n_features'],
-        # )
         x, y = row_cartesian_product(XX), Y.reshape(-1)
 
     # NOTE on ExtraTrees:
@@ -135,37 +156,22 @@ def compare_trees(
         else:
             print('* Using 1D data for tree2.')
             tree2.fit(x, y)
+    
+    if verbose:
+        print(f'* Tree 1 ({tree1.__class__.__name__}) params:')
+        pprint(tree1.get_params())
+        print(f'* Tree 2 ({tree2.__class__.__name__}) params:')
+        pprint(tree2.get_params())
 
-    tree1_n_samples_in_leaves = get_leaves(tree1)
-    tree2_n_samples_in_leaves = get_leaves(tree2)
-
-    # =========================================================================
-    # Start of comparison tests
-    # =========================================================================
-
-    comparison_test = \
-        set(tree1_n_samples_in_leaves) == set(tree2_n_samples_in_leaves)
-
-    assert (tree1_n_samples_in_leaves.shape[0] ==
-            tree2_n_samples_in_leaves.shape[0]), \
-        "Number of leaves differ."
-
-    leaves_comparison = \
-        tree1_n_samples_in_leaves == tree2_n_samples_in_leaves
-    # comparison_test = np.all(leaves_comparison)  # See issue #1
-
-    assert (tree1_n_samples_in_leaves.sum() ==
-            tree2_n_samples_in_leaves.sum()), \
-        "Total weighted_n_samples of leaves differ."
-
-    assert comparison_test, (
-        "Some leaves differ in the number of samples."
-        f"\n\tdiff positions: {np.nonzero(~leaves_comparison)[0]}"
-        f"\n\tdiff: {tree1_n_samples_in_leaves[~leaves_comparison]}"
-        f"!= {tree2_n_samples_in_leaves[~leaves_comparison]}")
+    assert_equal_leaves(
+        tree1.tree_,
+        tree2.tree_,
+        ignore=['value'] if supervision != 1.0 else None,
+        # ignore=['impurity', 'value'],
+    )
 
 
-@pytest.mark.parametrize('msl', [1, 20, 100])
+@pytest.mark.parametrize('msl', [1, 5, 20, 100])
 def test_simple_tree_1d2d(msl, random_state, **params):
     params = DEF_PARAMS | params
 
@@ -380,10 +386,6 @@ def test_leaf_shape_gso(mrl, mcl, random_state, **params):
     X, y = row_cartesian_product(XX), Y.reshape(-1)
     tree1d = DecisionTreeRegressor()
     tree1d.fit(X, y)
-    leaf_sizes1d, leaf_values1d = get_leaves(tree1d, return_values=True)
-    leaf_values1d = np.sort(leaf_values1d.reshape(-1))
-    assert_allclose(leaf_sizes1d, mrl*mcl)
-    assert_allclose(leaf_values1d, y_values)
 
     tree = BipartiteDecisionTreeRegressor(
         min_rows_leaf=mrl,
@@ -391,8 +393,10 @@ def test_leaf_shape_gso(mrl, mcl, random_state, **params):
         bipartite_adapter="global_single_output",
     )
     tree.fit(XX, Y)
-    leaf_sizes, leaf_values = get_leaves(tree, return_values=True)
-    leaf_values = np.sort(leaf_values.reshape(-1))
 
-    assert_allclose(leaf_sizes, mrl*mcl)
-    assert_allclose(leaf_values, y_values)
+    leaves1 = get_leaves(tree1d.tree_)
+    leaf_values1d = np.sort(leaves1['value'].reshape(-1))
+    assert_allclose(leaves1['n_node_samples'], mrl*mcl)
+    assert_allclose(leaf_values1d, y_values)
+
+    assert_equal_leaves(tree1d.tree_, tree.tree_)

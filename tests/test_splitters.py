@@ -36,7 +36,7 @@ from make_examples import make_interaction_regression
 
 from splitter_test import test_splitter, test_splitter_nd
 from test_utils import (
-    parse_args, stopwatch, gen_mock_data, melt_2d_data,
+    parse_args, stopwatch, gen_mock_data, melt_2d_data, assert_equal_dicts,
 )
 
 #from sklearn.tree._tree import DTYPE_t, DOUBLE_t
@@ -75,56 +75,6 @@ def supervision(request):
 def random_state(request):
     return request.param
 
-
-def assert_equal_dicts(
-    d1: dict, d2: dict, ignore=None, tol=1e-7, warn=False,
-):
-    ignore = ignore or set()
-    keys = {*d1.keys(), *d2.keys()} - set(ignore)
-    assertions = []
-    value_pairs = []
-    names = []
-
-    for key in keys:
-        if key not in d1:
-            if warn:
-                warnings.warn(f"Key {key!r} not in first dict.")
-            continue
-        if key not in d2:
-            if warn:
-                warnings.warn(f"Key {key!r} not in second dict.")
-            continue
-
-        v1, v2 = d1[key], d2[key]
-
-        if not isinstance(v1, Number) or not isinstance(v2, Number):
-            warnings.warn(
-                f"{key!r} not a numeric attribute (values: {v1} {v2})."
-            )
-            continue
-
-        names.append(key)
-        value_pairs.append((v1, v2))
-        assertions.append(abs(v1-v2) < tol)
-        
-    differing = [n for n, a in zip(names, assertions) if not a]
-
-    if differing:
-        text = differing.pop()
-    if differing:
-        text += ' and ' + differing.pop()
-    if differing:
-        text = ', '.join(differing) + ', ' + text
-
-    assert all(assertions), (
-        text
-        + ' values differ.\n'
-        + '\n'.join(
-            f"{n}: {v[0]} {'==' if a else '!='} {v[1]}"
-            for n, v, a in zip(names, value_pairs, assertions)
-        )
-    )
-        
 
 @validate_params({
     'X': ['array-like'],
@@ -1040,13 +990,17 @@ def test_pbct_splitter(**params):
     )
 
 
-# FIXME: unsupervised obviously will not match.
 def test_ss_axis_decision_only(supervision, random_state, **params):
     """Test axis decision-semisupervision
 
     Assert that axis decision semisupervision chooses the split based only on
     supervised data, integrating unsupervised score after it is found.
     """
+    if supervision == 0.0:
+        pytest.skip(
+            'axis decision only should be compared to supervised splitter'
+        )
+
     params = DEF_PARAMS | params
 
     X, Y, x, y, gen_tree = make_interaction_regression(
@@ -1059,7 +1013,7 @@ def test_ss_axis_decision_only(supervision, random_state, **params):
         max_target=100,
     )
     y = y.reshape((-1, 1))
-    x = x.astype(np.float32)
+    x = x.astype('float32')
     start = 0
     end = y.shape[0]
 
