@@ -116,12 +116,12 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
     _parameter_constraints: dict = BaseDecisionTree._parameter_constraints | {
         "splitter": [StrOptions({"best", "random"}), Hidden(Splitter2D)],
         "min_rows_split": [
-            # min value is not 2 to still allow split on the other axis.
+            # min value is not 2 to still allow splitting on the other axis.
             Interval(Integral, 1, None, closed="left"),
             Interval(Real, 0.0, 1.0, closed="right"),
         ],
         "min_cols_split": [
-            # min value is not 2 to still allow split on the other axis.
+            # min value is not 2 to still allow splitting on the other axis.
             Interval(Integral, 1, None, closed="left"),
             Interval(Real, 0.0, 1.0, closed="right"),
         ],
@@ -179,7 +179,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         class_weight=None,
         ccp_alpha=0.0,
         # Bipartite parameters:
-        min_rows_split=1,  # Not 2, to still allow split on the other axis
+        min_rows_split=1,  # Not 2, to still allow splitting on the other axis
         min_cols_split=1,
         min_rows_leaf=1,
         min_cols_leaf=1,
@@ -213,7 +213,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         self.bipartite_adapter = bipartite_adapter
         self.prediction_weights = prediction_weights
 
-    def fit(self, X, y, row_weight=None, col_weight=None, check_input=True):
+    def fit(self, X, y, sample_weight=None, check_input=True):
         self._validate_params()
         random_state = check_random_state(self.random_state)
 
@@ -261,6 +261,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         self._n_rows_fit = n_rows
         self.n_row_features_in_ = X[0].shape[1]
         self.n_col_features_in_ = X[1].shape[1]
+        self.n_features_in_ = self.n_row_features_in_ + self.n_col_features_in_
 
         is_classification = is_classifier(self)
 
@@ -406,26 +407,31 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 
         max_leaf_nodes = -1 if self.max_leaf_nodes is None else self.max_leaf_nodes
 
-        if row_weight is not None:
+        if sample_weight is not None:
+            row_weight = sample_weight[:n_rows]
+            col_weight = sample_weight[n_rows:]
             row_weight = _check_sample_weight(row_weight, X[0], DOUBLE)
-        if col_weight is not None:
             col_weight = _check_sample_weight(col_weight, X[1], DOUBLE)
 
         if expanded_class_weight_rows is not None:
-            if row_weight is not None:
+            if sample_weight is not None:
                 row_weight = row_weight * expanded_class_weight
             else:
                 row_weight = expanded_class_weight_rows
 
         if expanded_class_weight_cols is not None:
-            if col_weight is not None:
+            if sample_weight is not None:
                 col_weight = col_weight * expanded_class_weight
             else:
                 col_weight = expanded_class_weight_cols
 
         # Set min_weight_leaf from min_weight_fraction_leaf
-        row_weight_sum = n_rows if row_weight is None else np.sum(row_weight)
-        col_weight_sum = n_cols if col_weight is None else np.sum(col_weight)
+        if sample_weight is None:
+            row_weight_sum = n_rows
+            col_weight_sum = n_cols
+        else:
+            row_weight_sum = np.sum(row_weight)
+            col_weight_sum = np.sum(col_weight)
 
         min_row_weight_leaf = self.min_row_weight_fraction_leaf * row_weight_sum
         min_col_weight_leaf = self.min_col_weight_fraction_leaf * col_weight_sum
@@ -541,14 +547,9 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                 self.min_impurity_decrease,
             )
 
-        if row_weight is None and col_weight is None:
-            sample_weight = None
-        elif row_weight is None:
-            row_weight = np.ones(n_rows)
-        elif col_weight is None:
-            col_weight = np.ones(n_cols)
-
-        sample_weight = sample_weight and np.hstack([row_weight, col_weight])
+        # Take advantage that row_weight and col_weight were checked.
+        if sample_weight is not None:
+            sample_weight = np.hstack([row_weight, col_weight])
 
         builder.build(self.tree_, X, y, sample_weight)
 
@@ -1010,7 +1011,7 @@ class BipartiteDecisionTreeRegressor(
             prediction_weights=prediction_weights,
         )
 
-    def fit(self, X, y, row_weight=None, col_weight=None, check_input=True):
+    def fit(self, X, y, sample_weight=None, check_input=True):
         """Build a decision tree regressor from the training set (X, y).
 
         Parameters
@@ -1039,15 +1040,14 @@ class BipartiteDecisionTreeRegressor(
 
         Returns
         -------
-        self : DecisionTreeRegressor2D
+        self : BipartiteDecisionTreeRegressor
             Fitted estimator.
         """
 
         super().fit(
             X,
             y,
-            row_weight=row_weight,
-            col_weight=col_weight,
+            sample_weight=sample_weight,
             check_input=check_input,
         )
         return self
@@ -1291,7 +1291,7 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         self,
         *,
         criterion="squared_error",
-        # Only difference from DecisionTreeRegressor2D:
+        # Only difference from BipartiteDecisionTreeRegressor:
         splitter="random",
         max_depth=None,
         min_samples_split=2,

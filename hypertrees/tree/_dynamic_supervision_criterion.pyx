@@ -1,3 +1,4 @@
+# cython: boundscheck=False
 from libc.math cimport log2
 import numpy as np
 cimport numpy as cnp

@@ -20,7 +20,7 @@ from hypertrees.tree._semisupervised_criterion import (
 )
 
 from hypertrees.tree._semisupervised_classes import (
-    DecisionTreeRegressorSS, DecisionTreeRegressor2DSS,
+    DecisionTreeRegressorSS, BipartiteDecisionTreeRegressorSS,
 )
 
 from hypertrees.tree._semisupervised_splitter import BestSplitterSFSS
@@ -59,8 +59,7 @@ def supervision(request):
 
 @pytest.fixture(params=range(3))
 def random_state(request):
-    # return request.param
-    return 0
+    return request.param
 
 
 @pytest.fixture(params=[None, 5])
@@ -128,7 +127,7 @@ def test_semisupervision_1d2d(
         random_state=random_state,
         max_depth=max_depth,
     )
-    tree2 = DecisionTreeRegressor2DSS(
+    tree2 = BipartiteDecisionTreeRegressorSS(
         supervision=supervision,
         min_samples_leaf=msl,
         random_state=random_state,
@@ -173,7 +172,7 @@ def test_dynamic_supervision_1d2d(
         min_samples_leaf=msl,
         # max_depth=max_depth,
     )
-    tree2 = DecisionTreeRegressor2DSS(
+    tree2 = BipartiteDecisionTreeRegressorSS(
         criterion="squared_error",
         unsupervised_criterion_rows="squared_error",
         unsupervised_criterion_cols="squared_error",
@@ -263,7 +262,7 @@ def test_single_feature_semisupervision_1d2d(supervision=None, **params):
     tree1 = DecisionTreeRegressorSS(
         splitter=splitter1d,
     )
-    tree2 = DecisionTreeRegressor2DSS(
+    tree2 = BipartiteDecisionTreeRegressorSS(
         splitter=ss2d_splitter,
     )
 
@@ -290,7 +289,7 @@ def test_single_feature_semisupervision_1d2d_classes(**params):
     # FIXME: Are not they supposed to match?
     return compare_trees(
         tree1=partial(DecisionTreeRegressorSFSS, supervision=supervision),
-        tree2=partial(DecisionTreeRegressor2DSFSS, supervision=supervision),
+        tree2=partial(BipartiteDecisionTreeRegressorSFSS, supervision=supervision),
         tree2_is_2d=True,
         **params,
     )

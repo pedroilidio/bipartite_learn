@@ -1,3 +1,4 @@
+# cython: boundscheck=False
 from sklearn.tree._criterion cimport Criterion
 
 

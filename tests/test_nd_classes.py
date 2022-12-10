@@ -92,7 +92,7 @@ def compare_trees(
 ):
     """Fit and compare trees.
 
-    Fit hypertreesDecisionTreeRegressor2D on mock data and assert the grown
+    Fit hypertreesBipartiteDecisionTreeRegressor on mock data and assert the grown
     tree is identical to the one built by sklearn.DecisionTreeRegressor.
 
     Parameters

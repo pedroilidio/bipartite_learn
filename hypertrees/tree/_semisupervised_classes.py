@@ -37,8 +37,13 @@ from sklearn.tree._splitter import Splitter
 from sklearn.tree._tree import (
     Tree, DepthFirstTreeBuilder, BestFirstTreeBuilder
 )
-from sklearn.tree import _tree, _splitter, _criterion, DecisionTreeRegressor
-
+from sklearn.tree import (
+    _tree,
+    DecisionTreeRegressor,
+    DecisionTreeClassifier,
+    ExtraTreeRegressor,
+    ExtraTreeClassifier,
+)
 # Hypertree-specific:
 from itertools import product
 from typing import Iterable
@@ -79,6 +84,7 @@ __all__ = [
     "ExtraTreeClassifierSS",
     "DecisionTreeRegressorSS",
     "ExtraTreeRegressorSS",
+    "BipartiteDecisionTreeRegressorSS",
 ]
 
 
@@ -149,6 +155,10 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         ],
         "pairwise_X": ["boolean"],
     }
+
+    def _more_tags(self):
+        # For cross-validation routines to split data correctly
+        return {"pairwise": self.pairwise_X}
 
     @abstractmethod
     def __init__(
@@ -700,6 +710,11 @@ class DecisionTreeClassifierSS(ClassifierMixin, BaseDecisionTreeSS):
             0.93...,  0.93...,  1.     ,  0.93...,  1.      ])
     """
 
+    _parameter_constraints: dict = {
+        **BaseDecisionTreeSS._parameter_constraints,
+        **DecisionTreeClassifier._parameter_constraints,
+    }
+
     def __init__(
         self,
         *,
@@ -1080,6 +1095,11 @@ class DecisionTreeRegressorSS(RegressorMixin, BaseDecisionTreeSS):
            0.16...,  0.11..., -0.73..., -0.30..., -0.00...])
     """
 
+    _parameter_constraints: dict = {
+        **BaseDecisionTreeSS._parameter_constraints,
+        **DecisionTreeRegressor._parameter_constraints,
+    }
+
     def __init__(
         self,
         *,
@@ -1419,6 +1439,11 @@ class ExtraTreeClassifierSS(DecisionTreeClassifierSS):
     0.8947...
     """
 
+    _parameter_constraints: dict = {
+        **BaseDecisionTreeSS._parameter_constraints,
+        **ExtraTreeClassifier._parameter_constraints,
+    }
+
     def __init__(
         self,
         *,
@@ -1674,6 +1699,11 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
     0.33...
     """
 
+    _parameter_constraints: dict = {
+        **BaseDecisionTreeSS._parameter_constraints,
+        **ExtraTreeRegressor._parameter_constraints,
+    }
+
     def __init__(
         self,
         *,
@@ -1721,7 +1751,7 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
 # =============================================================================
 
 
-class BaseDecisionTree2DSS(
+class BaseBipartiteDecisionTreeSS(
     BaseBipartiteDecisionTree,
     BaseDecisionTreeSS,
     metaclass=ABCMeta,
@@ -1757,7 +1787,7 @@ class BaseDecisionTree2DSS(
         class_weight=None,
         ccp_alpha=0.0,
         # Bipartite parameters:
-        min_rows_split=1,  # Not 2, to still allow split on the other axis
+        min_rows_split=1,  # Not 2, to still allow splitting on the other axis
         min_cols_split=1,
         min_rows_leaf=1,
         min_cols_leaf=1,
@@ -1904,12 +1934,14 @@ class BaseDecisionTree2DSS(
         return splitter
 
 
-class DecisionTreeRegressor2DSS(
-    BaseDecisionTree2DSS,
+class BipartiteDecisionTreeRegressorSS(
+    BaseBipartiteDecisionTreeSS,
     BipartiteDecisionTreeRegressor,
 ):
+
     _parameter_constraints: dict = {
-        **BaseDecisionTree2DSS._parameter_constraints,
+        **BaseBipartiteDecisionTreeSS._parameter_constraints,
+        **DecisionTreeRegressor._parameter_constraints,
     }
 
     def __init__(
@@ -1927,7 +1959,7 @@ class DecisionTreeRegressor2DSS(
         min_impurity_decrease=0.0,
         ccp_alpha=0.0,
         # Bipartite parameters:
-        min_rows_split=1,  # Not 2, to still allow split on the other axis
+        min_rows_split=1,  # Not 2, to still allow splitting on the other axis
         min_cols_split=1,
         min_rows_leaf=1,
         min_cols_leaf=1,
@@ -1958,6 +1990,7 @@ class DecisionTreeRegressor2DSS(
             random_state=random_state,
             min_impurity_decrease=min_impurity_decrease,
             ccp_alpha=ccp_alpha,
+            # Bipartite parameters:
             min_rows_split=min_rows_split,
             min_cols_split=min_cols_split,
             min_rows_leaf=min_rows_leaf,
@@ -1968,6 +2001,85 @@ class DecisionTreeRegressor2DSS(
             max_col_features=max_col_features,
             bipartite_adapter=bipartite_adapter,
             prediction_weights=prediction_weights,
+            # Semi-supervised parameters:
+            supervision=supervision,
+            ss_adapter=ss_adapter,
+            unsupervised_criterion_rows=unsupervised_criterion_rows,
+            unsupervised_criterion_cols=unsupervised_criterion_cols,
+            update_supervision=update_supervision,
+            pairwise_X=pairwise_X,
+            axis_decision_only=axis_decision_only,
+        )
+
+
+class BipartiteExtraTreeRegressorSS(
+    BaseBipartiteDecisionTreeSS,
+    BipartiteExtraTreeRegressor,
+):
+
+    _parameter_constraints: dict = {
+        **BaseBipartiteDecisionTreeSS._parameter_constraints,
+        **ExtraTreeRegressor._parameter_constraints,
+    }
+
+    def __init__(
+        self,
+        *,
+        criterion="squared_error",
+        splitter="random",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=None,
+        random_state=None,
+        max_leaf_nodes=None,
+        min_impurity_decrease=0.0,
+        ccp_alpha=0.0,
+        # Bipartite parameters:
+        min_rows_split=1,  # Not 2, to still allow splitting on the other axis
+        min_cols_split=1,
+        min_rows_leaf=1,
+        min_cols_leaf=1,
+        min_row_weight_fraction_leaf=0.0,
+        min_col_weight_fraction_leaf=0.0,
+        max_row_features=None,
+        max_col_features=None,
+        bipartite_adapter="global_single_output",
+        prediction_weights=None,
+        # Semi-supervised parameters:
+        supervision=0.5,
+        ss_adapter="default",
+        unsupervised_criterion_rows="squared_error",
+        unsupervised_criterion_cols="squared_error",
+        update_supervision=None,
+        pairwise_X=False,
+        axis_decision_only=False,
+    ):
+        super().__init__(
+            criterion=criterion,
+            splitter=splitter,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+            random_state=random_state,
+            min_impurity_decrease=min_impurity_decrease,
+            ccp_alpha=ccp_alpha,
+            # Bipartite parameters:
+            min_rows_split=min_rows_split,
+            min_cols_split=min_cols_split,
+            min_rows_leaf=min_rows_leaf,
+            min_cols_leaf=min_cols_leaf,
+            min_row_weight_fraction_leaf=min_row_weight_fraction_leaf,
+            min_col_weight_fraction_leaf=min_col_weight_fraction_leaf,
+            max_row_features=max_row_features,
+            max_col_features=max_col_features,
+            bipartite_adapter=bipartite_adapter,
+            prediction_weights=prediction_weights,
+            # Semi-supervised parameters:
             supervision=supervision,
             ss_adapter=ss_adapter,
             unsupervised_criterion_rows=unsupervised_criterion_rows,

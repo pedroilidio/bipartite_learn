@@ -1,3 +1,5 @@
+# cython: boundscheck=False
+
 # Author: Pedro Ilídio <pedrilidio@gmail.com>
 # Modified from scikit-learn.
 #

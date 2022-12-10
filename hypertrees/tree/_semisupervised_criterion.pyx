@@ -1,4 +1,4 @@
-# cython: boundscheck=True
+# cython: boundscheck=False
 import warnings
 from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion

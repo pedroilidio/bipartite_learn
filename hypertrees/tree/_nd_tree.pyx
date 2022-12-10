@@ -1,4 +1,5 @@
 # distutils: language = c++
+# cython: boundscheck=False
 from cpython cimport Py_INCREF, PyObject, PyTypeObject
 from libc.stdint cimport SIZE_MAX
 

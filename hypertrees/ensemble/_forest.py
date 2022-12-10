@@ -41,6 +41,7 @@ Single and multi-output problems are both handled.
 
 
 import numbers
+from typing import Iterable
 from warnings import catch_warnings, simplefilter, warn
 import threading
 
@@ -69,25 +70,21 @@ from sklearn.utils.validation import (
 )
 from sklearn.utils.validation import _num_samples
 
-##### 
-from typing import Iterable
 from sklearn.ensemble._forest import _get_n_samples_bootstrap
 from sklearn.ensemble._forest import _generate_sample_indices
 from sklearn.ensemble._forest import BaseForest, ForestRegressor
 
 from ..melter import row_cartesian_product
 from ..tree import (
-    DecisionTreeRegressor2D,
-    ExtraTreeRegressor2D,
-    BiclusteringTreeRegressor,
-    BiclusteringExtraTreeRegressor,
+    BipartiteDecisionTreeRegressor,
+    BipartiteExtraTreeRegressor,
 )
+from ..base import BaseBipartiteEstimator, MultipartiteRegressorMixin
+from ..utils import _X_is_multipartite
 
 __all__ = [
-    "RandomForestRegressor2D",
-    "ExtraTreesRegressor2D",
-    "BiclusteringRandomForestRegressor",
-    "BiclusteringExtraTreesRegressor",
+    "BipartiteRandomForestRegressor",
+    "BipartiteExtraTreesRegressor",
 ]
 
 MAX_INT = np.iinfo(np.int32).max
@@ -195,9 +192,11 @@ def _parallel_build_trees_nd(
         curr_sample_weight *= sample_counts
 
         if class_weight == "balanced_subsample":
-            raise NotImplementedError(
-                "class_weight='balanced_subsample' not implemented.")
-            curr_sample_weight *= compute_sample_weight("balanced", y, indices=indices)
+            curr_sample_weight *= compute_sample_weight(
+                "balanced",
+                y.reshape(-1),
+                indices=indices,
+            )
 
         tree.fit(X, y, sample_weight=curr_sample_weight, check_input=False)
     else:
@@ -206,13 +205,22 @@ def _parallel_build_trees_nd(
     return tree
 
 
-class BaseForestND(BaseForest, metaclass=ABCMeta):
+class BaseMultipartiteForest(
+    BaseForest,
+    BaseBipartiteEstimator,
+    metaclass=ABCMeta,
+):
     """
     Base class for forests of ND trees.
 
     Warning: This class should not be used directly. Use derived classes
     instead.
     """
+
+    _parameter_constraints: dict = {
+        **BaseForest._parameter_constraints,
+    }
+
     def fit(self, X, y, sample_weight=None):
         """
         Build a forest of trees from the training set (X, y).
@@ -240,31 +248,24 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
         self : object
             Fitted estimator.
         """
+        self._validate_params()
+
         # Validate or convert input data
         if issparse(y):
-            raise ValueError("sparse y is not supported.")
-
-        check_X_params = dict(dtype=DTYPE, accept_sparse="csc")
-        check_y_params = dict(multi_output=True)
-
-        y = self._validate_data(X="no_validation", y=y, **check_y_params)
+            raise ValueError("sparse multilabel-indicator for y is not supported.")
+        X, y = self._validate_data(
+            X, y, accept_sparse="csc", dtype=DTYPE,  # multi_output=True, 
+        )
+        if sample_weight is not None:
+            sample_weight = _check_sample_weight(
+                sample_weight, row_cartesian_product(X),
+            )
 
         for ax in range(len(X)):
-            X[ax] = self._validate_data(X[ax], **check_X_params, reset=False)
             if issparse(X[ax]):
                 # Pre-sort indices to avoid that each individual tree of the
                 # ensemble sorts the indices.
                 X[ax].sort_indices()
-
-        # FIXME
-        # if sample_weight is not None:
-        #     sample_weight = _check_sample_weight(sample_weight, X)
-
-        # NOTE: n_features_in_ must be set after calling self._validate_data.
-        #       Otherwise, the method will try to compare self.n_features_in_
-        #       to X[ax].shape[1] and throw an error when they do not match.
-        self.ax_n_features_in_ = [Xax.shape[1] for Xax in X]
-        self.n_features_in_ = sum(self.ax_n_features_in_)
 
         y = np.atleast_1d(y)
         if y.ndim == 2 and y.shape[1] == 1:
@@ -294,7 +295,10 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
                 )
 
         # self.n_outputs_ = y.shape[1]
-        self.n_outputs_ = 1
+        if self.prediction_weights == "raw":
+            self.n_outputs_ = np.sum(y.shape)  # TODO: bipartite multioutput
+        else:
+            self.n_outputs_ = 1
 
         y, expanded_class_weight = self._validate_y_class_weight(y)
 
@@ -388,20 +392,22 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
             self.estimators_.extend(trees)
 
         if self.oob_score:
-            # FIXME: type_of_target doesn't know about 2D data.
-            # y_type = type_of_target(y)
-            # if y_type in ("multiclass-multioutput", "unknown"):
-            #     # FIXME: we could consider to support multiclass-multioutput if
-            #     # we introduce or reuse a constructor parameter (e.g.
-            #     # oob_score) allowing our user to pass a callable defining the
-            #     # scoring strategy on OOB sample. (sklearn)
-            #     raise ValueError(
-            #         "The type of target cannot be used to compute OOB "
-            #         f"estimates. Got {y_type} while only the following are "
-            #         "supported: continuous, continuous-multioutput, binary, "
-            #         "multiclass, multilabel-indicator."
-            #     )
-            self._set_oob_score_and_attributes(X, y)
+            y_ = y.reshape(-1)
+            X_ = row_cartesian_product(X)
+
+            y_type = type_of_target(y_)
+            if y_type in ("multiclass-multioutput", "unknown"):
+                # FIXME: we could consider to support multiclass-multioutput if
+                # we introduce or reuse a constructor parameter (e.g.
+                # oob_score) allowing our user to pass a callable defining the
+                # scoring strategy on OOB sample. (sklearn)
+                raise ValueError(
+                    "The type of target cannot be used to compute OOB "
+                    f"estimates. Got {y_type} while only the following are "
+                    "supported: continuous, continuous-multioutput, binary, "
+                    "multiclass, multilabel-indicator."
+                )
+            self._set_oob_score_and_attributes(X_, y_)
 
         # Decapsulate classes_ attributes
         if hasattr(self, "classes_") and self.n_outputs_ == 1:
@@ -410,6 +416,7 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
 
         return self
 
+    # TODO: avoid boilerplate from sklearn
     def _compute_oob_predictions(self, X, y):
         """Compute and set the OOB score.
 
@@ -479,23 +486,17 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
     def _validate_X_predict(self, X):
         """ Validate X whenever one tries to predict, apply, predict_proba.
         """
-        if isinstance(X, (tuple, list)):  # FIXME: better criteria.
+        if _X_is_multipartite(X):
             X = row_cartesian_product(X)
 
         return super()._validate_X_predict(X)
 
 
-class ForestRegressorND(BaseForestND, ForestRegressor, RegressorMixin, metaclass=ABCMeta):
-    """
-    Base class for forest of trees-based regressors.
-
-    Warning: This class should not be used directly. Use derived classes
-    instead.
-    """
-    pass
-
-
-class RandomForestRegressor2D(ForestRegressorND):
+class BipartiteRandomForestRegressor(
+    BaseMultipartiteForest,
+    ForestRegressor,
+    MultipartiteRegressorMixin,
+):
     """
     A random forest regressor.
 
@@ -577,7 +578,7 @@ class RandomForestRegressor2D(ForestRegressorND):
         the input samples) required to be at a leaf node. Samples have
         equal weight when sample_weight is not provided.
 
-    max_features : {"sqrt", "log2", None}, int or float, default=1.0
+    max_features : {"sqrt", "log2", None}, int or float, default=None
         The number of features to consider when looking for the best split:
 
         - If int, then consider `max_features` features at each split.
@@ -678,7 +679,7 @@ class RandomForestRegressor2D(ForestRegressorND):
 
     Attributes
     ----------
-    base_estimator_ : DecisionTreeRegressor
+    estimator_ : DecisionTreeRegressor
         The child estimator template used to create the collection of fitted
         sub-estimators.
 
@@ -770,6 +771,12 @@ class RandomForestRegressor2D(ForestRegressorND):
     [-8.32987858]
     """
 
+    _parameter_constraints: dict = {
+        **ForestRegressor._parameter_constraints,
+        **BipartiteDecisionTreeRegressor._parameter_constraints,
+    }
+    _parameter_constraints.pop("splitter")
+
     def __init__(
         self,
         n_estimators=100,
@@ -779,15 +786,9 @@ class RandomForestRegressor2D(ForestRegressorND):
         min_samples_split=2,
         min_samples_leaf=1,
         min_weight_fraction_leaf=0.0,
-        max_features=1.0,
+        max_features=None,
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,
-
-        # 2D parameters:
-        ax_min_samples_leaf=1,
-        ax_min_weight_fraction_leaf=None,
-        ax_max_features=None,
-
         bootstrap=True,
         oob_score=False,
         n_jobs=None,
@@ -796,9 +797,20 @@ class RandomForestRegressor2D(ForestRegressorND):
         warm_start=False,
         ccp_alpha=0.0,
         max_samples=None,
+        # Bipartite parameters:
+        min_rows_split=1,  # Not 2, to still allow splitting on the other axis
+        min_cols_split=1,
+        min_rows_leaf=1,
+        min_cols_leaf=1,
+        min_row_weight_fraction_leaf=0.0,
+        min_col_weight_fraction_leaf=0.0,
+        max_row_features=None,
+        max_col_features=None,
+        bipartite_adapter="global_single_output",
+        prediction_weights=None,
     ):
         super().__init__(
-            base_estimator=DecisionTreeRegressor2D(),
+            estimator=BipartiteDecisionTreeRegressor(),
             n_estimators=n_estimators,
             estimator_params=(
                 "criterion",
@@ -811,11 +823,17 @@ class RandomForestRegressor2D(ForestRegressorND):
                 "min_impurity_decrease",
                 "random_state",
                 "ccp_alpha",
-
-                # 2D parameters:
-                "ax_min_samples_leaf",
-                "ax_min_weight_fraction_leaf",
-                "ax_max_features",
+                # Bipartite parameters:
+                "min_rows_split",
+                "min_cols_split",
+                "min_rows_leaf",
+                "min_cols_leaf",
+                "min_row_weight_fraction_leaf",
+                "min_col_weight_fraction_leaf",
+                "max_row_features",
+                "max_col_features",
+                "bipartite_adapter",
+                "prediction_weights",
             ),
             bootstrap=bootstrap,
             oob_score=oob_score,
@@ -836,13 +854,23 @@ class RandomForestRegressor2D(ForestRegressorND):
         self.min_impurity_decrease = min_impurity_decrease
         self.ccp_alpha = ccp_alpha
 
-        # 2D parameters:
-        self.ax_min_samples_leaf=ax_min_samples_leaf
-        self.ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf
-        self.ax_max_features=ax_max_features
+        self.min_rows_split = min_rows_split
+        self.min_cols_split = min_cols_split
+        self.min_rows_leaf = min_rows_leaf
+        self.min_cols_leaf = min_cols_leaf
+        self.min_row_weight_fraction_leaf = min_row_weight_fraction_leaf
+        self.min_col_weight_fraction_leaf = min_col_weight_fraction_leaf
+        self.max_row_features = max_row_features
+        self.max_col_features = max_col_features
+        self.bipartite_adapter = bipartite_adapter
+        self.prediction_weights = prediction_weights
 
 
-class ExtraTreesRegressor2D(ForestRegressorND):
+class BipartiteExtraTreesRegressor(
+    BaseMultipartiteForest,
+    ForestRegressor,
+    MultipartiteRegressorMixin,
+):
     """
     An extra-trees regressor.
 
@@ -915,7 +943,7 @@ class ExtraTreesRegressor2D(ForestRegressorND):
         the input samples) required to be at a leaf node. Samples have
         equal weight when sample_weight is not provided.
 
-    max_features : {"sqrt", "log2", None}, int or float, default=1.0
+    max_features : {"sqrt", "log2", None}, int or float, default=None
         The number of features to consider when looking for the best split:
 
         - If int, then consider `max_features` features at each split.
@@ -1020,7 +1048,7 @@ class ExtraTreesRegressor2D(ForestRegressorND):
 
     Attributes
     ----------
-    base_estimator_ : ExtraTreeRegressor
+    estimator_ : ExtraTreeRegressor
         The child estimator template used to create the collection of fitted
         sub-estimators.
 
@@ -1100,6 +1128,12 @@ class ExtraTreesRegressor2D(ForestRegressorND):
     0.2727...
     """
 
+    _parameter_constraints: dict = {
+        **ForestRegressor._parameter_constraints,
+        **BipartiteDecisionTreeRegressor._parameter_constraints,
+    }
+    _parameter_constraints.pop("splitter")
+
     def __init__(
         self,
         n_estimators=100,
@@ -1109,15 +1143,9 @@ class ExtraTreesRegressor2D(ForestRegressorND):
         min_samples_split=2,
         min_samples_leaf=1,
         min_weight_fraction_leaf=0.0,
-        max_features=1.0,
+        max_features=None,
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,
-
-        # 2D parameters:
-        ax_min_samples_leaf=1,
-        ax_min_weight_fraction_leaf=None,
-        ax_max_features=None,
-
         bootstrap=False,
         oob_score=False,
         n_jobs=None,
@@ -1126,9 +1154,20 @@ class ExtraTreesRegressor2D(ForestRegressorND):
         warm_start=False,
         ccp_alpha=0.0,
         max_samples=None,
+        # Bipartite parameters:
+        min_rows_split=1,  # Not 2, to still allow splitting on the other axis
+        min_cols_split=1,
+        min_rows_leaf=1,
+        min_cols_leaf=1,
+        min_row_weight_fraction_leaf=0.0,
+        min_col_weight_fraction_leaf=0.0,
+        max_row_features=None,
+        max_col_features=None,
+        bipartite_adapter="global_single_output",
+        prediction_weights=None,
     ):
         super().__init__(
-            base_estimator=ExtraTreeRegressor2D(),
+            estimator=BipartiteExtraTreeRegressor(),
             n_estimators=n_estimators,
             estimator_params=(
                 "criterion",
@@ -1141,363 +1180,16 @@ class ExtraTreesRegressor2D(ForestRegressorND):
                 "min_impurity_decrease",
                 "random_state",
                 "ccp_alpha",
-
-                # 2D parameters:
-                "ax_min_samples_leaf",
-                "ax_min_weight_fraction_leaf",
-                "ax_max_features",
-            ),
-            bootstrap=bootstrap,
-            oob_score=oob_score,
-            n_jobs=n_jobs,
-            random_state=random_state,
-            verbose=verbose,
-            warm_start=warm_start,
-            max_samples=max_samples,
-        )
-
-        self.criterion = criterion
-        self.max_depth = max_depth
-        self.min_samples_split = min_samples_split
-        self.min_samples_leaf = min_samples_leaf
-        self.min_weight_fraction_leaf = min_weight_fraction_leaf
-        self.max_features = max_features
-        self.max_leaf_nodes = max_leaf_nodes
-        self.min_impurity_decrease = min_impurity_decrease
-        self.ccp_alpha = ccp_alpha
-
-        # 2D parameters:
-        self.ax_min_samples_leaf=ax_min_samples_leaf
-        self.ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf
-        self.ax_max_features=ax_max_features
-
-
-class BiclusteringRandomForestRegressor(ForestRegressorND):
-    """
-    A random forest regressor.
-
-    A random forest is a meta estimator that fits a number of classifying
-    decision trees on various sub-samples of the dataset and uses averaging
-    to improve the predictive accuracy and control over-fitting.
-    The sub-sample size is controlled with the `max_samples` parameter if
-    `bootstrap=True` (default), otherwise the whole dataset is used to build
-    each tree.
-
-    Read more in the :ref:`User Guide <forest>`.
-
-    Parameters
-    ----------
-    n_estimators : int, default=100
-        The number of trees in the forest.
-
-        .. versionchanged:: 0.22
-           The default value of ``n_estimators`` changed from 10 to 100
-           in 0.22.
-
-    criterion : {"squared_error", "absolute_error", "poisson"}, \
-            default="squared_error"
-        The function to measure the quality of a split. Supported criteria
-        are "squared_error" for the mean squared error, which is equal to
-        variance reduction as feature selection criterion, "absolute_error"
-        for the mean absolute error, and "poisson" which uses reduction in
-        Poisson deviance to find splits.
-        Training using "absolute_error" is significantly slower
-        than when using "squared_error".
-
-        .. versionadded:: 0.18
-           Mean Absolute Error (MAE) criterion.
-
-        .. versionadded:: 1.0
-           Poisson criterion.
-
-        .. deprecated:: 1.0
-            Criterion "mse" was deprecated in v1.0 and will be removed in
-            version 1.2. Use `criterion="squared_error"` which is equivalent.
-
-        .. deprecated:: 1.0
-            Criterion "mae" was deprecated in v1.0 and will be removed in
-            version 1.2. Use `criterion="absolute_error"` which is equivalent.
-
-    max_depth : int, default=None
-        The maximum depth of the tree. If None, then nodes are expanded until
-        all leaves are pure or until all leaves contain less than
-        min_samples_split samples.
-
-    min_samples_split : int or float, default=2
-        The minimum number of samples required to split an internal node:
-
-        - If int, then consider `min_samples_split` as the minimum number.
-        - If float, then `min_samples_split` is a fraction and
-          `ceil(min_samples_split * n_samples)` are the minimum
-          number of samples for each split.
-
-        .. versionchanged:: 0.18
-           Added float values for fractions.
-
-    min_samples_leaf : int or float, default=1
-        The minimum number of samples required to be at a leaf node.
-        A split point at any depth will only be considered if it leaves at
-        least ``min_samples_leaf`` training samples in each of the left and
-        right branches.  This may have the effect of smoothing the model,
-        especially in regression.
-
-        - If int, then consider `min_samples_leaf` as the minimum number.
-        - If float, then `min_samples_leaf` is a fraction and
-          `ceil(min_samples_leaf * n_samples)` are the minimum
-          number of samples for each node.
-
-        .. versionchanged:: 0.18
-           Added float values for fractions.
-
-    min_weight_fraction_leaf : float, default=0.0
-        The minimum weighted fraction of the sum total of weights (of all
-        the input samples) required to be at a leaf node. Samples have
-        equal weight when sample_weight is not provided.
-
-    max_features : {"sqrt", "log2", None}, int or float, default=1.0
-        The number of features to consider when looking for the best split:
-
-        - If int, then consider `max_features` features at each split.
-        - If float, then `max_features` is a fraction and
-          `round(max_features * n_features)` features are considered at each
-          split.
-        - If "auto", then `max_features=n_features`.
-        - If "sqrt", then `max_features=sqrt(n_features)`.
-        - If "log2", then `max_features=log2(n_features)`.
-        - If None or 1.0, then `max_features=n_features`.
-
-        .. note::
-            The default of 1.0 is equivalent to bagged trees and more
-            randomness can be achieved by setting smaller values, e.g. 0.3.
-
-        .. versionchanged:: 1.1
-            The default of `max_features` changed from `"auto"` to 1.0.
-
-        .. deprecated:: 1.1
-            The `"auto"` option was deprecated in 1.1 and will be removed
-            in 1.3.
-
-        Note: the search for a split does not stop until at least one
-        valid partition of the node samples is found, even if it requires to
-        effectively inspect more than ``max_features`` features.
-
-    max_leaf_nodes : int, default=None
-        Grow trees with ``max_leaf_nodes`` in best-first fashion.
-        Best nodes are defined as relative reduction in impurity.
-        If None then unlimited number of leaf nodes.
-
-    min_impurity_decrease : float, default=0.0
-        A node will be split if this split induces a decrease of the impurity
-        greater than or equal to this value.
-
-        The weighted impurity decrease equation is the following::
-
-            N_t / N * (impurity - N_t_R / N_t * right_impurity
-                                - N_t_L / N_t * left_impurity)
-
-        where ``N`` is the total number of samples, ``N_t`` is the number of
-        samples at the current node, ``N_t_L`` is the number of samples in the
-        left child, and ``N_t_R`` is the number of samples in the right child.
-
-        ``N``, ``N_t``, ``N_t_R`` and ``N_t_L`` all refer to the weighted sum,
-        if ``sample_weight`` is passed.
-
-        .. versionadded:: 0.19
-
-    bootstrap : bool, default=True
-        Whether bootstrap samples are used when building trees. If False, the
-        whole dataset is used to build each tree.
-
-    oob_score : bool, default=False
-        Whether to use out-of-bag samples to estimate the generalization score.
-        Only available if bootstrap=True.
-
-    n_jobs : int, default=None
-        The number of jobs to run in parallel. :meth:`fit`, :meth:`predict`,
-        :meth:`decision_path` and :meth:`apply` are all parallelized over the
-        trees. ``None`` means 1 unless in a :obj:`joblib.parallel_backend`
-        context. ``-1`` means using all processors. See :term:`Glossary
-        <n_jobs>` for more details.
-
-    random_state : int, RandomState instance or None, default=None
-        Controls both the randomness of the bootstrapping of the samples used
-        when building trees (if ``bootstrap=True``) and the sampling of the
-        features to consider when looking for the best split at each node
-        (if ``max_features < n_features``).
-        See :term:`Glossary <random_state>` for details.
-
-    verbose : int, default=0
-        Controls the verbosity when fitting and predicting.
-
-    warm_start : bool, default=False
-        When set to ``True``, reuse the solution of the previous call to fit
-        and add more estimators to the ensemble, otherwise, just fit a whole
-        new forest. See :term:`the Glossary <warm_start>`.
-
-    ccp_alpha : non-negative float, default=0.0
-        Complexity parameter used for Minimal Cost-Complexity Pruning. The
-        subtree with the largest cost complexity that is smaller than
-        ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
-        :ref:`minimal_cost_complexity_pruning` for details.
-
-        .. versionadded:: 0.22
-
-    max_samples : int or float, default=None
-        If bootstrap is True, the number of samples to draw from X
-        to train each base estimator.
-
-        - If None (default), then draw `X.shape[0]` samples.
-        - If int, then draw `max_samples` samples.
-        - If float, then draw `max_samples * X.shape[0]` samples. Thus,
-          `max_samples` should be in the interval `(0.0, 1.0]`.
-
-        .. versionadded:: 0.22
-
-    Attributes
-    ----------
-    base_estimator_ : DecisionTreeRegressor
-        The child estimator template used to create the collection of fitted
-        sub-estimators.
-
-    estimators_ : list of DecisionTreeRegressor
-        The collection of fitted sub-estimators.
-
-    feature_importances_ : ndarray of shape (n_features,)
-        The impurity-based feature importances.
-        The higher, the more important the feature.
-        The importance of a feature is computed as the (normalized)
-        total reduction of the criterion brought by that feature.  It is also
-        known as the Gini importance.
-
-        Warning: impurity-based feature importances can be misleading for
-        high cardinality features (many unique values). See
-        :func:`sklearn.inspection.permutation_importance` as an alternative.
-
-    n_features_ : int
-        The number of features when ``fit`` is performed.
-
-        .. deprecated:: 1.0
-            Attribute `n_features_` was deprecated in version 1.0 and will be
-            removed in 1.2. Use `n_features_in_` instead.
-
-    n_features_in_ : int
-        Number of features seen during :term:`fit`.
-
-        .. versionadded:: 0.24
-
-    feature_names_in_ : ndarray of shape (`n_features_in_`,)
-        Names of features seen during :term:`fit`. Defined only when `X`
-        has feature names that are all strings.
-
-        .. versionadded:: 1.0
-
-    n_outputs_ : int
-        The number of outputs when ``fit`` is performed.
-
-    oob_score_ : float
-        Score of the training dataset obtained using an out-of-bag estimate.
-        This attribute exists only when ``oob_score`` is True.
-
-    oob_prediction_ : ndarray of shape (n_samples,) or (n_samples, n_outputs)
-        Prediction computed with out-of-bag estimate on the training set.
-        This attribute exists only when ``oob_score`` is True.
-
-    See Also
-    --------
-    sklearn.tree.DecisionTreeRegressor : A decision tree regressor.
-    sklearn.ensemble.ExtraTreesRegressor : Ensemble of extremely randomized
-        tree regressors.
-
-    Notes
-    -----
-    The default values for the parameters controlling the size of the trees
-    (e.g. ``max_depth``, ``min_samples_leaf``, etc.) lead to fully grown and
-    unpruned trees which can potentially be very large on some data sets. To
-    reduce memory consumption, the complexity and size of the trees should be
-    controlled by setting those parameter values.
-
-    The features are always randomly permuted at each split. Therefore,
-    the best found split may vary, even with the same training data,
-    ``max_features=n_features`` and ``bootstrap=False``, if the improvement
-    of the criterion is identical for several splits enumerated during the
-    search of the best split. To obtain a deterministic behaviour during
-    fitting, ``random_state`` has to be fixed.
-
-    The default value ``max_features="auto"`` uses ``n_features``
-    rather than ``n_features / 3``. The latter was originally suggested in
-    [1], whereas the former was more recently justified empirically in [2].
-
-    References
-    ----------
-    .. [1] L. Breiman, "Random Forests", Machine Learning, 45(1), 5-32, 2001.
-
-    .. [2] P. Geurts, D. Ernst., and L. Wehenkel, "Extremely randomized
-           trees", Machine Learning, 63(1), 3-42, 2006.
-
-    Examples
-    --------
-    >>> from sklearn.ensemble import RandomForestRegressor
-    >>> from sklearn.datasets import make_regression
-    >>> X, y = make_regression(n_features=4, n_informative=2,
-    ...                        random_state=0, shuffle=False)
-    >>> regr = RandomForestRegressor(max_depth=2, random_state=0)
-    >>> regr.fit(X, y)
-    RandomForestRegressor(...)
-    >>> print(regr.predict([[0, 0, 0, 0]]))
-    [-8.32987858]
-    """
-
-    def __init__(
-        self,
-        n_estimators=100,
-        *,
-        criterion="squared_error",
-        max_depth=None,
-        min_samples_split=2,
-        min_samples_leaf=1,
-        min_weight_fraction_leaf=0.0,
-        max_features=1.0,
-        max_leaf_nodes=None,
-        min_impurity_decrease=0.0,
-
-        # 2D parameters:
-        ax_min_samples_leaf=1,
-        ax_min_weight_fraction_leaf=None,
-        ax_max_features=None,
-
-        bootstrap=True,
-        oob_score=False,
-        n_jobs=None,
-        random_state=None,
-        verbose=0,
-        warm_start=False,
-        ccp_alpha=0.0,
-        max_samples=None,
-
-        # PBCT-specific:
-        prediction_weights="uniform",
-    ):
-        super().__init__(
-            base_estimator=BiclusteringTreeRegressor(),
-            n_estimators=n_estimators,
-            estimator_params=(
-                "criterion",
-                "max_depth",
-                "min_samples_split",
-                "min_samples_leaf",
-                "min_weight_fraction_leaf",
-                "max_features",
-                "max_leaf_nodes",
-                "min_impurity_decrease",
-                "random_state",
-                "ccp_alpha",
-
-                # 2D parameters:
-                "ax_min_samples_leaf",
-                "ax_min_weight_fraction_leaf",
-                "ax_max_features",
-
-                # PBCT-specific:
+                # Bipartite parameters:
+                "min_rows_split",
+                "min_cols_split",
+                "min_rows_leaf",
+                "min_cols_leaf",
+                "min_row_weight_fraction_leaf",
+                "min_col_weight_fraction_leaf",
+                "max_row_features",
+                "max_col_features",
+                "bipartite_adapter",
                 "prediction_weights",
             ),
             bootstrap=bootstrap,
@@ -1519,349 +1211,13 @@ class BiclusteringRandomForestRegressor(ForestRegressorND):
         self.min_impurity_decrease = min_impurity_decrease
         self.ccp_alpha = ccp_alpha
 
-        # 2D parameters:
-        self.ax_min_samples_leaf=ax_min_samples_leaf
-        self.ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf
-        self.ax_max_features=ax_max_features
-
-        # PBCT-specific:
-        self.prediction_weights=prediction_weights
-
-
-class BiclusteringExtraTreesRegressor(ForestRegressorND):
-    """
-    An extra-trees regressor.
-
-    This class implements a meta estimator that fits a number of
-    randomized decision trees (a.k.a. extra-trees) on various sub-samples
-    of the dataset and uses averaging to improve the predictive accuracy
-    and control over-fitting.
-
-    Read more in the :ref:`User Guide <forest>`.
-
-    Parameters
-    ----------
-    n_estimators : int, default=100
-        The number of trees in the forest.
-
-        .. versionchanged:: 0.22
-           The default value of ``n_estimators`` changed from 10 to 100
-           in 0.22.
-
-    criterion : {"squared_error", "absolute_error"}, default="squared_error"
-        The function to measure the quality of a split. Supported criteria
-        are "squared_error" for the mean squared error, which is equal to
-        variance reduction as feature selection criterion, and "absolute_error"
-        for the mean absolute error.
-
-        .. versionadded:: 0.18
-           Mean Absolute Error (MAE) criterion.
-
-        .. deprecated:: 1.0
-            Criterion "mse" was deprecated in v1.0 and will be removed in
-            version 1.2. Use `criterion="squared_error"` which is equivalent.
-
-        .. deprecated:: 1.0
-            Criterion "mae" was deprecated in v1.0 and will be removed in
-            version 1.2. Use `criterion="absolute_error"` which is equivalent.
-
-    max_depth : int, default=None
-        The maximum depth of the tree. If None, then nodes are expanded until
-        all leaves are pure or until all leaves contain less than
-        min_samples_split samples.
-
-    min_samples_split : int or float, default=2
-        The minimum number of samples required to split an internal node:
-
-        - If int, then consider `min_samples_split` as the minimum number.
-        - If float, then `min_samples_split` is a fraction and
-          `ceil(min_samples_split * n_samples)` are the minimum
-          number of samples for each split.
-
-        .. versionchanged:: 0.18
-           Added float values for fractions.
-
-    min_samples_leaf : int or float, default=1
-        The minimum number of samples required to be at a leaf node.
-        A split point at any depth will only be considered if it leaves at
-        least ``min_samples_leaf`` training samples in each of the left and
-        right branches.  This may have the effect of smoothing the model,
-        especially in regression.
-
-        - If int, then consider `min_samples_leaf` as the minimum number.
-        - If float, then `min_samples_leaf` is a fraction and
-          `ceil(min_samples_leaf * n_samples)` are the minimum
-          number of samples for each node.
-
-        .. versionchanged:: 0.18
-           Added float values for fractions.
-
-    min_weight_fraction_leaf : float, default=0.0
-        The minimum weighted fraction of the sum total of weights (of all
-        the input samples) required to be at a leaf node. Samples have
-        equal weight when sample_weight is not provided.
-
-    max_features : {"sqrt", "log2", None}, int or float, default=1.0
-        The number of features to consider when looking for the best split:
-
-        - If int, then consider `max_features` features at each split.
-        - If float, then `max_features` is a fraction and
-          `round(max_features * n_features)` features are considered at each
-          split.
-        - If "auto", then `max_features=n_features`.
-        - If "sqrt", then `max_features=sqrt(n_features)`.
-        - If "log2", then `max_features=log2(n_features)`.
-        - If None or 1.0, then `max_features=n_features`.
-
-        .. note::
-            The default of 1.0 is equivalent to bagged trees and more
-            randomness can be achieved by setting smaller values, e.g. 0.3.
-
-        .. versionchanged:: 1.1
-            The default of `max_features` changed from `"auto"` to 1.0.
-
-        .. deprecated:: 1.1
-            The `"auto"` option was deprecated in 1.1 and will be removed
-            in 1.3.
-
-        Note: the search for a split does not stop until at least one
-        valid partition of the node samples is found, even if it requires to
-        effectively inspect more than ``max_features`` features.
-
-    max_leaf_nodes : int, default=None
-        Grow trees with ``max_leaf_nodes`` in best-first fashion.
-        Best nodes are defined as relative reduction in impurity.
-        If None then unlimited number of leaf nodes.
-
-    min_impurity_decrease : float, default=0.0
-        A node will be split if this split induces a decrease of the impurity
-        greater than or equal to this value.
-
-        The weighted impurity decrease equation is the following::
-
-            N_t / N * (impurity - N_t_R / N_t * right_impurity
-                                - N_t_L / N_t * left_impurity)
-
-        where ``N`` is the total number of samples, ``N_t`` is the number of
-        samples at the current node, ``N_t_L`` is the number of samples in the
-        left child, and ``N_t_R`` is the number of samples in the right child.
-
-        ``N``, ``N_t``, ``N_t_R`` and ``N_t_L`` all refer to the weighted sum,
-        if ``sample_weight`` is passed.
-
-        .. versionadded:: 0.19
-
-    bootstrap : bool, default=False
-        Whether bootstrap samples are used when building trees. If False, the
-        whole dataset is used to build each tree.
-
-    oob_score : bool, default=False
-        Whether to use out-of-bag samples to estimate the generalization score.
-        Only available if bootstrap=True.
-
-    n_jobs : int, default=None
-        The number of jobs to run in parallel. :meth:`fit`, :meth:`predict`,
-        :meth:`decision_path` and :meth:`apply` are all parallelized over the
-        trees. ``None`` means 1 unless in a :obj:`joblib.parallel_backend`
-        context. ``-1`` means using all processors. See :term:`Glossary
-        <n_jobs>` for more details.
-
-    random_state : int, RandomState instance or None, default=None
-        Controls 3 sources of randomness:
-
-        - the bootstrapping of the samples used when building trees
-          (if ``bootstrap=True``)
-        - the sampling of the features to consider when looking for the best
-          split at each node (if ``max_features < n_features``)
-        - the draw of the splits for each of the `max_features`
-
-        See :term:`Glossary <random_state>` for details.
-
-    verbose : int, default=0
-        Controls the verbosity when fitting and predicting.
-
-    warm_start : bool, default=False
-        When set to ``True``, reuse the solution of the previous call to fit
-        and add more estimators to the ensemble, otherwise, just fit a whole
-        new forest. See :term:`the Glossary <warm_start>`.
-
-    ccp_alpha : non-negative float, default=0.0
-        Complexity parameter used for Minimal Cost-Complexity Pruning. The
-        subtree with the largest cost complexity that is smaller than
-        ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
-        :ref:`minimal_cost_complexity_pruning` for details.
-
-        .. versionadded:: 0.22
-
-    max_samples : int or float, default=None
-        If bootstrap is True, the number of samples to draw from X
-        to train each base estimator.
-
-        - If None (default), then draw `X.shape[0]` samples.
-        - If int, then draw `max_samples` samples.
-        - If float, then draw `max_samples * X.shape[0]` samples. Thus,
-          `max_samples` should be in the interval `(0.0, 1.0]`.
-
-        .. versionadded:: 0.22
-
-    Attributes
-    ----------
-    base_estimator_ : ExtraTreeRegressor
-        The child estimator template used to create the collection of fitted
-        sub-estimators.
-
-    estimators_ : list of DecisionTreeRegressor
-        The collection of fitted sub-estimators.
-
-    feature_importances_ : ndarray of shape (n_features,)
-        The impurity-based feature importances.
-        The higher, the more important the feature.
-        The importance of a feature is computed as the (normalized)
-        total reduction of the criterion brought by that feature.  It is also
-        known as the Gini importance.
-
-        Warning: impurity-based feature importances can be misleading for
-        high cardinality features (many unique values). See
-        :func:`sklearn.inspection.permutation_importance` as an alternative.
-
-    n_features_ : int
-        The number of features.
-
-        .. deprecated:: 1.0
-            Attribute `n_features_` was deprecated in version 1.0 and will be
-            removed in 1.2. Use `n_features_in_` instead.
-
-    n_features_in_ : int
-        Number of features seen during :term:`fit`.
-
-        .. versionadded:: 0.24
-
-    feature_names_in_ : ndarray of shape (`n_features_in_`,)
-        Names of features seen during :term:`fit`. Defined only when `X`
-        has feature names that are all strings.
-
-        .. versionadded:: 1.0
-
-    n_outputs_ : int
-        The number of outputs.
-
-    oob_score_ : float
-        Score of the training dataset obtained using an out-of-bag estimate.
-        This attribute exists only when ``oob_score`` is True.
-
-    oob_prediction_ : ndarray of shape (n_samples,) or (n_samples, n_outputs)
-        Prediction computed with out-of-bag estimate on the training set.
-        This attribute exists only when ``oob_score`` is True.
-
-    See Also
-    --------
-    ExtraTreesClassifier : An extra-trees classifier with random splits.
-    RandomForestClassifier : A random forest classifier with optimal splits.
-    RandomForestRegressor : Ensemble regressor using trees with optimal splits.
-
-    Notes
-    -----
-    The default values for the parameters controlling the size of the trees
-    (e.g. ``max_depth``, ``min_samples_leaf``, etc.) lead to fully grown and
-    unpruned trees which can potentially be very large on some data sets. To
-    reduce memory consumption, the complexity and size of the trees should be
-    controlled by setting those parameter values.
-
-    References
-    ----------
-    .. [1] P. Geurts, D. Ernst., and L. Wehenkel, "Extremely randomized trees",
-           Machine Learning, 63(1), 3-42, 2006.
-
-    Examples
-    --------
-    >>> from sklearn.datasets import load_diabetes
-    >>> from sklearn.model_selection import train_test_split
-    >>> from sklearn.ensemble import ExtraTreesRegressor
-    >>> X, y = load_diabetes(return_X_y=True)
-    >>> X_train, X_test, y_train, y_test = train_test_split(
-    ...     X, y, random_state=0)
-    >>> reg = ExtraTreesRegressor(n_estimators=100, random_state=0).fit(
-    ...    X_train, y_train)
-    >>> reg.score(X_test, y_test)
-    0.2727...
-    """
-
-    def __init__(
-        self,
-        n_estimators=100,
-        *,
-        criterion="squared_error",
-        max_depth=None,
-        min_samples_split=2,
-        min_samples_leaf=1,
-        min_weight_fraction_leaf=0.0,
-        max_features=1.0,
-        max_leaf_nodes=None,
-        min_impurity_decrease=0.0,
-
-        # 2D parameters:
-        ax_min_samples_leaf=1,
-        ax_min_weight_fraction_leaf=None,
-        ax_max_features=None,
-
-        bootstrap=False,
-        oob_score=False,
-        n_jobs=None,
-        random_state=None,
-        verbose=0,
-        warm_start=False,
-        ccp_alpha=0.0,
-        max_samples=None,
-    
-        # PBCT-specific:
-        prediction_weights="uniform",
-    ):
-        super().__init__(
-            base_estimator=BiclusteringExtraTreeRegressor(),
-            n_estimators=n_estimators,
-            estimator_params=(
-                "criterion",
-                "max_depth",
-                "min_samples_split",
-                "min_samples_leaf",
-                "min_weight_fraction_leaf",
-                "max_features",
-                "max_leaf_nodes",
-                "min_impurity_decrease",
-                "random_state",
-                "ccp_alpha",
-
-                # 2D parameters:
-                "ax_min_samples_leaf",
-                "ax_min_weight_fraction_leaf",
-                "ax_max_features",
-
-                # PBCT-specific:
-                "prediction_weights",
-            ),
-            bootstrap=bootstrap,
-            oob_score=oob_score,
-            n_jobs=n_jobs,
-            random_state=random_state,
-            verbose=verbose,
-            warm_start=warm_start,
-            max_samples=max_samples,
-        )
-
-        self.criterion = criterion
-        self.max_depth = max_depth
-        self.min_samples_split = min_samples_split
-        self.min_samples_leaf = min_samples_leaf
-        self.min_weight_fraction_leaf = min_weight_fraction_leaf
-        self.max_features = max_features
-        self.max_leaf_nodes = max_leaf_nodes
-        self.min_impurity_decrease = min_impurity_decrease
-        self.ccp_alpha = ccp_alpha
-
-        # 2D parameters:
-        self.ax_min_samples_leaf=ax_min_samples_leaf
-        self.ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf
-        self.ax_max_features=ax_max_features
-
-        # PBCT-specific:
-        self.prediction_weights=prediction_weights
+        self.min_rows_split = min_rows_split
+        self.min_cols_split = min_cols_split
+        self.min_rows_leaf = min_rows_leaf
+        self.min_cols_leaf = min_cols_leaf
+        self.min_row_weight_fraction_leaf = min_row_weight_fraction_leaf
+        self.min_col_weight_fraction_leaf = min_col_weight_fraction_leaf
+        self.max_row_features = max_row_features
+        self.max_col_features = max_col_features
+        self.bipartite_adapter = bipartite_adapter
+        self.prediction_weights = prediction_weights
