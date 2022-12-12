@@ -12,9 +12,10 @@ from sklearn.utils._tags import _safe_tags
 from sklearn.utils.validation import check_is_fitted
 from sklearn.exceptions import NotFittedError
 from sklearn.utils import check_random_state
-from .melter import row_cartesian_product
+from .melter import melt_multipartite_dataset
 from .utils import check_multipartite_params
 from hypertrees.base import BaseMultipartiteEstimator
+from hypertrees.utils import _X_is_multipartite
 
 
 def _estimator_has(attr):
@@ -108,95 +109,72 @@ class GlobalSingleOutputWrapper(BaseMultipartiteEstimator, MetaEstimatorMixin):
         self.random_state = random_state
         self.subsample_negatives = subsample_negatives
 
-    def melt_Xy(self, X, y=None):
-        """Melt bipartite input.
-        
-        If X is a list of Xi feature matrices, one for each bipartite group,
-        convert it to traditional data format by generating concatenations of
-        rows from X[0] with rows from X[1].
-        """
-        if not isinstance(X, list):  # TODO: better way to decide.
-            return X, y  # Already molten input.
-
-        X = row_cartesian_product(X) 
-
-        if y is None:
+    def _melt_input(self, X, y=None):
+        if not _X_is_multipartite(X):
             return X, y
-        if not np.isin(y, (0, 1)).all():
-            raise ValueError("y must have only 0 or 1 elements.")
 
-        y = y.reshape(-1)
-
-        if self.subsample_negatives:
-            random_state = check_random_state(self.random_state)
-
-            mask = (y == 1)
-            n_positives = mask.sum()
-            prob = ~mask
-            prob = prob/prob.sum()
-
-            zeros_to_keep = random_state.choice(
-                y.size, size=n_positives, replace=False, p=prob)
-            
-            mask[zeros_to_keep] = True
-            X, y = X[mask], y[mask]
-        
-        return X, y
+        return melt_multipartite_dataset(
+            X,
+            y,
+            subsample_negatives=self.subsample_negatives,
+            random_state=self.random_state_,
+        )
 
     def fit(self, X, y=None, **fit_params):
-        Xt, yt = self.melt_Xy(X, y=y)
+        self.random_state_ = check_random_state(self.random_state)
+        Xt, yt = self._melt_input(X, y=y)
         self.estimator = clone(self.estimator)
         self.estimator.fit(X=Xt, y=yt, **fit_params)
         return self
 
     @available_if(_estimator_has("predict"))
     def predict(self, X):
-        X, _ = self.melt_Xy(X, y=None)
+        X, _ = self._melt_input(X)
         return self.estimator.predict(X)
 
     @available_if(_estimator_has("fit_predict"))
     def fit_predict(self, X, y=None, **fit_params):
-        Xt, yt = self.melt_Xy(X, y=y)
+        Xt, yt = self._melt_input(X, y=y)
         return self.estimator.fit_predict(Xt, yt, **fit_params)
 
     @available_if(_estimator_has("predict_proba"))
     def predict_proba(self, X, **predict_proba_params):
-        X, _ = self.melt_Xy(X, y=None)
+        X, _ = self._melt_input(X)
         return self.estimator.predict_proba(X, **predict_proba_params)
 
     @available_if(_estimator_has("decision_function"))
     def decision_function(self, X):
-        X, _ = self.melt_Xy(X, y=None)
+        X, _ = self._melt_input(X)
         return self.estimator.decision_function(X)
 
     @available_if(_estimator_has("score_samples"))
     def score_samples(self, X):
-        X, _ = self.melt_Xy(X, y=None)
+        X, _ = self._melt_input(X)
         return self.estimator.score_samples(X)
 
     @available_if(_estimator_has("predict_log_proba"))
     def predict_log_proba(self, X, **predict_log_proba_params):
-        X, _ = self.melt_Xy(X, y=None)
+        X, _ = self._melt_input(X)
         return self.estimator.predict_log_proba(X, **predict_log_proba_params)
 
     @available_if(_estimator_has("transform"))
     def transform(self, X):
-        Xt, _ = self.melt_Xy(X, y=None)
+        Xt, _ = self._melt_input(X)
         return self.transform(Xt)
 
     @available_if(_estimator_has("fit_transform"))
     def fit_transform(self, X, y=None, **fit_params):
-        Xt, yt = self.melt_Xy(X, y=y)
+        Xt, yt = self._melt_input(X, y=y)
         return self.estimator.fit_transform(Xt, yt, **fit_params)
         
     @available_if(_estimator_has("inverse_transform"))
     def inverse_transform(self, Xt):
-        X, _ = self.melt_Xy(Xt, y=None)
+        X, _ = self._melt_input(Xt)
         return self.estimator.inverse_transform(X)
 
     @available_if(_estimator_has("score"))
     def score(self, X, y=None, sample_weight=None):
-        X, y = self.melt_Xy(X, y=y)
+        X, y = self._melt_input(X, y=y)
         score_params = {}
         if sample_weight is not None:
             score_params["sample_weight"] = sample_weight

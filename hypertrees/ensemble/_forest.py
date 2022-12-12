@@ -113,11 +113,16 @@ def _get_n_samples_bootstrap_nd(n_samples, max_samples):
         The total number of samples to draw from each axis for the
         bootstrap sample.
     """
+    if isinstance(max_samples, float):
+        max_samples = max_samples ** (1/len(n_samples))
+
     if not isinstance(max_samples, Iterable):
         max_samples = [max_samples for _ in n_samples]
 
-    return tuple(_get_n_samples_bootstrap(ns, ms)
-                 for ns, ms in zip(n_samples, max_samples))
+    return tuple(
+        _get_n_samples_bootstrap(ns, ms)
+        for ns, ms in zip(n_samples, max_samples)
+    )
 
 
 def _generate_sample_indices_nd(random_state, n_samples, n_samples_bootstrap):
@@ -786,7 +791,7 @@ class BipartiteRandomForestRegressor(
         min_samples_split=2,
         min_samples_leaf=1,
         min_weight_fraction_leaf=0.0,
-        max_features=None,
+        max_features=1.0,
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,
         bootstrap=True,
@@ -1143,7 +1148,7 @@ class BipartiteExtraTreesRegressor(
         min_samples_split=2,
         min_samples_leaf=1,
         min_weight_fraction_leaf=0.0,
-        max_features=None,
+        max_features=1.0,
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,
         bootstrap=False,

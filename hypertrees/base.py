@@ -167,6 +167,7 @@ class MultipartiteTransformerMixin(TransformerMixin):
     """Mixin for multipartite transformers."""
 
 
+# FIXME: make it consistent with imblearn hierarchy
 class MultipartiteSamplerMixin(BaseMultipartiteEstimator, SamplerMixin):
     pass
 

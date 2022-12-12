@@ -18,7 +18,7 @@ from hypertrees.tree._nd_classes import (
 )
 from hypertrees.melter import row_cartesian_product
 
-from make_examples import make_interaction_regression, make_interaction_data
+from make_examples import make_interaction_blobs, make_interaction_regression, make_interaction_data
 from test_utils import assert_equal_dicts, stopwatch, parse_args, gen_mock_data, melt_2d_data
 
 # from sklearn.tree._tree import DTYPE_t, DOUBLE_t
@@ -114,18 +114,24 @@ def compare_trees(
     ) | params)
 
     with stopwatch():
-        XX, Y, x, y, gen_tree = make_interaction_regression(
+        # XX, Y, x, y, gen_tree = make_interaction_regression(
+        #     return_molten=True,
+        #     return_tree=True,
+        #     n_samples=params['n_samples'],
+        #     n_features=params['n_features'],
+        #     noise=params['noise'],
+        #     random_state=random_state,
+        #     max_depth=max_gen_depth,
+        #     n_targets=params.get('n_targets'),
+        #     max_target=1000,
+        # )
+        XX, Y, x, y = make_interaction_blobs(
             return_molten=True,
-            return_tree=True,
             n_samples=params['n_samples'],
             n_features=params['n_features'],
-            noise=params['noise'],
             random_state=random_state,
-            max_depth=max_gen_depth,
-            n_targets=params.get('n_targets'),
-            max_target=1000,
+            noise=params['noise'],
         )
-        x, y = row_cartesian_product(XX), Y.reshape(-1)
 
     # NOTE on ExtraTrees:
     # Even with the same random_state, the way 2d splitter uses this random
