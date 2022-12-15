@@ -1,17 +1,29 @@
 import numpy as np
-from imblearn.base import BaseSampler
+from sklearn.utils.validation import check_random_state
+from sklearn.utils._param_validation import validate_params
+from hypertrees.base import (
+    BaseBipartiteEstimator,
+    BaseMultipartiteSampler,
+)
+from hypertrees.utils import _X_is_multipartite
+
+__all__ = [
+    "BipartiteMelter",
+    "MultiPartiteMelter",
+    "melt_multipartite_dataset",
+]
 
 
-class Melter2D(BaseSampler):
-    """Convert a 2D GMO database to a simpler GSO database.
+class BipartiteMelter(BaseMultipartiteSampler, BaseBipartiteEstimator):
+    """Convert a bipartite GMO database to a simpler GSO database.
 
-    Convert a 2D interaction problem, where there are two feature matrices in X,
-    (one for each axis) and an interaction matrix y to a simpler usual format
-    where each sample is a combination of samples from X[0] and X[1].
+    Convert a bipartite interaction problem, where there are two feature
+    matrices in X (one for each axis) and an interaction matrix y to a simpler
+    usual format where each sample is a combination of samples from X[0] and
+    X[1].
+
+    Slightly faster than MultipartiteMelter
     """
-    def fit_resample(self, X, y, W=1, seed=None):
-        # FIXME: we are bypassing input checking.
-        return self._fit_resample(X, y)
 
     def _fit_resample(self, X, y):
         X1, X2 = X
@@ -23,18 +35,21 @@ class Melter2D(BaseSampler):
         return melted_X, melted_y
 
 
-class MelterND(BaseSampler):
+class MultipartiteMelter(BaseMultipartiteSampler):
     """Convert a n-dimensional GMO database to a simpler GSO database."""
-    def fit_resample(self, X, y, W=1, seed=None):
-        # FIXME: we are bypassing input checking.
-        return self._fit_resample(X, y)
+
+    def __init__(self, subsample_negatives=False, random_state=None):
+        self.subsample_negatives = subsample_negatives
+        self.random_state = random_state
 
     def _fit_resample(self, X, y=None):
-        melted_X = row_cartesian_product(X)
-        if y is None:
-            return melted_X
-        melted_y = y.reshape(-1)
-        return melted_X, melted_y
+        return melt_multipartite_dataset(
+            X,
+            y,
+            subsample_negatives=self.subsample_negatives,
+            # Delegating check_random_state since samplers are stateless
+            random_state=self.random_state,
+        )
 
 
 def row_cartesian_product(X):
@@ -67,3 +82,60 @@ def row_cartesian_product(X):
     ])
 
     return result
+
+
+@validate_params({
+    'X': ['array-like'],
+    'y': ['array-like', None],
+    'subsample_negatives': ['boolean'],
+    'random_state': ['random_state'],
+})
+def melt_multipartite_dataset(
+    X, y=None, subsample_negatives=False, random_state=None,
+):
+    """Melt bipartite input.
+    
+    If X is a list of Xi feature matrices, one for each bipartite group,
+    convert it to traditional data format by generating concatenations of
+    rows from X[0] with rows from X[1].
+    """
+    if not _X_is_multipartite(X):
+        raise ValueError(
+            "Tried to melt monopartite dataset. X must be a list/tuple of "
+            "array-likes."
+        )
+    X = row_cartesian_product(X) 
+    if y is None:
+        return X, y
+
+    y = y.reshape(-1)
+
+    if subsample_negatives:
+        if set(np.unique(y)) != {0, 1}:
+            raise ValueError(
+                "y must have only 0 or 1 elements if subsample_negatives=True."
+            )
+
+        random_state = check_random_state(random_state)
+        pos_negatives = np.nonzero(1 - y)[0]
+        # difference in number of positives vs number of negatives
+        # i. e. number of negatives minus number of positives
+        delta = 2 * pos_negatives.size - y.size
+
+        if delta < 0:
+            raise ValueError(
+                "There must be less positive than negative values to subsample"
+                "negatives."
+            )
+
+        # Subsample negatives to have the same size as positives
+        negatives_to_del = random_state.choice(
+            pos_negatives,
+            replace=False,
+            size=delta,
+        )
+        X = np.delete(X, negatives_to_del, axis=0)
+        y = np.delete(y, negatives_to_del, axis=0)
+    
+    return X, y
+

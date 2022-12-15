@@ -117,7 +117,8 @@ celerybeat.pid
 .env
 .venv
 env/
-venv/
+env_stable/
+env/
 ENV/
 env.bak/
 venv.bak/
@@ -182,3 +183,4 @@ tags
 
 ### Custom
 bak/
+.vscode/

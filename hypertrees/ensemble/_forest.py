@@ -41,6 +41,7 @@ Single and multi-output problems are both handled.
 
 
 import numbers
+from typing import Iterable
 from warnings import catch_warnings, simplefilter, warn
 import threading
 
@@ -69,21 +70,21 @@ from sklearn.utils.validation import (
 )
 from sklearn.utils.validation import _num_samples
 
-##### 
-from typing import Iterable
 from sklearn.ensemble._forest import _get_n_samples_bootstrap
 from sklearn.ensemble._forest import _generate_sample_indices
 from sklearn.ensemble._forest import BaseForest, ForestRegressor
 
 from ..melter import row_cartesian_product
 from ..tree import (
-    DecisionTreeRegressor2D,
-    ExtraTreeRegressor2D,
+    BipartiteDecisionTreeRegressor,
+    BipartiteExtraTreeRegressor,
 )
+from ..base import BaseBipartiteEstimator, MultipartiteRegressorMixin
+from ..utils import _X_is_multipartite
 
 __all__ = [
-    "RandomForestRegressor2D",
-    "ExtraTreesRegressor2D",
+    "BipartiteRandomForestRegressor",
+    "BipartiteExtraTreesRegressor",
 ]
 
 MAX_INT = np.iinfo(np.int32).max
@@ -112,11 +113,16 @@ def _get_n_samples_bootstrap_nd(n_samples, max_samples):
         The total number of samples to draw from each axis for the
         bootstrap sample.
     """
+    if isinstance(max_samples, float):
+        max_samples = max_samples ** (1/len(n_samples))
+
     if not isinstance(max_samples, Iterable):
         max_samples = [max_samples for _ in n_samples]
 
-    return tuple(_get_n_samples_bootstrap(ns, ms)
-                 for ns, ms in zip(n_samples, max_samples))
+    return tuple(
+        _get_n_samples_bootstrap(ns, ms)
+        for ns, ms in zip(n_samples, max_samples)
+    )
 
 
 def _generate_sample_indices_nd(random_state, n_samples, n_samples_bootstrap):
@@ -191,9 +197,11 @@ def _parallel_build_trees_nd(
         curr_sample_weight *= sample_counts
 
         if class_weight == "balanced_subsample":
-            raise NotImplementedError(
-                "class_weight='balanced_subsample' not implemented.")
-            curr_sample_weight *= compute_sample_weight("balanced", y, indices=indices)
+            curr_sample_weight *= compute_sample_weight(
+                "balanced",
+                y.reshape(-1),
+                indices=indices,
+            )
 
         tree.fit(X, y, sample_weight=curr_sample_weight, check_input=False)
     else:
@@ -202,13 +210,22 @@ def _parallel_build_trees_nd(
     return tree
 
 
-class BaseForestND(BaseForest, metaclass=ABCMeta):
+class BaseMultipartiteForest(
+    BaseForest,
+    BaseBipartiteEstimator,
+    metaclass=ABCMeta,
+):
     """
     Base class for forests of ND trees.
 
     Warning: This class should not be used directly. Use derived classes
     instead.
     """
+
+    _parameter_constraints: dict = {
+        **BaseForest._parameter_constraints,
+    }
+
     def fit(self, X, y, sample_weight=None):
         """
         Build a forest of trees from the training set (X, y).
@@ -236,31 +253,24 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
         self : object
             Fitted estimator.
         """
+        self._validate_params()
+
         # Validate or convert input data
         if issparse(y):
-            raise ValueError("sparse y is not supported.")
-
-        check_X_params = dict(dtype=DTYPE, accept_sparse="csc")
-        check_y_params = dict(multi_output=True)
-
-        y = self._validate_data(X="no_validation", y=y, **check_y_params)
+            raise ValueError("sparse multilabel-indicator for y is not supported.")
+        X, y = self._validate_data(
+            X, y, accept_sparse="csc", dtype=DTYPE,  # multi_output=True, 
+        )
+        if sample_weight is not None:
+            sample_weight = _check_sample_weight(
+                sample_weight, row_cartesian_product(X),
+            )
 
         for ax in range(len(X)):
-            X[ax] = self._validate_data(X[ax], **check_X_params, reset=False)
             if issparse(X[ax]):
                 # Pre-sort indices to avoid that each individual tree of the
                 # ensemble sorts the indices.
                 X[ax].sort_indices()
-
-        # FIXME
-        # if sample_weight is not None:
-        #     sample_weight = _check_sample_weight(sample_weight, X)
-
-        # NOTE: n_features_in_ must be set after calling self._validate_data.
-        #       Otherwise, the method will try to compare self.n_features_in_
-        #       to X[ax].shape[1] and throw an error when they do not match.
-        self.ax_n_features_in_ = [Xax.shape[1] for Xax in X]
-        self.n_features_in_ = sum(self.ax_n_features_in_)
 
         y = np.atleast_1d(y)
         if y.ndim == 2 and y.shape[1] == 1:
@@ -290,7 +300,10 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
                 )
 
         # self.n_outputs_ = y.shape[1]
-        self.n_outputs_ = 1
+        if self.prediction_weights == "raw":
+            self.n_outputs_ = np.sum(y.shape)  # TODO: bipartite multioutput
+        else:
+            self.n_outputs_ = 1
 
         y, expanded_class_weight = self._validate_y_class_weight(y)
 
@@ -384,20 +397,22 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
             self.estimators_.extend(trees)
 
         if self.oob_score:
-            # FIXME: type_of_target doesn't know about 2D data.
-            # y_type = type_of_target(y)
-            # if y_type in ("multiclass-multioutput", "unknown"):
-            #     # FIXME: we could consider to support multiclass-multioutput if
-            #     # we introduce or reuse a constructor parameter (e.g.
-            #     # oob_score) allowing our user to pass a callable defining the
-            #     # scoring strategy on OOB sample. (sklearn)
-            #     raise ValueError(
-            #         "The type of target cannot be used to compute OOB "
-            #         f"estimates. Got {y_type} while only the following are "
-            #         "supported: continuous, continuous-multioutput, binary, "
-            #         "multiclass, multilabel-indicator."
-            #     )
-            self._set_oob_score_and_attributes(X, y)
+            y_ = y.reshape(-1)
+            X_ = row_cartesian_product(X)
+
+            y_type = type_of_target(y_)
+            if y_type in ("multiclass-multioutput", "unknown"):
+                # FIXME: we could consider to support multiclass-multioutput if
+                # we introduce or reuse a constructor parameter (e.g.
+                # oob_score) allowing our user to pass a callable defining the
+                # scoring strategy on OOB sample. (sklearn)
+                raise ValueError(
+                    "The type of target cannot be used to compute OOB "
+                    f"estimates. Got {y_type} while only the following are "
+                    "supported: continuous, continuous-multioutput, binary, "
+                    "multiclass, multilabel-indicator."
+                )
+            self._set_oob_score_and_attributes(X_, y_)
 
         # Decapsulate classes_ attributes
         if hasattr(self, "classes_") and self.n_outputs_ == 1:
@@ -406,6 +421,7 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
 
         return self
 
+    # TODO: avoid boilerplate from sklearn
     def _compute_oob_predictions(self, X, y):
         """Compute and set the OOB score.
 
@@ -475,23 +491,17 @@ class BaseForestND(BaseForest, metaclass=ABCMeta):
     def _validate_X_predict(self, X):
         """ Validate X whenever one tries to predict, apply, predict_proba.
         """
-        if isinstance(X, (tuple, list)):  # FIXME: better criteria.
+        if _X_is_multipartite(X):
             X = row_cartesian_product(X)
 
         return super()._validate_X_predict(X)
 
 
-class ForestRegressorND(BaseForestND, ForestRegressor, RegressorMixin, metaclass=ABCMeta):
-    """
-    Base class for forest of trees-based regressors.
-
-    Warning: This class should not be used directly. Use derived classes
-    instead.
-    """
-    pass
-
-
-class RandomForestRegressor2D(ForestRegressorND):
+class BipartiteRandomForestRegressor(
+    BaseMultipartiteForest,
+    ForestRegressor,
+    MultipartiteRegressorMixin,
+):
     """
     A random forest regressor.
 
@@ -573,7 +583,7 @@ class RandomForestRegressor2D(ForestRegressorND):
         the input samples) required to be at a leaf node. Samples have
         equal weight when sample_weight is not provided.
 
-    max_features : {"sqrt", "log2", None}, int or float, default=1.0
+    max_features : {"sqrt", "log2", None}, int or float, default=None
         The number of features to consider when looking for the best split:
 
         - If int, then consider `max_features` features at each split.
@@ -674,7 +684,7 @@ class RandomForestRegressor2D(ForestRegressorND):
 
     Attributes
     ----------
-    base_estimator_ : DecisionTreeRegressor
+    estimator_ : DecisionTreeRegressor
         The child estimator template used to create the collection of fitted
         sub-estimators.
 
@@ -766,6 +776,12 @@ class RandomForestRegressor2D(ForestRegressorND):
     [-8.32987858]
     """
 
+    _parameter_constraints: dict = {
+        **ForestRegressor._parameter_constraints,
+        **BipartiteDecisionTreeRegressor._parameter_constraints,
+    }
+    _parameter_constraints.pop("splitter")
+
     def __init__(
         self,
         n_estimators=100,
@@ -778,12 +794,6 @@ class RandomForestRegressor2D(ForestRegressorND):
         max_features=1.0,
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,
-
-        # 2D parameters:
-        ax_min_samples_leaf=1,
-        ax_min_weight_fraction_leaf=None,
-        ax_max_features=None,
-
         bootstrap=True,
         oob_score=False,
         n_jobs=None,
@@ -792,9 +802,20 @@ class RandomForestRegressor2D(ForestRegressorND):
         warm_start=False,
         ccp_alpha=0.0,
         max_samples=None,
+        # Bipartite parameters:
+        min_rows_split=1,  # Not 2, to still allow splitting on the other axis
+        min_cols_split=1,
+        min_rows_leaf=1,
+        min_cols_leaf=1,
+        min_row_weight_fraction_leaf=0.0,
+        min_col_weight_fraction_leaf=0.0,
+        max_row_features=None,
+        max_col_features=None,
+        bipartite_adapter="global_single_output",
+        prediction_weights=None,
     ):
         super().__init__(
-            base_estimator=DecisionTreeRegressor2D(),
+            estimator=BipartiteDecisionTreeRegressor(),
             n_estimators=n_estimators,
             estimator_params=(
                 "criterion",
@@ -807,11 +828,17 @@ class RandomForestRegressor2D(ForestRegressorND):
                 "min_impurity_decrease",
                 "random_state",
                 "ccp_alpha",
-
-                # 2D parameters:
-                "ax_min_samples_leaf",
-                "ax_min_weight_fraction_leaf",
-                "ax_max_features",
+                # Bipartite parameters:
+                "min_rows_split",
+                "min_cols_split",
+                "min_rows_leaf",
+                "min_cols_leaf",
+                "min_row_weight_fraction_leaf",
+                "min_col_weight_fraction_leaf",
+                "max_row_features",
+                "max_col_features",
+                "bipartite_adapter",
+                "prediction_weights",
             ),
             bootstrap=bootstrap,
             oob_score=oob_score,
@@ -832,13 +859,23 @@ class RandomForestRegressor2D(ForestRegressorND):
         self.min_impurity_decrease = min_impurity_decrease
         self.ccp_alpha = ccp_alpha
 
-        # 2D parameters:
-        self.ax_min_samples_leaf=ax_min_samples_leaf
-        self.ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf
-        self.ax_max_features=ax_max_features
+        self.min_rows_split = min_rows_split
+        self.min_cols_split = min_cols_split
+        self.min_rows_leaf = min_rows_leaf
+        self.min_cols_leaf = min_cols_leaf
+        self.min_row_weight_fraction_leaf = min_row_weight_fraction_leaf
+        self.min_col_weight_fraction_leaf = min_col_weight_fraction_leaf
+        self.max_row_features = max_row_features
+        self.max_col_features = max_col_features
+        self.bipartite_adapter = bipartite_adapter
+        self.prediction_weights = prediction_weights
 
 
-class ExtraTreesRegressor2D(ForestRegressorND):
+class BipartiteExtraTreesRegressor(
+    BaseMultipartiteForest,
+    ForestRegressor,
+    MultipartiteRegressorMixin,
+):
     """
     An extra-trees regressor.
 
@@ -911,7 +948,7 @@ class ExtraTreesRegressor2D(ForestRegressorND):
         the input samples) required to be at a leaf node. Samples have
         equal weight when sample_weight is not provided.
 
-    max_features : {"sqrt", "log2", None}, int or float, default=1.0
+    max_features : {"sqrt", "log2", None}, int or float, default=None
         The number of features to consider when looking for the best split:
 
         - If int, then consider `max_features` features at each split.
@@ -1016,7 +1053,7 @@ class ExtraTreesRegressor2D(ForestRegressorND):
 
     Attributes
     ----------
-    base_estimator_ : ExtraTreeRegressor
+    estimator_ : ExtraTreeRegressor
         The child estimator template used to create the collection of fitted
         sub-estimators.
 
@@ -1096,6 +1133,12 @@ class ExtraTreesRegressor2D(ForestRegressorND):
     0.2727...
     """
 
+    _parameter_constraints: dict = {
+        **ForestRegressor._parameter_constraints,
+        **BipartiteDecisionTreeRegressor._parameter_constraints,
+    }
+    _parameter_constraints.pop("splitter")
+
     def __init__(
         self,
         n_estimators=100,
@@ -1108,12 +1151,6 @@ class ExtraTreesRegressor2D(ForestRegressorND):
         max_features=1.0,
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,
-
-        # 2D parameters:
-        ax_min_samples_leaf=1,
-        ax_min_weight_fraction_leaf=None,
-        ax_max_features=None,
-
         bootstrap=False,
         oob_score=False,
         n_jobs=None,
@@ -1122,9 +1159,20 @@ class ExtraTreesRegressor2D(ForestRegressorND):
         warm_start=False,
         ccp_alpha=0.0,
         max_samples=None,
+        # Bipartite parameters:
+        min_rows_split=1,  # Not 2, to still allow splitting on the other axis
+        min_cols_split=1,
+        min_rows_leaf=1,
+        min_cols_leaf=1,
+        min_row_weight_fraction_leaf=0.0,
+        min_col_weight_fraction_leaf=0.0,
+        max_row_features=None,
+        max_col_features=None,
+        bipartite_adapter="global_single_output",
+        prediction_weights=None,
     ):
         super().__init__(
-            base_estimator=ExtraTreeRegressor2D(),
+            estimator=BipartiteExtraTreeRegressor(),
             n_estimators=n_estimators,
             estimator_params=(
                 "criterion",
@@ -1137,11 +1185,17 @@ class ExtraTreesRegressor2D(ForestRegressorND):
                 "min_impurity_decrease",
                 "random_state",
                 "ccp_alpha",
-
-                # 2D parameters:
-                "ax_min_samples_leaf",
-                "ax_min_weight_fraction_leaf",
-                "ax_max_features",
+                # Bipartite parameters:
+                "min_rows_split",
+                "min_cols_split",
+                "min_rows_leaf",
+                "min_cols_leaf",
+                "min_row_weight_fraction_leaf",
+                "min_col_weight_fraction_leaf",
+                "max_row_features",
+                "max_col_features",
+                "bipartite_adapter",
+                "prediction_weights",
             ),
             bootstrap=bootstrap,
             oob_score=oob_score,
@@ -1162,7 +1216,13 @@ class ExtraTreesRegressor2D(ForestRegressorND):
         self.min_impurity_decrease = min_impurity_decrease
         self.ccp_alpha = ccp_alpha
 
-        # 2D parameters:
-        self.ax_min_samples_leaf=ax_min_samples_leaf
-        self.ax_min_weight_fraction_leaf=ax_min_weight_fraction_leaf
-        self.ax_max_features=ax_max_features
+        self.min_rows_split = min_rows_split
+        self.min_cols_split = min_cols_split
+        self.min_rows_leaf = min_rows_leaf
+        self.min_cols_leaf = min_cols_leaf
+        self.min_row_weight_fraction_leaf = min_row_weight_fraction_leaf
+        self.min_col_weight_fraction_leaf = min_col_weight_fraction_leaf
+        self.max_row_features = max_row_features
+        self.max_col_features = max_col_features
+        self.bipartite_adapter = bipartite_adapter
+        self.prediction_weights = prediction_weights

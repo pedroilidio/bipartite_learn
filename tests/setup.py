@@ -3,7 +3,7 @@ from Cython.Build import cythonize
 import numpy
 
 extensions = [
-    Extension("splitter_test", ["splitter_test.pyx"],
+    Extension("tests.splitter_test", ["tests/splitter_test.pyx"],
         extra_compile_args=["-g"],  # maybe unnecessary.
         extra_link_args=["-g"],
         # define_macros=[  # Causes error.
@@ -21,7 +21,7 @@ extensions = [
 ]
 
 setup(
-    name='hypertrees tests',
+    name='hypertrees_tests',
     ext_modules=cythonize(
         extensions,
         gdb_debug=True,

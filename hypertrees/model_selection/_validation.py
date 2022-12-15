@@ -7,13 +7,19 @@ functions to validate the model.
 #         Olivier Grisel <olivier.grisel@ensta.org>
 #         Raghav RV <rvraghav93@gmail.com>
 #         Michal Karbownik <michakarbownik@gmail.com>
-# ND adapted by Pedro Ilídio.
+# ND adapted by Pedro Ilídio <ilidio@alumni.usp.br>.
 # License: BSD 3 clause
+
+import warnings
+import numbers
+import time
+from traceback import format_exc
+
+import numpy as np
+from joblib import Parallel, logger
 
 # New imports:
 import sklearn.utils
-import copy
-import itertools
 from sklearn.model_selection._validation import (
     _score,
     _normalize_score_results,
@@ -21,33 +27,15 @@ from sklearn.model_selection._validation import (
     _aggregate_score_dicts,
 )
 from sklearn.utils.validation import (
-    _check_fit_params,
     _make_indexable,
-    _num_samples,
 )
 from sklearn.utils._tags import _safe_tags
-from ._split import check_cv_nd, _check_train_test_combinations
-
-import warnings
-import numbers
-import time
-from traceback import format_exc
-from contextlib import suppress
-from collections import Counter
-
-import numpy as np
-import scipy.sparse as sp
-from joblib import Parallel, logger
-
 from sklearn.base import is_classifier, clone
-from sklearn.utils import indexable, check_random_state, _safe_indexing
 from sklearn.utils.fixes import delayed
-from sklearn.utils.metaestimators import _safe_split
 from sklearn.metrics import check_scoring
-from sklearn.metrics._scorer import _check_multimetric_scoring, _MultimetricScorer
-from sklearn.exceptions import FitFailedWarning
-from sklearn.model_selection._split import check_cv
-from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics._scorer import _check_multimetric_scoring
+
+from ._split import check_cv_nd, _check_train_test_combinations
 
 
 __all__ = [
@@ -70,9 +58,11 @@ def cross_validate_nd(
     return_train_score=False,
     return_estimator=False,
     error_score=np.nan,
+
     # ND specific:
     diagonal=False,
     train_test_combinations=None,
+    pairwise=False,  # possibility to override estimator._more_tags['pairwise']
 ):
     # TODO: ND adapt docs.
     """Evaluate metric(s) by cross-validation and also record fit/score times.
@@ -325,6 +315,7 @@ def cross_validate_nd(
             error_score=error_score,
             train_test_combinations=train_test_combinations,
             train_test_names=train_test_names,
+            pairwise=pairwise,
         )
         for train_test in splits_iter
     )
@@ -374,8 +365,11 @@ def _fit_and_score_nd(
     split_progress=None,
     candidate_progress=None,
     error_score=np.nan,
+
+    # ND specific:
     train_test_combinations=None,
     train_test_names=None,
+    pairwise=False,  # possibility to override estimator._more_tags['pairwise']
 ):
 
     """Fit estimator and compute scores for a given dataset split.
@@ -516,11 +510,10 @@ def _fit_and_score_nd(
         test_indices = [ax_train_test[is_test] for is_test, ax_train_test in
                         zip(is_test_tuple, train_test)]
         test_splits[ttc_name] = _safe_split_nd(
-            estimator, X, y, test_indices, train_indices)
+            estimator, X, y, test_indices, train_indices, pairwise=pairwise)
 
-
-    X_train, y_train = _safe_split_nd(estimator, X, y, train_indices)
-
+    X_train, y_train = _safe_split_nd(estimator, X, y, train_indices,
+                                      pairwise=pairwise)
     result = {}
     try:
         if y_train is None:
@@ -554,7 +547,7 @@ def _fit_and_score_nd(
         fit_time = time.time() - start_time
         test_scores = {}
         for ttc_name, (X_test, y_test) in test_splits.items():
-            test_scores[ttc_name+'_scores'] = _score(estimator, X_test, y_test.flatten(),
+            test_scores[ttc_name+'_scores'] = _score(estimator, X_test, y_test.reshape(-1),
                                                      scorer, error_score)
         score_time = time.time() - start_time - fit_time
 
@@ -590,7 +583,14 @@ def _fit_and_score_nd(
 
 
 # NOTE: Originally in sklearn.utils.metaestimators
-def _safe_split_nd(estimator, X, y, indices, train_indices=None):
+def _safe_split_nd(
+    estimator,
+    X,
+    y,
+    indices,
+    train_indices=None,
+    pairwise=False, # possibility to override estimator._more_tags['pairwise']
+):
     """Create subset of n-dimensional dataset.
 
     Slice X, y according to indices for n-dimensional cross-validation.
@@ -625,7 +625,11 @@ def _safe_split_nd(estimator, X, y, indices, train_indices=None):
         raise ValueError("Incompatible dimensions. One must ensure "
                          "len(X) == len(indices) == y.ndim")
 
-    if _safe_tags(estimator, key="pairwise"):
+    if pairwise and not _safe_tags(estimator, key="pairwise"):
+        warnings.warn("Setting pairwise=True, overriding estimator's "
+                      "pairwise=False tag.")
+
+    if pairwise or _safe_tags(estimator, key="pairwise"):
         X_subset = []
         for i in range(n_dim):
             Xi, ind = X[i], indices[i]

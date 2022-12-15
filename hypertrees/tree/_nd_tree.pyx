@@ -1,4 +1,5 @@
 # distutils: language = c++
+# cython: boundscheck=False
 from cpython cimport Py_INCREF, PyObject, PyTypeObject
 from libc.stdint cimport SIZE_MAX
 
@@ -125,19 +126,35 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
     """
     # TODO: define separate methods for split -> node data conversion and
     # evaluating stopping criteria.
-    # TODO: define axis-specific min_samples_leaf, min_samples_split and
-    # min_weight_leaf, turning them into arrays. A complication is that
-    # __cinit__ does not take arrays (pointers) as arguments, only python
-    # objects.
-    def __cinit__(self, Splitter2D splitter, SIZE_t min_samples_split,
-                  SIZE_t min_samples_leaf, double min_weight_leaf,
-                  SIZE_t max_depth, double min_impurity_decrease):
+    def __cinit__(
+        self,
+        Splitter2D splitter,
+        SIZE_t min_samples_split,
+        SIZE_t min_samples_leaf,
+        double min_weight_leaf,
+        SIZE_t max_depth,
+        double min_impurity_decrease,
+        # Bipartite parameters
+        SIZE_t min_rows_split=1,  # Not 2, to still allow split on the other axis
+        SIZE_t min_cols_split=1,
+        SIZE_t min_cols_leaf=1,
+        SIZE_t min_rows_leaf=1,
+        double min_row_weight_leaf=0.0,
+        double min_col_weight_leaf=0.0,
+    ):
         self.splitter = splitter
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
         self.min_weight_leaf = min_weight_leaf
         self.max_depth = max_depth
         self.min_impurity_decrease = min_impurity_decrease
+        # Bipartite parameters
+        self.min_rows_split = min_rows_split
+        self.min_cols_split = min_cols_split
+        self.min_rows_leaf = min_rows_leaf
+        self.min_cols_leaf = min_cols_leaf
+        self.min_row_weight_leaf = min_weight_leaf
+        self.min_col_weight_leaf = min_weight_leaf
 
     cpdef build(self, Tree tree, object X, np.ndarray y,
                 np.ndarray sample_weight=None,
@@ -164,12 +181,18 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
         cdef Splitter2D splitter = self.splitter
         cdef SIZE_t max_depth = self.max_depth
         cdef SIZE_t min_samples_leaf = self.min_samples_leaf
-        cdef double min_weight_leaf = self.min_weight_leaf
         cdef SIZE_t min_samples_split = self.min_samples_split
+        cdef double min_weight_leaf = self.min_weight_leaf
         cdef double min_impurity_decrease = self.min_impurity_decrease
 
-        # Recursive partition (without actual recursion)
-        # TODO: test sample_weight
+        # Bipartite parameters
+        cdef SIZE_t min_rows_leaf = self.min_rows_leaf
+        cdef SIZE_t min_cols_leaf = self.min_cols_leaf
+        cdef SIZE_t min_rows_split = self.min_rows_split
+        cdef SIZE_t min_cols_split = self.min_cols_split
+        cdef double min_row_weight_leaf = self.min_row_weight_leaf
+        cdef double min_col_weight_leaf = self.min_col_weight_leaf
+
         splitter.init(X, y, sample_weight_ptr)
 
         cdef SIZE_t[2] start, start_left, start_right
@@ -178,7 +201,9 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
         cdef SIZE_t parent
         cdef bint is_left
         cdef SIZE_t n_node_samples = splitter.n_samples
-        cdef double weighted_n_node_samples
+        cdef SIZE_t n_node_rows = splitter.n_rows
+        cdef SIZE_t n_node_cols = splitter.n_cols
+        cdef double weighted_n_node_samples[3]  # total samples, rows, columns
         cdef SplitRecord split
         cdef SIZE_t node_id
 
@@ -192,8 +217,8 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
         cdef stack[StackRecord2D] builder_stack
         cdef StackRecord2D stack_record
 
-        # FIXME: stack doesn't receive array elements without GIL. Would be nice
-        # to have a DOUBLE_t[2] start or end, for instance.
+        # TODO: test sample_weight
+        # Recursive partition (without actual recursion)
         with nogil:
             # push root node onto stack
             builder_stack.push({
@@ -223,22 +248,33 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                 impurity = stack_record.impurity
                 n_constant_features[0] = stack_record.n_constant_row_features
                 n_constant_features[1] = stack_record.n_constant_col_features
+                n_node_rows = end[0] - start[0]
+                n_node_cols = end[1] - start[1]
+                n_node_samples = n_node_rows * n_node_cols
 
-                n_node_samples = (end[0]-start[0]) * (end[1]-start[1])
-                splitter.node_reset(start, end, &weighted_n_node_samples)
+                splitter.node_reset(start, end, weighted_n_node_samples)
 
-                is_leaf = depth >= max_depth
-
-                is_leaf = (is_leaf or n_node_samples < min_samples_split
-                           or n_node_samples < 2 * min_samples_leaf or
-                           weighted_n_node_samples < 2 * min_weight_leaf)
+                is_leaf = (
+                    depth >= max_depth
+                    or n_node_samples < min_samples_split
+                    or n_node_samples < 2 * min_samples_leaf
+                    or weighted_n_node_samples[0] < 2 * min_weight_leaf
+                    # Bipartite parameters
+                    or n_node_rows < min_rows_split
+                    or n_node_cols < min_cols_split
+                    # Not times 2, to still allow splitting in the other axis
+                    or n_node_rows < min_rows_leaf 
+                    or n_node_cols < min_cols_split
+                    or weighted_n_node_samples[1] < 2 * min_row_weight_leaf
+                    or weighted_n_node_samples[2] < 2 * min_col_weight_leaf
+                )
 
                 if first:
                     impurity = splitter.node_impurity()
                     first = 0
 
                 # impurity == 0 with tolerance due to rounding errors
-                is_leaf = is_leaf or impurity <= EPSILON
+                is_leaf = is_leaf or impurity <= EPSILON  # TODO
 
                 if not is_leaf:
                     splitter.node_split(impurity, &split, n_constant_features)
@@ -253,7 +289,7 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                                          split.feature,
                                          split.threshold, impurity,
                                          n_node_samples,
-                                         weighted_n_node_samples)
+                                         weighted_n_node_samples[0])
 
                 if node_id == SIZE_MAX:
                     rc = -1

@@ -1,3 +1,4 @@
+# cython: boundscheck=False
 import copy
 import warnings
 from sklearn.tree._splitter cimport Splitter
@@ -31,9 +32,12 @@ cdef class Splitter2D:
     problem as described by Pliakos _et al._ (2018).
     """
     def __cinit__(
-            self, Splitter splitter_rows, Splitter splitter_cols,
-            RegressionCriterionWrapper2D criterion_wrapper,
-            min_samples_leaf, min_weight_leaf,
+        self,
+        Splitter splitter_rows,
+        Splitter splitter_cols,
+        CriterionWrapper2D criterion_wrapper,
+        min_samples_leaf,
+        min_weight_leaf,
     ):
         """Store each axis' splitter."""
         self.n_samples = 0
@@ -66,10 +70,11 @@ cdef class Splitter2D:
     def __setstate__(self, d):
         pass
 
-    cdef int init(self,
-                  object X,
-                  const DOUBLE_t[:, ::1] y,
-                  DOUBLE_t* sample_weight,
+    cdef int init(
+        self,
+        object X,
+        const DOUBLE_t[:, ::1] y,
+        DOUBLE_t* sample_weight,  # TODO: test sample_weight
     ) except -1:
         """Initialize the axes' splitters.
         Take in the input data X, the target Y, and optional sample weights.
@@ -89,44 +94,44 @@ cdef class Splitter2D:
             samples are fit closer than lower weight samples. If not provided,
             all samples are assumed to have uniform weight.
         """
-        # TODO: use memoryview's .transpose
-        # TODO: test sample_weight
-        cdef const DOUBLE_t[:, ::1] yT = np.ascontiguousarray(y.T)
-        # FIXME: only need to set criterion_wrapper.X* because 
-        # BaseDenseSplitter.X is not accessibe (sklearn problem).
-        self.criterion_wrapper.X_rows = np.ascontiguousarray(X[0], dtype=np.float64)
-        self.criterion_wrapper.X_cols = np.ascontiguousarray(X[1], dtype=np.float64)
-        self.n_row_features = X[0].shape[1]
-        self.shape[0] = y.shape[0]
-        self.shape[1] = y.shape[1]
-
         self.y = y
+        self.n_rows = y.shape[0]
+        self.n_cols = y.shape[1]
+
+        # FIXME: avoid storing y_transposed, X_rows and X_cols (use references)
+        self.X_rows = np.ascontiguousarray(X[0], dtype=np.float64)
+        self.X_cols = np.ascontiguousarray(X[1], dtype=np.float64)
+        self.y_transposed = y.T.copy()
+
+        self.n_row_features = self.X_rows.shape[1]
 
         if sample_weight == NULL:
             self.row_sample_weight = NULL
             self.col_sample_weight = NULL
         else:
-            # First self.shape[0] sample weights are rows' the others
-            # are columns'.
+            # First self.n_rows sample weights refer to rows, the others
+            # refer to columns.
             self.row_sample_weight = sample_weight
-            self.col_sample_weight = sample_weight + self.shape[0]
+            self.col_sample_weight = sample_weight + self.n_rows
 
-        self.splitter_rows.init(X[0], y, self.row_sample_weight)
-        self.splitter_cols.init(X[1], yT, self.col_sample_weight)
+        self.splitter_rows.init(X[0], self.y, self.row_sample_weight)
+        self.splitter_cols.init(X[1], self.y_transposed, self.col_sample_weight)
+        self.row_samples = self.splitter_rows.samples
+        self.col_samples = self.splitter_cols.samples
 
-        self.n_samples = self.splitter_rows.n_samples * \
-                         self.splitter_cols.n_samples
-        self.weighted_n_samples = self.splitter_rows.weighted_n_samples * \
-                                  self.splitter_cols.weighted_n_samples
-
-        # TODO: Do it in criterion_wrapper.init()
-        self.splitter_rows.weighted_n_samples = self.weighted_n_samples
-        self.splitter_cols.weighted_n_samples = self.weighted_n_samples
+        self.n_samples = self.n_rows * self.n_cols
+        self.weighted_n_rows = self.splitter_rows.weighted_n_samples
+        self.weighted_n_cols = self.splitter_cols.weighted_n_samples
+        self.weighted_n_samples = self.weighted_n_rows * self.weighted_n_cols
 
         return 0
 
-    cdef int node_reset(self, SIZE_t[2] start, SIZE_t[2] end,
-                        double* weighted_n_node_samples) nogil except -1:
+    cdef int node_reset(
+        self,
+        SIZE_t[2] start,
+        SIZE_t[2] end,
+        double* weighted_n_node_samples
+    ) nogil except -1:
         """Reset splitters on node samples[start[0]:end[0], start[1]:end[1]].
         Returns -1 in case of failure to allocate memory (and raise MemoryError)
         or 0 otherwise.
@@ -144,106 +149,106 @@ cdef class Splitter2D:
         cdef SIZE_t eff_min_rows_leaf
         cdef SIZE_t eff_min_cols_leaf
 
-        n_node_rows = (end[0]-start[0])
-        n_node_cols = (end[1]-start[1])
+        n_node_rows = end[0] - start[0]
+        n_node_cols = end[1] - start[1]
+
         # Ceil division.
         eff_min_rows_leaf = 1 + (self.min_samples_leaf-1) // n_node_cols
         eff_min_cols_leaf = 1 + (self.min_samples_leaf-1) // n_node_rows
 
-        # max.
-        if self.min_rows_leaf > eff_min_rows_leaf:
-            self.splitter_rows.min_samples_leaf = self.min_rows_leaf
-        else:
-            self.splitter_rows.min_samples_leaf = eff_min_rows_leaf
-        if self.min_cols_leaf > eff_min_cols_leaf:
-            self.splitter_cols.min_samples_leaf = self.min_cols_leaf
-        else:
-            self.splitter_cols.min_samples_leaf = eff_min_cols_leaf
+        self.splitter_rows.min_samples_leaf = max(
+            self.min_rows_leaf, eff_min_rows_leaf)
+        self.splitter_cols.min_samples_leaf = max(
+            self.min_cols_leaf, eff_min_cols_leaf)
 
         self.splitter_rows.start = start[0]
         self.splitter_rows.end = end[0]
         self.splitter_cols.start = start[1]
         self.splitter_cols.end = end[1]
 
+        self.start[0], self.start[1] = start[0], start[1]
+        self.end[0], self.end[1] = end[0], end[1]
+
         self.criterion_wrapper.init(
+            self.X_rows,
+            self.X_cols,
             self.y,
+            self.y_transposed,
             self.row_sample_weight,
             self.col_sample_weight,
-            self.weighted_n_samples,
-            start, end,
+            self.weighted_n_rows,
+            self.weighted_n_cols,
+            &self.row_samples[0],  # TODO: change to memoryview
+            &self.col_samples[0],
+            start,
+            end,
         )
 
-        # # Done in criterion_wrapper.init()
-        # self.splitter_rows.criterion.reset()
-        # self.splitter_cols.criterion.reset()
-
-        weighted_n_node_samples[0] = \
+        weighted_n_node_samples[0] = (
             self.criterion_wrapper.weighted_n_node_samples
+        )
+        weighted_n_node_samples[1] = (
+            self.criterion_wrapper.weighted_n_node_rows
+        )
+        weighted_n_node_samples[2] = (
+            self.criterion_wrapper.weighted_n_node_cols
+        )
 
         return 0
 
-    cdef int node_split(self, double impurity, SplitRecord* split,
-                        SIZE_t[2] n_constant_features) nogil except -1:
+    cdef int node_split(
+        self,
+        double impurity,
+        SplitRecord* split,
+        SIZE_t[2] n_constant_features
+    ) nogil except -1:
         """Find the best split on node samples.
         It should return -1 upon errors.
         """
+        cdef SIZE_t ax  # axis, 0 == rows, 1 == columns
         cdef SplitRecord current_split, best_split
         cdef DOUBLE_t imp_left, imp_right
+
+        # Using Cython casting trick to iterate over splitters without the GIL
+        cdef (void*)[2] splitters
+        splitters[0] = <void*> self.splitter_rows
+        splitters[1] = <void*> self.splitter_cols
 
         _init_split(&best_split, self.splitter_rows.end, 0)
 
         # TODO: No need to "reorganize into samples" in each axis.
         # (sklearn.tree._splitter.pyx, line 417)
+        for ax in range(2):
+            if (
+                (self.end[ax] - self.start[ax])
+                < 2 * (<Splitter>splitters[ax]).min_samples_leaf
+            ):
+                continue  # min_samples_leaf not satisfied.
 
-        # TODO: DRY. Cumbersome to have an array of Splitters in Cython.
+            (<Splitter>splitters[ax]).node_split(
+                impurity, &current_split, &n_constant_features[ax],
+            )
 
-        # If only one sample in axis, do not split that axis.
-        # Necessary since min_samples_leaf only sees both axes at the same time,
-        # so eventually, for instance, it would try to split a 1x23 matrix in
-        # the rows direction.
-        # TODO: axis specific stopping criteria (min_samples_leaf for example).
-        if (self.splitter_rows.end - self.splitter_rows.start) >= 2:
-            self.splitter_rows.node_split(impurity, &current_split,
-                                          n_constant_features)
-            # NOTE: When no nice split have been  found, the child splitter sets
-            # the split position at the end.
-            if current_split.pos < self.splitter_rows.end:
-                # Correct impurities.
-                with gil:
-                    self.criterion_wrapper.children_impurity(
-                        &imp_left, &imp_right, 0)
-                imp_improve = self.criterion_wrapper.impurity_improvement(
-                    impurity, imp_left, imp_right, 0)
+            # When no valid split has been found, the child splitter sets
+            # the split position at the end of the current node.
+            if current_split.pos == self.end[ax]:
+                continue
 
-                # if imp_improve > best_split.improvement:  # Always.
+            self.criterion_wrapper.children_impurity(
+                &imp_left, &imp_right, axis=ax,
+            )
+            imp_improve = self.criterion_wrapper.impurity_improvement(
+                impurity, imp_left, imp_right, axis=ax,
+            )
+
+            if imp_improve > best_split.improvement:
                 best_split = current_split
                 best_split.improvement = imp_improve
                 best_split.impurity_left = imp_left
                 best_split.impurity_right = imp_right
-                best_split.axis = 0
-
-        if (self.splitter_cols.end - self.splitter_cols.start) >= 2:
-            self.splitter_cols.node_split(impurity, &current_split,
-                                          n_constant_features+1)
-            # # FIXME: shouldn't need this if.
-
-            # NOTE: When no nice split have been  found, the child splitter sets
-            # the split position at the end.
-            if current_split.pos < self.splitter_cols.end:
-                # Correct impurities.
-                with gil:
-                    self.criterion_wrapper.children_impurity(
-                        &imp_left, &imp_right, 1)
-                imp_improve = self.criterion_wrapper.impurity_improvement(
-                    impurity, imp_left, imp_right, 1)
-
-                if imp_improve > best_split.improvement:
-                    best_split = current_split
-                    best_split.improvement = imp_improve
-                    best_split.impurity_left = imp_left
-                    best_split.impurity_right = imp_right
-                    best_split.feature += self.n_row_features  # axis 1-exclusive.
-                    best_split.axis = 1
+                best_split.axis = ax
+                if ax == 1:
+                    best_split.feature += self.n_row_features
 
         split[0] = best_split
 
@@ -254,87 +259,3 @@ cdef class Splitter2D:
     cdef double node_impurity(self) nogil:
         """Return the impurity of the current node."""
         return self.criterion_wrapper.node_impurity()
-
-
-def make_2d_splitter(
-       splitters,
-       criteria,
-       n_samples=None,
-       max_features=None,
-       n_outputs=1,
-       min_samples_leaf=1,
-       min_weight_leaf=0.0,
-       ax_min_samples_leaf=1,
-       ax_min_weight_leaf=0.0,
-       random_state=None,
-       criterion_wrapper_class=MSE_Wrapper2D,
-    ):
-    """Factory function of Splitter2D instances.
-
-    Since the building of a Splitter2D is somewhat counterintuitive, this func-
-    tion is provided to simplificate the process. With exception of n_samples,
-    the remaining parameters may be set to a single value or a 2-valued
-    tuple or list, to specify them for each axis.
-
-    ax_min_samples_leaf represents [min_rows_leaf, min_cols_leaf]
-    """
-    if not isinstance(n_samples, (list, tuple)):
-        n_samples = [n_samples, n_samples]
-    if not isinstance(max_features, (list, tuple)):
-        max_features = [max_features, max_features]
-    if not isinstance(n_outputs, (list, tuple)):
-        n_outputs = [n_outputs, n_outputs]
-    if not isinstance(ax_min_samples_leaf, (list, tuple)):
-        ax_min_samples_leaf = [ax_min_samples_leaf, ax_min_samples_leaf]
-    if not isinstance(ax_min_weight_leaf, (list, tuple)):
-        ax_min_weight_leaf = [ax_min_weight_leaf, ax_min_weight_leaf]
-    if not isinstance(splitters, (list, tuple)):
-        splitters = [copy.deepcopy(splitters), copy.deepcopy(splitters)]
-    if not isinstance(criteria, (list, tuple)):
-        criteria = [copy.deepcopy(criteria), copy.deepcopy(criteria)]
-    if not isinstance(random_state, np.random.RandomState):
-        random_state = np.random.RandomState(random_state)
-
-    for ax in range(2):
-        # Make criterion
-        if isinstance(criteria[ax], type):
-            if n_samples[ax] is None:
-                raise ValueError(
-                    f"n_samples[{ax}] must be provided if criteria"
-                    f"[{ax}]={criteria[ax]} is a Criterion type.")
-            criteria[ax] = criteria[ax](
-                n_outputs=n_outputs[ax],
-                n_samples=n_samples[ax])
-
-        elif not isinstance(criteria[ax], Criterion):
-            raise TypeError
-
-        # Make splitter
-        if isinstance(splitters[ax], type):
-            if max_features[ax] is None:
-                raise ValueError(
-                    f"max_features[{ax}] must be provided if splitters"
-                    f"[{ax}]={splitters[ax]} is a Splitter type.")
-            splitters[ax] = splitters[ax](
-                criterion=criteria[ax],
-                max_features=max_features[ax],
-                min_samples_leaf=ax_min_samples_leaf[ax],
-                min_weight_leaf=ax_min_weight_leaf[ax],
-                random_state=random_state,
-            )
-        elif criteria[ax] is not None:
-                warnings.warn("Since splitters[ax] is not a class, the provided"
-                            " criteria[ax] is being ignored.")
-
-    # Wrap criteria.
-    criterion_wrapper = \
-        criterion_wrapper_class(splitters[0], splitters[1])
-
-    # Wrap splitters.
-    return Splitter2D(
-        splitter_rows=splitters[0],
-        splitter_cols=splitters[1],
-        criterion_wrapper=criterion_wrapper,
-        min_samples_leaf=min_samples_leaf,
-        min_weight_leaf=min_weight_leaf,
-    )

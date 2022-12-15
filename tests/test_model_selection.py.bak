@@ -3,7 +3,7 @@ import numpy as np
 
 from make_examples import make_interaction_data
 from test_nd_classes import parse_args
-from hypertrees.tree import DecisionTreeRegressor2D
+from hypertrees.tree import BipartiteDecisionTreeRegressor
 from hypertrees.model_selection._split import check_cv_nd, CrossValidatorNDWrapper
 from hypertrees.model_selection._search import GridSearchCVND, RandomizedSearchCVND
 from test_ensembles import print_duration, test_compare_estimators
@@ -54,7 +54,7 @@ def test_cv_wrapper(cv=3, **kwargs):
 
 def test_search_cv(cv=3, **kwargs):
     est = GridSearchCVND(
-        estimator=DecisionTreeRegressor2D(),
+        estimator=BipartiteDecisionTreeRegressor(),
         param_grid=dict(
             min_samples_leaf=[10, 50, 100],
         ),
