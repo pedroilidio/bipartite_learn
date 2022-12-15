@@ -415,6 +415,27 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         )
 
 
+cdef class FriedmanAdapter(MSE_Wrapper2D):
+    cdef double impurity_improvement(
+        self,
+        double impurity_parent,
+        double impurity_left,
+        double impurity_right,
+        SIZE_t axis,  # Needs axis because of weighted_n_left/weighted_n_right.
+    ) nogil:
+        if axis == 0:
+            return self.criterion_rows.impurity_improvement(
+                impurity_parent, impurity_left, impurity_right,
+            ) / self.n_node_cols
+        elif axis == 1:
+            return self.criterion_cols.impurity_improvement(
+                    impurity_parent, impurity_left, impurity_right,
+            ) / self.n_node_rows
+        else:
+            with gil:
+                raise InvalidAxisError
+
+
 # TODO: should work for classification as well.
 cdef class PBCTCriterionWrapper(CriterionWrapper2D):
     """Applies Predictive Bi-Clustering Trees method.
@@ -547,10 +568,11 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
             end=self.end[1],
         )
 
+        # Will be used by TreeBuilder as stopping criteria.
         self.weighted_n_node_rows = self.criterion_rows.weighted_n_node_samples
         self.weighted_n_node_cols = self.criterion_cols.weighted_n_node_samples
 
-        # Will be used by the Splitter2D to set the Tree object
+        # Will further be used by the Splitter2D to set the Tree object
         self.weighted_n_node_samples = (
             self.weighted_n_node_rows * self.weighted_n_node_cols
         )

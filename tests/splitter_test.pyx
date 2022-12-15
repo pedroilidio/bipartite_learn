@@ -2,6 +2,8 @@ from sklearn.tree._criterion cimport Criterion
 from sklearn.tree._splitter cimport Splitter, SplitRecord
 from sklearn.tree._tree cimport SIZE_t, DOUBLE_t
 
+from hypertrees.tree._nd_criterion cimport CriterionWrapper2D
+from hypertrees.tree._semisupervised_criterion cimport BipartiteSemisupervisedCriterion
 from hypertrees.tree._nd_splitter cimport (
     SplitRecord as SplitRecordND,
     Splitter2D
@@ -9,7 +11,7 @@ from hypertrees.tree._nd_splitter cimport (
 from libc.stdlib cimport malloc, free
 
 import numpy as np
-cimport numpy as np
+cimport numpy as cnp
 
 cdef double INFINITY = np.inf
 
@@ -23,18 +25,18 @@ cdef inline void _init_split(SplitRecord* self, SIZE_t start_pos) nogil:
 
 
 cpdef test_splitter(
-        Splitter splitter,
-        object X, np.ndarray y,
-        SIZE_t start=0,
-        SIZE_t end=-1,
-        verbose=False,
+    Splitter splitter,
+    object X, cnp.ndarray y,
+    SIZE_t start=0,
+    SIZE_t end=0,
+    verbose=False,
 ):
     cdef SplitRecord split
     cdef SIZE_t ncf = 0  # n_constant_features
     cdef double wnns  # weighted_n_node_samples
 
-    if end == -1:
-        end = y.shape[0]
+    end = end if end > 0 else y.shape[0] + end
+    start = start if start >= 0 else y.shape[0] + start
 
     _init_split(&split, 0)
 
@@ -42,7 +44,7 @@ cpdef test_splitter(
         print('[SPLITTER_TEST] calling splitter.init(X, y, NULL)')
     splitter.init(X, y, NULL)
     if verbose:
-        print('[SPLITTER_TEST] calling splitter.node_reset(start, end, &wnns)')
+        print(f'[SPLITTER_TEST] calling splitter.node_reset(start={start}, end={end}, &wnns)')
     splitter.node_reset(start, end, &wnns)
 
     impurity = splitter.node_impurity()
@@ -58,21 +60,29 @@ cpdef test_splitter(
     splitter.node_split(impurity, &split, &ncf)
 
     if verbose:
+        print('[SPLITTER_TEST] splitter.criterion.pos:', splitter.criterion.pos)
         print('[SPLITTER_TEST] weighted_n_samples', splitter.criterion.weighted_n_samples)
         print('[SPLITTER_TEST] weighted_n_node_samples', splitter.criterion.weighted_n_node_samples)
         print('[SPLITTER_TEST] weighted_n_right', splitter.criterion.weighted_n_right)
         print('[SPLITTER_TEST] weighted_n_left', splitter.criterion.weighted_n_left)
 
-    return split
-
+    return dict(
+        impurity_parent=impurity,
+        impurity_left=split.impurity_left,
+        impurity_right=split.impurity_right,
+        pos=split.pos,
+        feature=split.feature,
+        threshold=split.threshold,
+        improvement=split.improvement,
+    )
 
 cpdef test_splitter_nd(
-        Splitter2D splitter,
-        X, y,
-        start=None,
-        end=None,
-        ndim=None,
-        verbose=False,
+    Splitter2D splitter,
+    X, y,
+    start=[0, 0],
+    end=[0, 0],
+    ndim=None,
+    verbose=False,
 ):
     if verbose:
         print('[SPLITTER_TEST] starting splitter_nd test')
@@ -84,12 +94,9 @@ cpdef test_splitter_nd(
     cdef double wnns  # weighted_n_node_samples
     cdef SIZE_t i
 
-    start = start or [0] * ndim
-    end = end or y.shape
-
     for i in range(ndim):
-        end_[i] = end[i]
-        start_[i] = start[i]
+        start_[i] = start[i] if start[i] >= 0 else y.shape[i] + start[i]
+        end_[i] = end[i] if end[i] > 0 else y.shape[i] + end[i]
         ncf[i] = 0
 
     _init_split(&split, 0)
@@ -127,4 +134,292 @@ cpdef test_splitter_nd(
     free(end_)
     free(ncf)
 
-    return split
+    return dict(
+        impurity_parent=impurity,
+        impurity_left=split.impurity_left,
+        impurity_right=split.impurity_right,
+        pos=split.pos,
+        feature=split.feature,
+        axis=split.axis,
+        threshold=split.threshold,
+        improvement=split.improvement,
+    )
+
+
+cpdef apply_criterion(
+    Criterion criterion,
+    cnp.ndarray y,
+    DOUBLE_t[:] sample_weight=None,
+    SIZE_t start=0,
+    SIZE_t end=0,
+):
+    cdef double weighted_n_samples
+    cdef double impurity_left, impurity_right
+    cdef SIZE_t pos, i, n_splits
+    cdef SIZE_t[::1] sample_indices = np.arange(y.shape[0])
+    cdef DOUBLE_t[::1] sample_weight_
+    cdef DOUBLE_t* sample_weight_ptr
+
+    # Note, however, that the criterion is able to get to end=y.shape[0], such
+    # that n_left=n_samples and n_right=0.
+    end = end if end > 0 else y.shape[0] + end
+    start = start if start >= 0 else y.shape[0] + start
+
+    if sample_weight is None:
+        sample_weight_ptr = NULL
+        weighted_n_samples = y.shape[0]
+    else:
+        sample_weight_ = sample_weight.astype('float64', order='C')
+        sample_weight_ptr = &sample_weight_[0]
+        weighted_n_samples = sample_weight.sum()
+    
+    criterion.init(
+        y,
+        sample_weight_ptr,
+        weighted_n_samples,
+        &sample_indices[0],
+        start,
+        end,
+    )
+    criterion.reset()
+    n_splits = end - start - 1
+    result = {
+        'impurity_parent': criterion.node_impurity(),
+        'weighted_n_samples': criterion.weighted_n_samples,
+        'pos': np.zeros(n_splits, dtype='uint32'),
+        'impurity_right': np.zeros(n_splits, dtype='double'),
+        'impurity_left': np.zeros(n_splits, dtype='double'),
+        'weighted_n_left': np.zeros(n_splits, dtype='double'),
+        'weighted_n_right': np.zeros(n_splits, dtype='double'),
+        'proxy_improvement': np.zeros(n_splits, dtype='double'),
+        'improvement': np.zeros(n_splits, dtype='double'),
+        # sum_left and sum_right second dimension differs between classification
+        # or regression criteria, that is why dtype=object.
+        'sum_left': np.empty(n_splits, dtype=object),
+        'sum_right': np.empty(n_splits, dtype=object),
+    }
+
+    for pos in range(start+1, end):  # Start from 1 element on left
+        i = pos - start - 1
+        criterion.update(pos)
+        result['pos'][i] = criterion.pos
+        criterion.children_impurity(&impurity_left, &impurity_right)
+        result['impurity_right'][i] = impurity_right
+        result['impurity_left'][i] = impurity_left
+        result['weighted_n_left'][i] = criterion.weighted_n_left
+        result['weighted_n_right'][i] = criterion.weighted_n_right
+        result['proxy_improvement'][i] = criterion.proxy_impurity_improvement()
+        result['improvement'][i] = criterion.impurity_improvement(
+            result['impurity_parent'],
+            result['impurity_left'][i],
+            result['impurity_right'][i],
+        )
+        if hasattr(criterion, 'sum_left') and hasattr(criterion, 'sum_right'):
+            result['sum_left'][i] = criterion.sum_left
+            result['sum_right'][i] = criterion.sum_right
+    
+    return result
+
+
+cpdef apply_bipartite_ss_criterion(
+    BipartiteSemisupervisedCriterion bipartite_ss_criterion,
+    cnp.ndarray X_rows,
+    cnp.ndarray X_cols,
+    cnp.ndarray y,
+    cnp.ndarray sample_weight=None,
+    start=[0, 0],
+    end=[0, 0],
+):
+    cdef:
+        SIZE_t ax, pos, i, n_splits
+        double impurity_left, impurity_right
+        double sup_impurity_left, sup_impurity_right
+        double unsup_impurity_left, unsup_impurity_right
+        DOUBLE_t[::1] row_weight_
+        DOUBLE_t[::1] col_weight_
+        DOUBLE_t* row_weight_ptr
+        DOUBLE_t* col_weight_ptr
+        DOUBLE_t[:, ::1] X_rows_
+        DOUBLE_t[:, ::1] X_cols_
+        DOUBLE_t[:, ::1] y_
+        DOUBLE_t[:, ::1] y_transposed
+        Criterion sup_criterion, unsup_criterion, ss_criterion
+        Criterion sup_criterion_rows, unsup_criterion_rows
+        Criterion sup_criterion_cols, unsup_criterion_cols
+        Criterion ss_criterion_rows, ss_criterion_cols
+
+        double weighted_n_rows
+        double weighted_n_cols
+        SIZE_t[::1] row_samples = np.arange(y.shape[0])
+        SIZE_t[::1] col_samples = np.arange(y.shape[1])
+        SIZE_t n_rows = y.shape[0]
+        SIZE_t[2] start_
+        SIZE_t[2] end_
+
+    for ax in range(2):
+        start_[ax] = start[ax] if start[ax] >= 0 else y.shape[ax] + start[ax]
+        end_[ax] = end[ax] if end[ax] > 0 else y.shape[ax] + end[ax]
+
+    X_rows_ = X_rows.astype('float64', order='C')
+    X_cols_ = X_cols.astype('float64', order='C')
+    y_ = y.astype('float64', order='C')
+    y_transposed = y.T.astype('float64', order='C')
+    
+    n_splits_rows = end_[0] - start_[0]
+    n_splits_cols = end_[1] - start_[1]
+
+    if sample_weight is None:
+        row_weight_ptr = NULL
+        col_weight_ptr = NULL
+        weighted_n_rows = y.shape[0]
+        weighted_n_cols = y.shape[1]
+    else:
+        row_weight_ = sample_weight[:n_rows].astype('float64', order='C')
+        col_weight_ = sample_weight[n_rows:].astype('float64', order='C')
+        row_weight_ptr = &row_weight_[0]
+        col_weight_ptr = &col_weight_[0]
+        weighted_n_rows = row_weight_.sum()
+        weighted_n_cols = col_weight_.sum()
+    
+    bipartite_ss_criterion.init(
+        X_rows_,
+        X_cols_,
+        y_,
+        y_transposed,
+        row_weight_ptr,
+        col_weight_ptr,
+        weighted_n_rows,
+        weighted_n_cols,
+        &row_samples[0],
+        &col_samples[0],
+        start_,
+        end_,
+    )
+
+    unsup_criterion_rows = bipartite_ss_criterion.unsupervised_criterion_rows
+    unsup_criterion_cols = bipartite_ss_criterion.unsupervised_criterion_cols
+    sup_criterion_rows = bipartite_ss_criterion.supervised_criterion_rows
+    sup_criterion_cols = bipartite_ss_criterion.supervised_criterion_cols
+    ss_criterion_rows = bipartite_ss_criterion.ss_criterion_rows
+    ss_criterion_cols = bipartite_ss_criterion.ss_criterion_cols
+
+    result = []
+
+    for ax, sup_criterion, unsup_criterion, ss_criterion in (
+        (0, sup_criterion_rows, unsup_criterion_rows, ss_criterion_rows),
+        (1, sup_criterion_cols, unsup_criterion_cols, ss_criterion_cols),
+    ):
+        n_splits = end_[ax] - start_[ax] - 1
+        sup_criterion.reset()
+        unsup_criterion.reset()
+        axis_result = {
+            'axis': ax,
+            'pos': np.zeros(n_splits, dtype='uint32'),
+            'weighted_n_samples': bipartite_ss_criterion.weighted_n_samples,
+            'weighted_n_left': np.zeros(n_splits, dtype='double'),
+            'weighted_n_right': np.zeros(n_splits, dtype='double'),
+            'impurity_parent': bipartite_ss_criterion.node_impurity(),
+            'supervised_impurity_parent': sup_criterion.node_impurity(),
+            'unsupervised_impurity_parent': unsup_criterion.node_impurity(),
+            'impurity_left': np.zeros(n_splits, dtype='double'),
+            'impurity_right': np.zeros(n_splits, dtype='double'),
+            'supervised_impurity_left': np.zeros(n_splits, dtype='double'),
+            'supervised_impurity_right': np.zeros(n_splits, dtype='double'),
+            'unsupervised_impurity_left': np.zeros(n_splits, dtype='double'),
+            'unsupervised_impurity_right': np.zeros(n_splits, dtype='double'),
+            'improvement': np.zeros(n_splits, dtype='double'),
+            'supervised_improvement': np.zeros(n_splits, dtype='double'),
+            'unsupervised_improvement': np.zeros(n_splits, dtype='double'),
+            'proxy_improvement': np.zeros(n_splits, dtype='double'),
+            'supervised_proxy_improvement': np.zeros(n_splits, dtype='double'),
+            'unsupervised_proxy_improvement': np.zeros(n_splits, dtype='double'),
+            # sum_left and sum_right second dimension differs between classification
+            # or regression criteria, that is why dtype=object.
+            # 'sum_left': np.empty(n_splits, dtype=object),
+            # 'sum_right': np.empty(n_splits, dtype=object),
+        }
+
+        for pos in range(start_[ax]+1, end_[ax]):  # Start from 1 element on left
+            i = pos - start_[ax] - 1
+            sup_criterion.update(pos)
+            unsup_criterion.update(pos)
+            axis_result['pos'][i] = sup_criterion.pos
+
+            bipartite_ss_criterion.children_impurity(&impurity_left, &impurity_right, axis=ax)
+            axis_result['impurity_left'][i] = impurity_left
+            axis_result['impurity_right'][i] = impurity_right
+
+            sup_criterion.children_impurity(&sup_impurity_left, &sup_impurity_right)
+            unsup_criterion.children_impurity(&unsup_impurity_left, &unsup_impurity_right)
+            axis_result['supervised_impurity_left'][i] = sup_impurity_left
+            axis_result['supervised_impurity_right'][i] = sup_impurity_right
+            axis_result['unsupervised_impurity_left'][i] = unsup_impurity_left
+            axis_result['unsupervised_impurity_right'][i] = unsup_impurity_right
+
+            axis_result['weighted_n_left'][i] = sup_criterion.weighted_n_left
+            axis_result['weighted_n_right'][i] = sup_criterion.weighted_n_right
+
+            if ss_criterion is not None:
+                axis_result['proxy_improvement'][i] = ss_criterion.proxy_impurity_improvement()
+            else:
+                axis_result['proxy_improvement'][i] = sup_criterion.proxy_impurity_improvement()
+
+            axis_result['supervised_proxy_improvement'][i] = sup_criterion.proxy_impurity_improvement()
+            axis_result['unsupervised_proxy_improvement'][i] = unsup_criterion.proxy_impurity_improvement()
+
+            axis_result['improvement'][i] = bipartite_ss_criterion.impurity_improvement(
+                axis_result['impurity_parent'],
+                axis_result['impurity_left'][i],
+                axis_result['impurity_right'][i],
+                axis=ax,
+            )
+            axis_result['supervised_improvement'][i] = sup_criterion.impurity_improvement(
+                axis_result['supervised_impurity_parent'],
+                axis_result['supervised_impurity_left'][i],
+                axis_result['supervised_impurity_right'][i],
+            )
+            axis_result['unsupervised_improvement'][i] = unsup_criterion.impurity_improvement(
+                axis_result['unsupervised_impurity_parent'],
+                axis_result['unsupervised_impurity_left'][i],
+                axis_result['unsupervised_impurity_right'][i],
+            )
+            # if hasattr(criterion, 'sum_left') and hasattr(criterion, 'sum_right'):
+            #     axis_result['sum_left'][i] = criterion.sum_left
+            #     axis_result['sum_right'][i] = criterion.sum_right
+        
+        result.append(axis_result)
+
+    return result
+
+
+cpdef get_criterion_status(
+    Criterion criterion,
+):
+    cdef double imp_left, imp_right, node_imp
+    result = {
+        # 'y': criterion.y,
+        'start': criterion.start,
+        'end': criterion.end,
+        'pos': criterion.pos,
+        'n_outputs': criterion.n_outputs,
+        'n_samples': criterion.n_samples,
+        'n_node_samples': criterion.n_node_samples,
+        'weighted_n_samples': criterion.weighted_n_samples,
+        'weighted_n_node_samples': criterion.weighted_n_node_samples,
+        'weighted_n_left': criterion.weighted_n_left,
+        'weighted_n_right': criterion.weighted_n_right,
+    }
+    node_imp = criterion.node_impurity()
+    criterion.children_impurity(&imp_left, &imp_right)
+    result['impurity_left'] = imp_left
+    result['impurity_right'] = imp_right
+    result['proxy_impurity_improvement'] = criterion.proxy_impurity_improvement()
+    result['impurity_improvement'] = criterion.impurity_improvement(
+        node_imp, imp_left, imp_right,
+    )
+    return result
+
+
+cpdef update_criterion(Criterion criterion, SIZE_t pos):
+    criterion.reset()
+    criterion.update(pos)

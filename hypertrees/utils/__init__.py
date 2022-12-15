@@ -6,18 +6,34 @@ The :mod:`hypertrees.utils` module includes various utilities.
 from __future__ import annotations
 import inspect
 import pkgutil
+import numpy as np
 from importlib import import_module
 from operator import itemgetter
 from pathlib import Path
 from typing import Any, Sequence
 from sklearn.utils import check_array, IS_PYPY
 from sklearn.utils.validation import check_symmetric
+from sklearn.utils.validation import _check_sample_weight
 
 __all__ = [
     "all_estimators",
     "check_multipartite_params",
     "check_simmilarity_matrix",
 ]
+
+
+def _check_multipartite_sample_weight(sample_weight, X, **kwargs):
+    if not isinstance(sample_weight, np.ndarray):  # Number or None
+        row_weight = col_weight = sample_weight
+    else:
+        n_rows = X[0].shape[0]
+        row_weight = sample_weight[:n_rows]
+        col_weight = sample_weight[n_rows:]
+
+    row_weight = _check_sample_weight(row_weight, X[0], **kwargs)
+    col_weight = _check_sample_weight(col_weight, X[1], **kwargs)
+
+    return np.hstack([row_weight, col_weight])
 
 
 def _X_is_multipartite(X):

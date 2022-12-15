@@ -107,10 +107,6 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         self.n_node_samples = end - start
         self.weighted_n_samples = weighted_n_samples
         
-        # FIXME: HACK: allows for dynamically changing n_outputs
-        self.supervised_criterion.n_outputs = self.n_outputs
-        self.unsupervised_criterion.n_outputs = self.n_features
-
         self.supervised_criterion.init(
             self.y, sample_weight, weighted_n_samples, samples, start, end,
         )
@@ -122,6 +118,8 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         # we should find a good way of calculating it only once.
         self.weighted_n_node_samples = \
             self.supervised_criterion.weighted_n_node_samples
+        # self.weighted_n_left = self.supervised_criterion.weighted_n_left
+        # self.weighted_n_right = self.supervised_criterion.weighted_n_right
 
         if self._supervision_is_dynamic:
             with gil:
@@ -335,7 +333,7 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         Criterion unsupervised_criterion_cols,
         CriterionWrapper2D supervised_bipartite_criterion,
         double supervision_rows,
-        object supervision_cols="same",  # double or "same"
+        double supervision_cols,
         object update_supervision=None,  # callable
         SemisupervisedCriterion ss_criterion_rows=None,
         SemisupervisedCriterion ss_criterion_cols=None,
@@ -344,11 +342,7 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         self.supervision_cols = supervision_cols
 
         self._curr_supervision_rows = supervision_rows
-
-        if supervision_cols == "same":
-            self._curr_supervision_cols = supervision_rows
-        else:
-            self._curr_supervision_cols = supervision_cols
+        self._curr_supervision_cols = supervision_cols
 
         self.update_supervision = update_supervision
         self._supervision_is_dynamic = update_supervision is not None
@@ -435,6 +429,7 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         self.n_row_features = self.unsupervised_criterion_rows.n_outputs
         self.n_col_features = self.unsupervised_criterion_cols.n_outputs
 
+        # Will be used by TreeBuilder as stopping criteria.
         self.weighted_n_node_rows = (
             self.supervised_bipartite_criterion.weighted_n_node_rows
         )
@@ -442,7 +437,7 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             self.supervised_bipartite_criterion.weighted_n_node_cols
         )
 
-        # Will be stored in the Tree object by the Splitter2D 
+        # Will further be stored in the Tree object by the Splitter2D.
         self.weighted_n_node_samples = (
             self.supervised_bipartite_criterion.weighted_n_node_samples
         )
@@ -450,36 +445,37 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         # Update supervision amount
         if self._supervision_is_dynamic:
             with gil:
-                # self._curr_supervision_rows = self.update_supervision(
-                #     weighted_n_samples=self.weighted_n_rows,
-                #     weighted_n_node_samples=self.weighted_n_node_rows,
-                #     current_supervision=self._curr_supervision_rows,
-                #     original_supervision=self.supervision_rows,
-                # )
-                # self._curr_supervision_cols = self.update_supervision(
-                #     weighted_n_samples=self.weighted_n_cols,
-                #     weighted_n_node_samples=self.weighted_n_node_cols,
-                #     current_supervision=self._curr_supervision_cols,
-                #     original_supervision=self.supervision_cols,  # if != "same"
-                # )
-
-                # XXX
                 self._curr_supervision_rows = self.update_supervision(
                     weighted_n_samples=self.weighted_n_samples,
                     weighted_n_node_samples=self.weighted_n_node_samples,
+                    weighted_n_samples_axis=self.weighted_n_rows,
+                    weighted_n_node_samples_axis=self.weighted_n_node_rows,
                     current_supervision=self._curr_supervision_rows,
                     original_supervision=self.supervision_rows,
                 )
-                self._curr_supervision_cols = self._curr_supervision_rows
+                self._curr_supervision_cols = self.update_supervision(
+                    weighted_n_samples=self.weighted_n_samples,
+                    weighted_n_node_samples=self.weighted_n_node_samples,
+                    weighted_n_samples_axis=self.weighted_n_cols,
+                    weighted_n_node_samples_axis=self.weighted_n_node_cols,
+                    current_supervision=self._curr_supervision_cols,
+                    original_supervision=self.supervision_cols,
+                )
 
-                # FIXME: if criteria is composite (axis_decision_only=False),
-                # they will not update supervision to use in proxy imp imp!
+                # FIXME: if the criteria given to the splitter is composite
+                # (axis_decision_only=False), they will not update supervision
+                # to use in proxy_impurity_improvement(). So we mannually set
+                # them here, being the only thing requiring us to mantain
+                # references to the splitters' semisupervised criterion
+                # wrappers.
                 if self.ss_criterion_rows is not None:
-                    self.ss_criterion_rows._curr_supervision \
-                        = self._curr_supervision_rows
+                    self.ss_criterion_rows._curr_supervision = (
+                        self._curr_supervision_rows
+                    )
                 if self.ss_criterion_cols is not None:
-                    self.ss_criterion_cols._curr_supervision \
-                        = self._curr_supervision_cols
+                    self.ss_criterion_cols._curr_supervision = (
+                        self._curr_supervision_cols
+                    )
 
     cdef void node_value(self, double* dest) nogil:
         self.supervised_bipartite_criterion.node_value(dest)

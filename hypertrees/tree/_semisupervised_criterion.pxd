@@ -53,27 +53,27 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
 
 # Regression?
 cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
-    cdef Criterion unsupervised_criterion_rows
-    cdef Criterion unsupervised_criterion_cols
+    cdef public Criterion unsupervised_criterion_rows
+    cdef public Criterion unsupervised_criterion_cols
     cdef CriterionWrapper2D supervised_bipartite_criterion
 
     # TODO: we need to get access to the wrappers owned by the splitters to
     # dynamically change the supervision, since supervision is utilized in
     # proxy_impurity_improvement(). Ideally, we would like to drop this
     # dependency.
-    cdef SemisupervisedCriterion ss_criterion_rows
-    cdef SemisupervisedCriterion ss_criterion_cols
+    cdef public SemisupervisedCriterion ss_criterion_rows
+    cdef public SemisupervisedCriterion ss_criterion_cols
 
     # References to supervised_bipartite_criterion's components
-    cdef Criterion supervised_criterion_rows
-    cdef Criterion supervised_criterion_cols
+    cdef public Criterion supervised_criterion_rows
+    cdef public Criterion supervised_criterion_cols
 
     cdef SIZE_t n_row_features
     cdef SIZE_t n_col_features
 
-    cdef public double supervision_rows
-    cdef object supervision_cols  # double or "same"
-    cdef public double _curr_supervision_rows
-    cdef public double _curr_supervision_cols
+    cdef double supervision_rows
+    cdef double supervision_cols
+    cdef double _curr_supervision_rows
+    cdef double _curr_supervision_cols
     cdef object update_supervision  # callable
     cdef bint _supervision_is_dynamic

@@ -187,11 +187,12 @@ cdef class Splitter2D:
         weighted_n_node_samples[0] = (
             self.criterion_wrapper.weighted_n_node_samples
         )
-        # TODO: consider implementing
-        # weighted_n_node_samples[1] = \
-        #     self.criterion_wrapper.weighted_n_node_rows
-        # weighted_n_node_samples[2] = \
-        #     self.criterion_wrapper.weighted_n_node_cols
+        weighted_n_node_samples[1] = (
+            self.criterion_wrapper.weighted_n_node_rows
+        )
+        weighted_n_node_samples[2] = (
+            self.criterion_wrapper.weighted_n_node_cols
+        )
 
         return 0
 

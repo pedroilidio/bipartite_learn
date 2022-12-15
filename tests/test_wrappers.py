@@ -1,4 +1,5 @@
 import joblib
+import pytest
 from pathlib import Path
 from sklearn.tree import DecisionTreeRegressor, export_text
 from sklearn.ensemble import RandomForestRegressor
@@ -6,66 +7,68 @@ from sklearn.base import clone
 from sklearn.model_selection._validation import _score
 from sklearn.metrics import check_scoring
 from hypertrees.wrappers import GlobalSingleOutputWrapper
-from test_utils import gen_mock_data, parse_args
+from hypertrees.melter import melt_multipartite_dataset
+from make_examples import make_interaction_regression
+from test_utils import stopwatch
 
-# Default test params
-DEF_PARAMS = dict(
-    # seed=439,
-    seed=7,
-    shape=(50, 60),
-    nattrs=(10, 9),
-    nrules=2,
-    min_samples_leaf=1,
-    transpose_test=False,
-    noise=0.,
-    inspect=False,
-    plot=False,
-    max_seed_attempts=100,
-)
+with stopwatch('Making dataset'):
+    XX, Y, X, y = make_interaction_regression(
+        return_molten=True,
+        n_samples=(50, 60),
+        n_features=(10, 9),
+        random_state=0,
+        max_target=1.0,
+    )
+    # Make it binary  # TODO: specialized data generation function
+    y_mean = Y.mean()
+    Y = (Y > y_mean).astype(int)
+    y = (y > y_mean).astype(int)
+    # Ensure negative majority
+    if Y.mean() > 0.5:
+        Y, y = 1-Y, 1-y
 
 
-def test_pu_wrapper_nd_no_neg_subsamples(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS | {'noise': 0}
-    XX, Y, X, y, _ = gen_mock_data(melt=True, **PARAMS)
-    Y = (Y == 1).astype(int)
-    y = (y == 1).astype(int)
+@pytest.fixture(params=range(10))
+def random_state(request):
+    return request.param
+
+
+@pytest.fixture(params=[1, 0.1])
+def min_samples_leaf(request):
+    return request.param
+
+
+def test_pu_wrapper_nd_no_neg_subsamples(random_state, min_samples_leaf):
+    Y_ = (Y == 1).astype(int)
+    y_ = (y == 1).astype(int)
 
     tree = DecisionTreeRegressor(
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        random_state=PARAMS['seed'],
+        min_samples_leaf=min_samples_leaf,
+        random_state=random_state,
     )
     tree_nd = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=False)
 
-    tree_nd.fit(XX, Y)
-    tree.fit(X, y)
+    tree_nd.fit(XX, Y_)
+    tree.fit(X, y_)
 
     assert export_text(tree_nd.estimator) == export_text(tree)
 
 
-def test_pu_wrapper_nd_neg_subsamples(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS | {'noise': 0}
-
-    for _ in range(PARAMS['max_seed_attempts']):
-        XX, Y, X, y, _ = gen_mock_data(melt=True, **PARAMS)
-        if y.mean() < .5:
-            break
-        else:
-            print(f"Seed {PARAMS['seed']} generated too much positive values,"
-                  " we need less than half of the total. Trying next seed.")
-            PARAMS['seed'] += 1
-    else:
-        raise ValueError("Could not find a valid seed. Max attempts reached "
-                         f"({PARAMS['max_seed_attempts']}). You could choose "
-                         "a different start seed (--seed) or increase max. "
-                         "attempts (--max_seed_attempts).")
-
+def test_pu_wrapper_nd_neg_subsamples(random_state, min_samples_leaf):
     tree = DecisionTreeRegressor(
-        min_samples_leaf=PARAMS['min_samples_leaf'],
-        random_state=PARAMS['seed'],
+        min_samples_leaf=min_samples_leaf,
+        random_state=random_state,
     )
-    tree_nd = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=True)
-    Xs, ys = melt_Xy(XX, Y, subsample_negatives=True,
-                     random_state=PARAMS["seed"])
+    tree_nd = GlobalSingleOutputWrapper(
+        estimator=clone(tree),
+        subsample_negatives=True,
+        random_state=random_state,
+    )
+    Xs, ys = melt_multipartite_dataset(
+        XX, Y,
+        subsample_negatives=True,
+        random_state=random_state,
+    )
 
     print(f"Keeping {ys.shape[0]} out of {y.shape[0]}. "
           f"Relative new size: {ys.shape[0]/y.shape[0]}\n")
@@ -96,7 +99,7 @@ def _test_pickling(obj):
 def test_wrapped_tree_pickling():
     tree = DecisionTreeRegressor(
         min_samples_leaf=30,
-        random_state=6,
+        random_state=0,
     )
     tree_nd = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=True)
 
@@ -107,22 +110,25 @@ def test_wrapped_tree_pickling():
 def test_wrapped_forest_pickling():
     forest = RandomForestRegressor(
         min_samples_leaf=30,
-        random_state=6,
+        random_state=0,
     )
-    forest_nd = GlobalSingleOutputWrapper(clone(forest), subsample_negatives=True)
+    forest_nd = GlobalSingleOutputWrapper(
+        clone(forest), subsample_negatives=True)
 
     _test_pickling(forest)
     _test_pickling(forest_nd)
 
 
-def test_score(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
+def test_score():
     forest = RandomForestRegressor(
         min_samples_leaf=30,
-        random_state=6,
+        random_state=0,
     )
-    forest_nd = GlobalSingleOutputWrapper(clone(forest), subsample_negatives=True)
-    XX, Y, X, y, _ = gen_mock_data(melt=True, **PARAMS)
+    forest_nd = GlobalSingleOutputWrapper(
+        clone(forest),
+        subsample_negatives=True,
+        random_state=0,
+    )
     forest_nd.fit(XX, Y)
 
     score = _score(
@@ -131,19 +137,3 @@ def test_score(**PARAMS):
         error_score="raise",
     )
     print("Score:", score)
-
-
-def main(**PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
-    # test_pu_wrapper_nd_no_neg_subsamples(**PARAMS)
-    # test_pu_wrapper_nd_neg_subsamples(**PARAMS)
-    # test_pu_wrapper_nd_metaclass(**PARAMS)
-    # test_wrapped_tree_pickling()
-    # test_wrapped_forest_pickling()
-    test_score()
-
-
-if __name__ == '__main__':
-    params = vars(parse_args(**DEF_PARAMS))
-    main(**params)
-    print('Done.')

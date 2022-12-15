@@ -15,7 +15,7 @@ from abc import ABCMeta
 from abc import abstractmethod
 from itertools import product
 from math import ceil
-from typing import Iterable, Callable
+from typing import Iterable, Callable, Type
 
 import numpy as np
 from scipy.sparse import issparse
@@ -50,7 +50,10 @@ from sklearn.tree._classes import BaseDecisionTree
 from ..base import BaseMultipartiteEstimator, MultipartiteRegressorMixin
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import (
-    CriterionWrapper2D, MSE_Wrapper2D, PBCTCriterionWrapper,
+    CriterionWrapper2D,
+    MSE_Wrapper2D,
+    FriedmanAdapter,
+    PBCTCriterionWrapper,
 )
 from ._nd_splitter import Splitter2D
 from ..melter import row_cartesian_product
@@ -69,16 +72,68 @@ __all__ = [
 # Types and constants
 # =============================================================================
 
-BIPARTITE_CRITERIA = {
-    "global_single_output": MSE_Wrapper2D,
-    "local_multioutput": PBCTCriterionWrapper,
-}
-
 AXIS_CRITERIA_REG = {
     "squared_error": AxisMSE,
 }
 
 SPARSE_SPLITTERS = {}
+
+
+# Stablish adequate pairs of criteria and bipartite adapters.
+BIPARTITE_CRITERIA = {
+    "global_single_output": {
+        "regression": {
+            "squared_error": (MSE_Wrapper2D, CRITERIA_REG['squared_error']),
+            "friedman_mse": (FriedmanAdapter, CRITERIA_REG['friedman_mse']),
+        },
+        "classification": {},
+    },
+    "local_multioutput": {
+        "regression": {
+            "squared_error": (
+                PBCTCriterionWrapper,
+                AXIS_CRITERIA_REG['squared_error'],
+            ),
+        },
+        "classification": {},
+    },
+}
+
+
+def _get_criterion_classes(
+    adapter: str,
+    criterion: str,
+    is_classification: bool,
+) -> tuple[Type[CriterionWrapper2D], Type[Criterion]]:
+
+    adapter_options = BIPARTITE_CRITERIA.get(adapter)
+    if adapter_options is None:
+        raise ValueError(
+            f"Unrecognized bipartite adapter {adapter!r}. Valid "
+            f"options are: {', '.join(map(repr, BIPARTITE_CRITERIA.keys()))}."
+        )
+
+    clf_or_reg = "classification" if is_classification else "regression"
+    result = adapter_options[clf_or_reg].get(criterion)
+
+    if result is None:
+        criterion_options = (
+            CRITERIA_CLF.keys() if is_classification else CRITERIA_REG.keys()
+        )
+        if criterion in criterion_options:
+            raise NotImplementedError(
+                f"Bipartite adapter {adapter!r} does not support "
+                f"{criterion!r} criterion yet (PRs are welcome). Implemented "
+                f"{clf_or_reg} criterion options for {adapter!r} are: "
+                + ', '.join(map(repr, adapter_options.keys()))
+            )
+        raise ValueError(
+            f"Unrecognized {criterion!r} criterion for {clf_or_reg}. Valid "
+            f"{clf_or_reg} criterion options are: "
+            + ', '.join(map(repr, criterion_options))
+        )
+    
+    return result
 
 
 def _normalize_weights(weights, pred):
@@ -341,10 +396,11 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         # TODO: Not implemented. Would have to dynamically change each
         #       splitter's max_features so that the total features selected
         #       considering both axes is constant.
-        if self.max_features is not None:
+        if self.max_features not in (None, 1.0):
             raise NotImplementedError(
-                "max_features!=None is not implemented.Please set"
-                "'max_row_features' and 'max_col_features' instead."
+                "Using 'max_features' values other than 1.0 or None is not "
+                "implemented. You can use the 'max_row_features' and "
+                "'max_col_features' parameters to achieve similar effect."
             )
         max_features = self.n_features_in_
 
@@ -425,6 +481,10 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             else:
                 col_weight = expanded_class_weight_cols
 
+        # Take advantage that row_weight and col_weight were checked.
+        if sample_weight is not None:
+            sample_weight = np.hstack([row_weight, col_weight])
+
         # Set min_weight_leaf from min_weight_fraction_leaf
         if sample_weight is None:
             row_weight_sum = n_rows
@@ -456,11 +516,11 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         self._n_raw_outputs = n_raw_outputs
 
         if self.bipartite_adapter == "global_single_output":
-            if self.criterion != "squared_error":
+            if is_classifier(self):
                 raise NotImplementedError(  # TODO
                     "bipartite_adapter='global_single_output' currently only "
-                    "supports criterion='squared_error'. Received "
-                    f"{self.criterion=!r}. Notice that 'squared_error' "
+                    f"supports regression. Received {self.criterion=!r}. "
+                    "Notice, however, that the 'squared_error' criterion "
                     "corresponds to the Gini impurity when targets are binary."
                 )
             if self.prediction_weights is not None:
@@ -481,8 +541,10 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                                  f"length = {n_rows + n_cols = }. Received "
                                  f"{len(self.prediction_weights) = }.")
 
-        # callable, "uniform", or "precomputed"
-        elif self.prediction_weights not in ("raw", "leaf_uniform"):
+        elif (
+            self.prediction_weights in (None, "uniform", "precomputed")
+            or callable(self.prediction_weights)
+        ):
             for Xi in X:
                 check_similarity_matrix(Xi, symmetry_exception=True)
 
@@ -495,7 +557,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         else:
             self.tree_ = Tree(
                 self.n_features_in_,
-                # TODO: tree shouldn't need this in this case
+                # TODO(sklearn): tree shouldn't need this in this case
                 np.array([1] * n_raw_outputs, dtype=np.intp),
                 n_raw_outputs,
             )
@@ -547,10 +609,6 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                 self.min_impurity_decrease,
             )
 
-        # Take advantage that row_weight and col_weight were checked.
-        if sample_weight is not None:
-            sample_weight = np.hstack([row_weight, col_weight])
-
         builder.build(self.tree_, X, y, sample_weight)
 
         if self.n_outputs_ == 1 and is_classifier(self):
@@ -581,23 +639,20 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             return copy.deepcopy(self.splitter)
 
         bipartite_adapter = self.bipartite_adapter
-        if isinstance(bipartite_adapter, str):
-            bipartite_adapter = BIPARTITE_CRITERIA[bipartite_adapter]
-
         criterion = self.criterion
-        if isinstance(criterion, str):
-            if is_classifier(self):
-                if self.bipartite_adapter == "local_multioutput":
-                    raise NotImplementedError
-                    # criterion = AXIS_CRITERIA_CLF[criterion]
-                else:
-                    criterion = CRITERIA_CLF[criterion]
-            else:
-                if self.bipartite_adapter == "local_multioutput":
-                    criterion = AXIS_CRITERIA_REG[criterion]
-                else:
-                    criterion = CRITERIA_REG[criterion]
-        else:
+
+        if isinstance(criterion, str) and isinstance(bipartite_adapter, str):
+            bipartite_adapter, criterion = _get_criterion_classes(
+                bipartite_adapter,
+                criterion,
+                is_classifier(self),
+            )
+        elif isinstance(criterion, str) or isinstance(bipartite_adapter, str):
+            raise ValueError(
+                "Either both or none of criterion and bipartite_adapter params"
+                " must be strings."
+            )
+        else:  # Criterion instance or subclass
             criterion = copy.deepcopy(criterion)
 
         splitter = self.splitter
@@ -798,7 +853,7 @@ class BipartiteDecisionTreeRegressor(
         - If "auto", then `max_features=n_features`.
         - If "sqrt", then `max_features=sqrt(n_features)`.
         - If "log2", then `max_features=log2(n_features)`.
-        - If None, then `max_features=n_features`.
+        - If None or 1.0, then `max_features=n_features`.
 
         Note: the search for a split does not stop until at least one
         valid partition of the node samples is found, even if it requires to
@@ -1123,7 +1178,7 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         the input samples) required to be at a leaf node. Samples have
         equal weight when sample_weight is not provided.
 
-    max_features : int, float or {"auto", "sqrt", "log2"}, default=None
+    max_features : int, float or {"auto", "sqrt", "log2"}, default=1.0
         The number of features to consider when looking for the best split:
 
         - If int, then consider `max_features` features at each split.
@@ -1133,7 +1188,7 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         - If "auto", then `max_features=n_features`.
         - If "sqrt", then `max_features=sqrt(n_features)`.
         - If "log2", then `max_features=log2(n_features)`.
-        - If None, then `max_features=n_features`.
+        - If None or 1.0, then `max_features=n_features`.
 
         Note: the search for a split does not stop until at least one
         valid partition of the node samples is found, even if it requires to
@@ -1297,7 +1352,7 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         min_samples_split=2,
         min_samples_leaf=1,
         min_weight_fraction_leaf=0.0,
-        max_features=None,
+        max_features=1.0,
         random_state=None,
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,

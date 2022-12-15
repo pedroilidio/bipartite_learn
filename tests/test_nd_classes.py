@@ -31,6 +31,7 @@ logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 DEF_PARAMS = dict(
     n_samples=(51, 60),
     n_features=(10, 9),
+    # noise=2,
     noise=0.1,
     # noise=0.0,  # makes it unable to reach 1 sample per leaf
 )
@@ -55,8 +56,14 @@ def get_leaves(tree: sklearn.tree._tree.Tree):
     )
 
 
-def assert_equal_leaves(tree1, tree2, verbose=False, ignore=None):
-    assert tree1.n_leaves == tree2.n_leaves, 'Number of leaves differ.'
+def assert_equal_leaves(
+    tree1, tree2, verbose=False, ignore=None, rtol=1e-7, atol=1e-8,
+):
+    n_leaves1 = tree1.n_leaves
+    n_leaves2 = tree2.n_leaves
+    assert n_leaves1 == n_leaves2, (
+        f'Number of leaves differ: {n_leaves1} != {n_leaves2}.'
+    )
     leaves1 = get_leaves(tree1)
     leaves2 = get_leaves(tree2)
 
@@ -76,7 +83,7 @@ def assert_equal_leaves(tree1, tree2, verbose=False, ignore=None):
             # leaves[k] = np.sort(leaves[k].flatten())
             # leaves[k] = np.sort(np.unique(leaves[k].flatten()))
 
-    assert_equal_dicts(leaves1, leaves2, ignore=ignore)
+    assert_equal_dicts(leaves1, leaves2, ignore=ignore, rtol=rtol, atol=atol)
 
 
 # TODO: parameter description.
@@ -88,6 +95,8 @@ def compare_trees(
     supervision=1.0,
     max_gen_depth=None,
     verbose=False,
+    rtol=1e-7,
+    atol=1e-8,
     **params,
 ):
     """Fit and compare trees.
@@ -130,7 +139,8 @@ def compare_trees(
             n_samples=params['n_samples'],
             n_features=params['n_features'],
             random_state=random_state,
-            noise=params['noise'],
+            noise=2.0,
+            centers=10,
         )
 
     # NOTE on ExtraTrees:
@@ -173,21 +183,25 @@ def compare_trees(
         tree1.tree_,
         tree2.tree_,
         ignore=['value'] if supervision != 1.0 else None,
-        # ignore=['impurity', 'value'],
+        rtol=rtol,
+        atol=atol,
     )
 
 
-@pytest.mark.parametrize('msl', [1, 5, 20, 100])
-def test_simple_tree_1d2d(msl, random_state, **params):
+@pytest.mark.parametrize('msl', [1, 5, 100])
+@pytest.mark.parametrize('max_depth', [None, 5, 10])
+def test_simple_tree_1d2d(msl, random_state, max_depth, **params):
     params = DEF_PARAMS | params
 
     tree2 = BipartiteDecisionTreeRegressor(
         min_samples_leaf=msl,
+        max_depth=max_depth,
         random_state=check_random_state(random_state),
     )
 
     tree1 = DecisionTreeRegressor(
         min_samples_leaf=msl,
+        max_depth=max_depth,
         random_state=check_random_state(random_state),
     )
 

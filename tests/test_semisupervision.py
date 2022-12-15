@@ -67,19 +67,14 @@ def max_depth(request):
     return request.param
 
 
-@pytest.fixture(params=[2, 5, None])
-def gen_tree_max_depth(request):
-    """max depth of dataset's generator random tree"""
-    return request.param
-
-
 # NOTE: small leaves may lead to differing trees by chance. Simply becase,
 # with just a few samples, one feature column may ocasionally have values with
 # the same order as another column, so that they yield the same split position
 # and impurities. Since we cannot dictate the order in which features are
 # chosen to be evaluated by the splitters, the two equally-ordered features
 # can be swapped.
-@pytest.fixture(params=[1, 6, 10, .1])
+# @pytest.fixture(params=[1, 6, 10, .1])
+@pytest.fixture(params=[0.05])
 def msl(request):  # min_samples_leaf parameter
     return request.param
 
@@ -148,38 +143,41 @@ def test_semisupervision_1d2d(
 # @pytest.mark.skip(
 #     reason="compare_trees still does not work with dynamic supervision")
 @pytest.mark.parametrize('update_supervision', [
-    lambda weighted_n_node_samples, weighted_n_samples, **kw: 0.7,
+    lambda **kw: 0.7,
+    lambda original_supervision, **kw: original_supervision,
     lambda weighted_n_node_samples, weighted_n_samples, **kw:
-        1 - 0.6 * weighted_n_node_samples/weighted_n_samples,
+        1 - 0.3 * weighted_n_node_samples/weighted_n_samples,
 ])
 def test_dynamic_supervision_1d2d(
-    supervision, update_supervision, msl, random_state, **params,
+    supervision, random_state, msl, max_depth, update_supervision, **params,
 ):
     params = DEF_PARAMS | params
+    mono_sup_values = []
+    bi_sup_values = []
 
-    # def new_update_supervision(**kwargs):
-    #     print(kwargs)
-    #     return update_supervision(**kwargs)
-
-    # def new_update_supervision(**kwargs):
-    #     return supervision
+    def mono_update_supervision(**kwargs):
+        mono_sup_values.append(kwargs['current_supervision'])
+        return update_supervision(**kwargs)
+    def bi_update_supervision(**kwargs):
+        bi_sup_values.append(kwargs['current_supervision'])
+        return update_supervision(**kwargs)
 
     tree1 = DecisionTreeRegressorSS(
         criterion="squared_error",
         unsupervised_criterion="squared_error",
         supervision=supervision,
-        update_supervision=update_supervision,
+        update_supervision=mono_update_supervision,
         min_samples_leaf=msl,
-        # max_depth=max_depth,
+        max_depth=max_depth,
     )
     tree2 = BipartiteDecisionTreeRegressorSS(
         criterion="squared_error",
         unsupervised_criterion_rows="squared_error",
         unsupervised_criterion_cols="squared_error",
         supervision=supervision,
-        update_supervision=update_supervision,
+        update_supervision=bi_update_supervision,
         min_samples_leaf=msl,
-        # max_depth=max_depth,
+        max_depth=max_depth,
     )
 
     return compare_trees(
@@ -293,43 +291,3 @@ def test_single_feature_semisupervision_1d2d_classes(**params):
         tree2_is_2d=True,
         **params,
     )
-
-
-def main(**params):
-    params = DEF_PARAMS | params
-    # FIXME: random_state=82; random_state=3 nrules=3
-    # FIXME: --random_state 2133 --supervision .03
-    # FIXME: --random_state 82 --supervision .5
-    # When actual impurity is used intead of the proxies
-    # --random_state 8221324 --supervision .3
-    # --random_state 31284009 --supervision .3
-    # --random_state 1 --supervision .1
-    # --random_state 2 --supervision .1
-    test_semisupervision_1d2d(**params)
-
-    test_dynamic_supervision_1d2d(**params)
-    # test_single_feature_semisupervision_1d_sup(**params)
-    # test_single_feature_semisupervision_1d2d(**params)  # FIXME
-    # test_single_feature_semisupervision_1d2d_classes(**params)
-
-
-if __name__ == "__main__":
-    args = parse_args(**DEF_PARAMS)
-    params = vars(args)
-
-    if params['seed_end'] == -1:
-        main(**params)
-    else:
-        unsuccessful = []
-        nseeds = 100
-
-        for s in range(params['random_state'], params['seed_end']):
-            params['random_state'] = s
-            try:
-                main(**params)
-            except AssertionError:
-                unsuccessful.append(s)
-
-        print(
-            f'Success rate: {len(unsuccessful)}/{nseeds} = {100*len(unsuccessful)/nseeds:.3f}%')
-        print('Failed seeds:', *unsuccessful)

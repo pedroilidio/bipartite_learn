@@ -118,3 +118,7 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
     pass
+
+
+cdef class FriedmanAdapter(MSE_Wrapper2D):
+    pass

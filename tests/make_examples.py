@@ -215,9 +215,11 @@ def make_interaction_blobs(
     n_samples=100,
     n_features=50,
     return_molten=False,
+    noise=0.0,
     random_state=None,
     row_kwargs=None,
     col_kwargs=None,
+    **kwargs,
 ):
     if isinstance(n_samples, int):
         n_samples = (n_samples, n_samples)
@@ -226,8 +228,8 @@ def make_interaction_blobs(
 
     random_state = check_random_state(random_state)
 
-    row_kwargs = row_kwargs or {}
-    col_kwargs = col_kwargs or {}
+    row_kwargs = (row_kwargs or {}) | kwargs
+    col_kwargs = (col_kwargs or {}) | kwargs
 
     X_rows, y_rows = make_blobs(
         n_samples=n_samples[0],
@@ -245,11 +247,15 @@ def make_interaction_blobs(
     # Final labels will be the enumeration of row-column cluster pairs.
     n_col_clusters = y_cols.max() + 1
     y = y_rows.reshape(-1, 1) * n_col_clusters + y_cols
-    X = [X_rows, X_cols]
+    y = y.astype('float64')
+    X = [X_rows.astype('float32'), X_cols.astype('float32')]
+
+    if noise:
+        y = y + random_state.normal(scale=noise, loc=y)
 
     ret = [X, y]
 
     if return_molten:
-        ret += [row_cartesian_product(X), y.reshape(-1)]
+        ret += [row_cartesian_product(X), y.reshape(-1, 1)]
 
     return tuple(ret)

@@ -31,6 +31,7 @@ from sklearn.utils.validation import _check_sample_weight
 from sklearn.utils import compute_sample_weight
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils._param_validation import Interval, StrOptions, Hidden
+from sklearn.metrics.pairwise import check_pairwise_arrays
 
 from sklearn.tree._criterion import Criterion
 from sklearn.tree._splitter import Splitter
@@ -49,7 +50,6 @@ from itertools import product
 from typing import Iterable
 from ..base import MultipartiteRegressorMixin
 from ._nd_tree import DepthFirstTreeBuilder2D
-from ._nd_criterion import MSE_Wrapper2D
 from ._nd_splitter import Splitter2D
 from ._splitter_factory import (
     make_2dss_splitter,
@@ -73,7 +73,8 @@ from ._dynamic_supervision_criterion import DynamicSSMSE
 from ._nd_classes import (
     BaseBipartiteDecisionTree,
     BipartiteDecisionTreeRegressor,
-    BipartiteExtraTreeRegressor
+    BipartiteExtraTreeRegressor,
+    _get_criterion_classes,
 )
 
 from ._semisupervised_splitter import BestSplitterSFSS, RandomSplitterSFSS
@@ -98,10 +99,6 @@ DOUBLE = _tree.DOUBLE
 SINGLE_FEATURE_SPLITTERS = {
     "best": BestSplitterSFSS,
     "random": RandomSplitterSFSS,
-}
-
-BIPARTITE_CRITERIA = {
-    "global_single_output": MSE_Wrapper2D,
 }
 
 CRITERIA_SS = {
@@ -242,6 +239,9 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
                         "Sum of X is not positive which is "
                         "necessary for Poisson regression."
                     )
+
+        if self.pairwise_X:
+            check_pairwise_arrays(X, precomputed=True)
 
         # Determine output settings
         n_samples, self.n_features_in_ = X.shape
@@ -539,7 +539,7 @@ class DecisionTreeClassifierSS(ClassifierMixin, BaseDecisionTreeSS):
             - If "auto", then `max_features=sqrt(n_features)`.
             - If "sqrt", then `max_features=sqrt(n_features)`.
             - If "log2", then `max_features=log2(n_features)`.
-            - If None, then `max_features=n_features`.
+            - If None or 1.0, then `max_features=n_features`.
 
             .. deprecated:: 1.1
                 The `"auto"` option was deprecated in 1.1 and will be removed
@@ -959,7 +959,7 @@ class DecisionTreeRegressorSS(RegressorMixin, BaseDecisionTreeSS):
         - If "auto", then `max_features=n_features`.
         - If "sqrt", then `max_features=sqrt(n_features)`.
         - If "log2", then `max_features=log2(n_features)`.
-        - If None, then `max_features=n_features`.
+        - If None or 1.0, then `max_features=n_features`.
 
         .. deprecated:: 1.1
             The `"auto"` option was deprecated in 1.1 and will be removed
@@ -1839,6 +1839,13 @@ class BaseBipartiteDecisionTreeSS(
             bipartite_adapter=bipartite_adapter,
             prediction_weights=prediction_weights,
         )
+    
+    def fit(self, X, y, sample_weight=None, check_input=True):
+        if self.pairwise_X:
+            for Xi in X:
+                check_pairwise_arrays(Xi, precomputed=True)
+        return super().fit(X, y, sample_weight, check_input)
+
 
     def _make_splitter(
         self,
@@ -1858,10 +1865,6 @@ class BaseBipartiteDecisionTreeSS(
             # might be shared and modified concurrently during parallel fitting
             return deepcopy(self.splitter)
 
-        bipartite_adapter = self.bipartite_adapter
-        if isinstance(bipartite_adapter, str):
-            bipartite_adapter = BIPARTITE_CRITERIA[bipartite_adapter]
-
         # NOTE: It is possible to use diferent ss_adaptor for rows and columns,
         #       but the user needs to pass an already built Splitter2D instance
         #       if they want so.
@@ -1869,13 +1872,6 @@ class BaseBipartiteDecisionTreeSS(
             ss_adapter = deepcopy(self.ss_adapter)
         else:  # str
             ss_adapter = self.ss_adapter
-
-        # TODO: check str in ._splitter_factory
-        if isinstance(self.criterion, str):
-            CRITERIA = CRITERIA_CLF if is_classifier(self) else CRITERIA_REG
-            criterion = CRITERIA[self.criterion]
-        else:
-            criterion = deepcopy(self.criterion)
 
         if isinstance(self.unsupervised_criterion_rows, str):
             # TODO: specify if classifier or regression unsupervised criterion
@@ -1890,6 +1886,23 @@ class BaseBipartiteDecisionTreeSS(
             unsup_criterion_cols = CRITERIA[self.unsupervised_criterion_cols]
         else:
             unsup_criterion_cols = deepcopy(self.unsupervised_criterion_cols)
+
+        bipartite_adapter = self.bipartite_adapter
+        criterion = self.criterion
+
+        if isinstance(criterion, str) and isinstance(bipartite_adapter, str):
+            bipartite_adapter, criterion = _get_criterion_classes(
+                bipartite_adapter,
+                criterion,
+                is_classifier(self),
+            )
+        elif isinstance(criterion, str) or isinstance(bipartite_adapter, str):
+            raise ValueError(
+                "Either both or none of criterion and bipartite_adapter params"
+                " must be strings."
+            )
+        else:  # Criterion instance or subclass
+            criterion = deepcopy(criterion)
 
         splitter = self.splitter
 
@@ -2031,7 +2044,7 @@ class BipartiteExtraTreeRegressorSS(
         min_samples_split=2,
         min_samples_leaf=1,
         min_weight_fraction_leaf=0.0,
-        max_features=None,
+        max_features=1.0,
         random_state=None,
         max_leaf_nodes=None,
         min_impurity_decrease=0.0,

@@ -100,87 +100,145 @@ def melt_2d_data(XX, Y):
     return row_cartesian_product(XX), Y.reshape(-1, 1)
 
 
-def comparison_text(a, b, tol=1e-7):
+def float_comparison_text(a: float, b: float):
+    a_str = f'{a:.8f}'
+    b_str = f'{b:.8f}'
+
+    if a_str == b_str:
+        # otherwise the generator bellow will yield StopIteration
+        return a_str
+
+    diff_start = next(
+        i for i, (ai, bi) in enumerate(zip(a_str, b_str)) if ai != bi
+    )
+    return f'{a_str[:diff_start]}({a_str[diff_start:]}!={b_str[diff_start:]})'
+
+
+def comparison_text(a, b, equal_indices):
+    if not (
+        isinstance(a, (Number, np.ndarray))
+        and isinstance(b, (Number, np.ndarray))
+    ):
+        return f"{a} {'==' if equal_indices else '!='} {b}"
+
+    if isinstance(a, float) and isinstance(b, float):
+        return float_comparison_text(a, b)
+
     a_is_array = isinstance(a, np.ndarray)
     b_is_array = isinstance(b, np.ndarray)
 
-    if (a_is_array and b_is_array and a.shape != b.shape):
-        return f"shape mismatch: {a.shape} != {b.shape}"
+    if not a_is_array and not b_is_array:
+        return f"{a}{'==' if equal_indices else '!='}{b}"
 
-    differing = np.abs(a - b) >= tol
+    if a_is_array and b_is_array and a.shape != b.shape:
+        return f"shape mismatch: {a.shape}!={b.shape}"
 
-    if a_is_array or b_is_array:
-        n_diff = differing.sum()
-        if n_diff == 0:
-            return (
-                f"{np.array2string(a, edgeitems=2, threshold=5) if a_is_array else a} "
-                f"== {np.array2string(b, edgeitems=2, threshold=5) if b_is_array  else b}"
-            )
-        return (
-            f"{n_diff} differing elements."
-            f"\n\tdiff positions: {np.nonzero(differing)[0]}"
-            "\n\tdiff: "
-            + ', '.join(
-                f"{a.reshape(-1)[i] if a_is_array else a}"
-                f"|{b.reshape(-1)[i] if b_is_array else b}"
-                for i, is_diff in enumerate(differing) if is_diff
-            )
+    n_diff = (~equal_indices).sum()
+    if not a_is_array:
+        a = np.repeat(a, b.size)
+    elif not b_is_array:
+        b = np.repeat(b, a.size)
+
+    if n_diff == 0:
+        return np.array2string(a, edgeitems=2, threshold=5)
+
+    a = a.reshape(-1)
+    b = b.reshape(-1)
+    max_absolute_diff = np.abs(a-b).max()
+    max_absolute_diff = np.abs(a-b).max()
+
+    return (
+        f"{n_diff} differing elements out of {a.size} ({100*n_diff/a.size:.4g}%)."
+        f"\n\tMax absolute diff: {np.abs(a-b).max()}"
+        f"\n\tMax relative diff: {np.abs(1-a/b).max()}"
+        f"\n\tdiff positions: {np.nonzero(~equal_indices)[0]}"
+        "\n\tdiff: "
+        + ' '.join(
+            comparison_text(a[i], b[i], False)
+            for i, is_eq in enumerate(equal_indices) if not is_eq
         )
-    return f"{a} {'!=' if differing else '=='} {b}"
+    )
 
 
-def assert_equal_dicts(d1: dict, d2: dict, ignore=None, warn=False):
-    ignore = ignore or set()
-    keys = {*d1.keys(), *d2.keys()} - set(ignore)
-    assertions = []
+def assert_equal_dicts(
+    d1: dict,
+    d2: dict,
+    ignore=None,
+    subset=None,
+    differing_keys="warn",  # warn, raise, or ignore
+    msg_prefix: str = '',
+    equal_nan: bool = False,
+    rtol: float = 1e-7,
+    atol: float = 0.0,
+):
+    ignore = set(ignore or [])
+    keys1, keys2 = set(d1.keys()), set(d2.keys())
+    keys = (keys1 | keys2)
+    if subset:
+        keys &= subset
+
+    # keys that are not in both dicts neither in ignore
+    unexpected_keys = (keys - (keys1 & keys2)) - ignore
+
+    if differing_keys != "ignore" and unexpected_keys:
+        msg = (
+            f"Keys {unexpected_keys} are not present in both dictionaries "
+            "nor listed in the 'ignore' parameter."
+        )
+        if differing_keys == "warn":
+            warnings.warn(msg)
+        else:  # elif differing_keys == "raise":
+            raise ValueError(msg)
+
+    keys = sorted((keys - ignore) - unexpected_keys)
+    equal_indices = []
+    all_equal: list[bool] = []
     value_pairs = []
     names = []
 
     for key in keys:
-        if key not in d1:
-            if warn:
-                warnings.warn(f"Key {key!r} not in first dict.")
-            continue
-        if key not in d2:
-            if warn:
-                warnings.warn(f"Key {key!r} not in second dict.")
-            continue
-
         v1, v2 = d1[key], d2[key]
-
-        if (
-            not isinstance(v1, (Number, np.ndarray))
-            or not isinstance(v2, (Number, np.ndarray))
-        ):
-            warnings.warn(
-                f"{key!r} not numeric or array attribute (values: {v1} {v2})."
-            )
-            continue
 
         names.append(key)
         value_pairs.append((v1, v2))
-        # assertions.append(abs(v1-v2) < tol)
-        try:
-            assert_allclose(v1, v2, atol=1e-7, verbose=False)
-            assertions.append(None)
-        except AssertionError as e:
-            assertions.append(e)
-        
-    differing = [repr(n) for n, a in zip(names, assertions) if a is not None]
 
-    if differing:
-        text = differing.pop()
-    if differing:
-        text += ' and ' + differing.pop()
-    if differing:
-        text = ', '.join(differing) + ', ' + text
+        if not (
+            isinstance(v1, (Number, np.ndarray))
+            or isinstance(v2, (Number, np.ndarray))
+        ):
+            equal_indices.append(v1 == v2)
+            all_equal.append(v1 == v2)
+            continue
 
-    assert all(A is None for A in assertions), (
-        text
+        if (
+            isinstance(v1, np.ndarray)
+            and isinstance(v2, np.ndarray)
+            and v1.shape != v2.shape
+        ):
+            equal_indices.append(False)
+            all_equal.append(False)
+            continue
+
+        eq_ind = np.isclose(
+            v1, v2, rtol=rtol, atol=atol, equal_nan=equal_nan,
+        )
+        equal_indices.append(eq_ind)
+        all_equal.append(eq_ind.all())
+
+    differing_keys = [repr(n) for n, a in zip(names, all_equal) if not a]
+
+    if differing_keys:
+        text = differing_keys.pop()
+    if differing_keys:
+        text += ' and ' + differing_keys.pop()
+    if differing_keys:
+        text = ', '.join(differing_keys) + ', ' + text
+
+    assert all(all_equal), (
+        msg_prefix + text
         + ' values differ.\n'
         + '\n'.join(
-            f"{n}: {comparison_text(v[0], v[1])}"  # \n{a}"
-            for n, v, a in zip(names, value_pairs, assertions)
+            f"[{'OK' if a else 'X'}] {n}: {comparison_text(v[0], v[1], ii)}"
+            for n, v, ii, a in zip(names, value_pairs, equal_indices, all_equal)
         )
     )
- 

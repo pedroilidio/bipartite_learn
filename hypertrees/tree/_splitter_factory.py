@@ -219,31 +219,21 @@ def make_2dss_splitter(
     tuple or list, to specify them for each axis.
     """
     (
-        n_samples,
-        n_features,
         max_features,
-        n_outputs,
-        supervision,
         ax_min_samples_leaf,
         ax_min_weight_leaf,
         splitters,
-        ss_criteria,
         supervised_criteria,
         unsupervised_criteria,
-        pairwise,
+        ss_criteria,
     ) = _duplicate_single_parameters(
-        n_samples,
-        n_features,
         max_features,
-        n_outputs,
-        supervision,
         ax_min_samples_leaf,
         ax_min_weight_leaf,
         splitters,
-        ss_criteria,
         supervised_criteria,
         unsupervised_criteria,
-        pairwise,
+        ss_criteria,
     )
 
     random_state = check_random_state(random_state)
@@ -251,92 +241,60 @@ def make_2dss_splitter(
     # Make semi-supervised criteria
     for ax in range(2):
         if isinstance(splitters[ax], Splitter):
-            if (supervised_criteria[ax] is not None):
+            if (supervised_criteria is not None):
                 warnings.warn(
                     f"Since {splitters[ax]=} is not a class, the provided "
-                    f"{supervised_criteria[ax]=} is being ignored."
+                    f"{supervised_criteria=} is being ignored."
                 )
-            if (unsupervised_criteria[ax] is not None):
+            if (unsupervised_criteria is not None):
                 warnings.warn(
                     f"Since {splitters[ax]=} is not a class, the provided "
-                    f"{unsupervised_criteria[ax]=} is being ignored."
+                    f"{unsupervised_criteria=} is being ignored."
                 )
-            continue
-        # TODO: validate params
-        elif not issubclass(splitters[ax], Splitter):  # TODO: use duck typing?
-            raise ValueError(
-                "splitter must be an instance or subclass of "
-                "sklearn.tree._splitter.Splitter"
-            )
-        if axis_decision_only:  
-            supervised_criteria[ax] = check_criterion(
-                supervised_criteria[ax],
-                n_outputs=n_outputs[ax],
-                n_samples=n_samples[ax],
-            )
-            unsupervised_criteria[ax] = check_criterion(
-                unsupervised_criteria[ax],
-                n_outputs=n_features[ax],
-                n_samples=n_samples[ax],
-                pairwise=pairwise[ax],
-            )
-
-            if (ss_criteria[ax] is not None):
-                warnings.warn(
-                    f"Since {axis_decision_only=} is not None, the provided "
-                    f"{ss_criteria[ax]=} is being ignored."
-                )
-            # The Splitter will not consider unsupevised data when searching
-            # for a split.
-            splitters[ax] = splitters[ax](
-                criterion=supervised_criteria[ax],
-                max_features=max_features[ax],
-                min_samples_leaf=ax_min_samples_leaf[ax],
-                min_weight_leaf=ax_min_weight_leaf[ax],
-                random_state=random_state,
-            )
-
-        else:
-            if ss_criteria[ax] is None:
-                ss_criteria[ax] = SSCompositeCriterion
-
-            if not isinstance(ss_criteria[ax], SemisupervisedCriterion):
-                ss_criteria[ax] = make_semisupervised_criterion(
-                    ss_class=ss_criteria[ax],
-                    supervision=supervision[ax],
-                    update_supervision=update_supervision,
-                    supervised_criterion=supervised_criteria[ax],
-                    unsupervised_criterion=unsupervised_criteria[ax],
-                    n_outputs=n_outputs[ax],
-                    n_features=n_features[ax],
-                    n_samples=n_samples[ax],
-                    pairwise=pairwise[ax],
-                )
-            
+            if axis_decision_only:
+                supervised_criteria[ax] = splitters[ax].criterion
+            else:
+                # FIXME: no access to Cython private attributes
+                ss_criteria[ax] = splitters[ax].criterion
                 supervised_criteria[ax] = ss_criteria[ax].supervised_criterion
                 unsupervised_criteria[ax] = ss_criteria[ax].unsupervised_criterion
 
+    criterion_wrapper = make_2dss_criterion(
+        criterion_wrapper_class=criterion_wrapper_class,
+        supervised_criteria=supervised_criteria,
+        unsupervised_criteria=unsupervised_criteria,
+        supervision=supervision,
+        ss_criteria=ss_criteria,
+        update_supervision=update_supervision,
+        n_features=n_features,
+        n_samples=n_samples,
+        n_outputs=n_outputs,
+        random_state=random_state,
+        pairwise=pairwise,
+        axis_decision_only=axis_decision_only,
+        ss_criterion_wrapper_class=ss_criterion_wrapper_class,
+    )
+
+    for ax in range(2):
+        if issubclass(splitters[ax], Splitter):
+            if axis_decision_only:
+                splitter_criteria = [
+                    criterion_wrapper.supervised_criterion_rows,
+                    criterion_wrapper.supervised_criterion_cols,
+                ]
+            else:
+                splitter_criteria = [
+                    criterion_wrapper.ss_criterion_rows,
+                    criterion_wrapper.ss_criterion_cols,
+                ]
+
             splitters[ax] = splitters[ax](
-                criterion=ss_criteria[ax],
+                criterion=splitter_criteria[ax],
                 max_features=max_features[ax],
                 min_samples_leaf=ax_min_samples_leaf[ax],
                 min_weight_leaf=ax_min_weight_leaf[ax],
                 random_state=random_state,
             )
-    
-    criterion_wrapper = ss_criterion_wrapper_class(
-        unsupervised_criterion_rows=unsupervised_criteria[0],
-        unsupervised_criterion_cols=unsupervised_criteria[1],
-        supervised_bipartite_criterion=criterion_wrapper_class(
-            criterion_rows=supervised_criteria[0],
-            criterion_cols=supervised_criteria[1],
-        ),
-        supervision_rows=supervision[0],
-        supervision_cols=supervision[1],
-        update_supervision=update_supervision,
-        ss_criterion_rows=ss_criteria[0],
-        ss_criterion_cols=ss_criteria[1],
-    )
 
     return Splitter2D(
         splitter_rows=splitters[0],
@@ -400,3 +358,259 @@ def make_semisupervised_criterion(
         unsupervised_criterion=unsupervised_criterion,
         update_supervision=update_supervision,
     )
+
+
+def make_2dss_criterion(
+    criterion_wrapper_class,
+    supervised_criteria,
+    unsupervised_criteria,
+    supervision,
+    ss_criteria=None,
+    update_supervision=None,  # TODO: for each axis
+    n_features=None,
+    n_samples=None,
+    n_outputs=1,
+    random_state=None,
+    pairwise=False,
+    axis_decision_only=False,
+    ss_criterion_wrapper_class=BipartiteSemisupervisedCriterion,
+):
+    """Factory function of Splitter2D instances with semisupervised criteria.
+
+    Utility function to simplificate Splitter2D instantiation.
+    Parameters may be set to a single value or a 2-valued
+    tuple or list, to specify them for each axis.
+    """
+    (
+        n_samples,
+        n_features,
+        n_outputs,
+        supervision,
+        ss_criteria,
+        supervised_criteria,
+        unsupervised_criteria,
+        pairwise,
+    ) = _duplicate_single_parameters(
+        n_samples,
+        n_features,
+        n_outputs,
+        supervision,
+        ss_criteria,
+        supervised_criteria,
+        unsupervised_criteria,
+        pairwise,
+    )
+
+    random_state = check_random_state(random_state)
+
+    # Make semi-supervised criteria
+    for ax in range(2):
+        if axis_decision_only:  
+            supervised_criteria[ax] = check_criterion(
+                supervised_criteria[ax],
+                n_outputs=n_outputs[ax],
+                n_samples=n_samples[ax],
+            )
+            unsupervised_criteria[ax] = check_criterion(
+                unsupervised_criteria[ax],
+                n_outputs=n_features[ax],
+                n_samples=n_samples[ax],
+                pairwise=pairwise[ax],
+            )
+
+            if (ss_criteria[ax] is not None):
+                warnings.warn(
+                    f"Since {axis_decision_only=} is not None, the provided "
+                    f"{ss_criteria[ax]=} is being ignored."
+                )
+        else:  # not axis_decision_only
+            if ss_criteria[ax] is None:
+                ss_criteria[ax] = SSCompositeCriterion
+
+            if not isinstance(ss_criteria[ax], SemisupervisedCriterion):
+                ss_criteria[ax] = make_semisupervised_criterion(
+                    ss_class=ss_criteria[ax],
+                    supervision=supervision[ax],
+                    # update_supervision=update_supervision,
+                    update_supervision=None,  # The wrapper will take charge
+                    supervised_criterion=supervised_criteria[ax],
+                    unsupervised_criterion=unsupervised_criteria[ax],
+                    n_outputs=n_outputs[ax],
+                    n_features=n_features[ax],
+                    n_samples=n_samples[ax],
+                    pairwise=pairwise[ax],
+                )
+            
+            supervised_criteria[ax] = ss_criteria[ax].supervised_criterion
+            unsupervised_criteria[ax] = ss_criteria[ax].unsupervised_criterion
+    
+    return ss_criterion_wrapper_class(
+        unsupervised_criterion_rows=unsupervised_criteria[0],
+        unsupervised_criterion_cols=unsupervised_criteria[1],
+        supervised_bipartite_criterion=criterion_wrapper_class(
+            criterion_rows=supervised_criteria[0],
+            criterion_cols=supervised_criteria[1],
+        ),
+        supervision_rows=supervision[0],
+        supervision_cols=supervision[1],
+        update_supervision=update_supervision,
+        ss_criterion_rows=ss_criteria[0],
+        ss_criterion_cols=ss_criteria[1],
+    )
+
+
+# def make_2dss_splitter(
+#     splitters,
+#     supervised_criteria=None,  # FIXME: validate, cannot pass None
+#     unsupervised_criteria=None,
+#     ss_criteria=None,
+#     supervision=0.5,
+#     update_supervision=None,  # TODO: for each axis
+#     n_features=None,
+#     n_samples=None,
+#     max_features=None,
+#     n_outputs=1,
+#     min_samples_leaf=1,
+#     min_weight_leaf=0.0,
+#     ax_min_samples_leaf=1,
+#     ax_min_weight_leaf=0.0,
+#     random_state=None,
+#     pairwise=False,
+#     axis_decision_only=False,
+#     criterion_wrapper_class=MSE_Wrapper2D,
+#     ss_criterion_wrapper_class=BipartiteSemisupervisedCriterion,
+# ):
+#     """Factory function of Splitter2D instances with semisupervised criteria.
+# 
+#     Utility function to simplificate Splitter2D instantiation.
+#     Parameters may be set to a single value or a 2-valued
+#     tuple or list, to specify them for each axis.
+#     """
+#     (
+#         n_samples,
+#         n_features,
+#         max_features,
+#         n_outputs,
+#         supervision,
+#         ax_min_samples_leaf,
+#         ax_min_weight_leaf,
+#         splitters,
+#         ss_criteria,
+#         supervised_criteria,
+#         unsupervised_criteria,
+#         pairwise,
+#     ) = _duplicate_single_parameters(
+#         n_samples,
+#         n_features,
+#         max_features,
+#         n_outputs,
+#         supervision,
+#         ax_min_samples_leaf,
+#         ax_min_weight_leaf,
+#         splitters,
+#         ss_criteria,
+#         supervised_criteria,
+#         unsupervised_criteria,
+#         pairwise,
+#     )
+# 
+#     random_state = check_random_state(random_state)
+# 
+#     # Make semi-supervised criteria
+#     for ax in range(2):
+#         if isinstance(splitters[ax], Splitter):
+#             if (supervised_criteria[ax] is not None):
+#                 warnings.warn(
+#                     f"Since {splitters[ax]=} is not a class, the provided "
+#                     f"{supervised_criteria[ax]=} is being ignored."
+#                 )
+#             if (unsupervised_criteria[ax] is not None):
+#                 warnings.warn(
+#                     f"Since {splitters[ax]=} is not a class, the provided "
+#                     f"{unsupervised_criteria[ax]=} is being ignored."
+#                 )
+#             continue
+#         # TODO: validate params
+#         elif not issubclass(splitters[ax], Splitter):  # TODO: use duck typing?
+#             raise ValueError(
+#                 "splitter must be an instance or subclass of "
+#                 "sklearn.tree._splitter.Splitter"
+#             )
+#         if axis_decision_only:  
+#             supervised_criteria[ax] = check_criterion(
+#                 supervised_criteria[ax],
+#                 n_outputs=n_outputs[ax],
+#                 n_samples=n_samples[ax],
+#             )
+#             unsupervised_criteria[ax] = check_criterion(
+#                 unsupervised_criteria[ax],
+#                 n_outputs=n_features[ax],
+#                 n_samples=n_samples[ax],
+#                 pairwise=pairwise[ax],
+#             )
+# 
+#             if (ss_criteria[ax] is not None):
+#                 warnings.warn(
+#                     f"Since {axis_decision_only=} is not None, the provided "
+#                     f"{ss_criteria[ax]=} is being ignored."
+#                 )
+#             # The Splitter will not consider unsupevised data when searching
+#             # for a split.
+#             splitters[ax] = splitters[ax](
+#                 criterion=supervised_criteria[ax],
+#                 max_features=max_features[ax],
+#                 min_samples_leaf=ax_min_samples_leaf[ax],
+#                 min_weight_leaf=ax_min_weight_leaf[ax],
+#                 random_state=random_state,
+#             )
+# 
+#         else:
+#             if ss_criteria[ax] is None:
+#                 ss_criteria[ax] = SSCompositeCriterion
+# 
+#             if not isinstance(ss_criteria[ax], SemisupervisedCriterion):
+#                 ss_criteria[ax] = make_semisupervised_criterion(
+#                     ss_class=ss_criteria[ax],
+#                     supervision=supervision[ax],
+#                     # update_supervision=update_supervision,
+#                     update_supervision=None,  # The wrapper will take charge
+#                     supervised_criterion=supervised_criteria[ax],
+#                     unsupervised_criterion=unsupervised_criteria[ax],
+#                     n_outputs=n_outputs[ax],
+#                     n_features=n_features[ax],
+#                     n_samples=n_samples[ax],
+#                     pairwise=pairwise[ax],
+#                 )
+#             
+#             supervised_criteria[ax] = ss_criteria[ax].supervised_criterion
+#             unsupervised_criteria[ax] = ss_criteria[ax].unsupervised_criterion
+# 
+#             splitters[ax] = splitters[ax](
+#                 criterion=ss_criteria[ax],
+#                 max_features=max_features[ax],
+#                 min_samples_leaf=ax_min_samples_leaf[ax],
+#                 min_weight_leaf=ax_min_weight_leaf[ax],
+#                 random_state=random_state,
+#             )
+#     
+#     criterion_wrapper = ss_criterion_wrapper_class(
+#         unsupervised_criterion_rows=unsupervised_criteria[0],
+#         unsupervised_criterion_cols=unsupervised_criteria[1],
+#         supervised_bipartite_criterion=criterion_wrapper_class(
+#             criterion_rows=supervised_criteria[0],
+#             criterion_cols=supervised_criteria[1],
+#         ),
+#         supervision_rows=supervision[0],
+#         supervision_cols=supervision[1],
+#         update_supervision=update_supervision,
+#         ss_criterion_rows=ss_criteria[0],
+#         ss_criterion_cols=ss_criteria[1],
+#     )
+# 
+#     return Splitter2D(
+#         splitter_rows=splitters[0],
+#         splitter_cols=splitters[1],
+#         criterion_wrapper=criterion_wrapper,
+#         min_samples_leaf=min_samples_leaf,
+#         min_weight_leaf=min_weight_leaf,
+#     )
