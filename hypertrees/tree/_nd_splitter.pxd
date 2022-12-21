@@ -29,10 +29,10 @@ cdef class Splitter2D:
     # to split the samples samples[start:end].
     #
     # The impurity computations are delegated to a criterion object.
-    cdef Splitter splitter_rows
-    cdef Splitter splitter_cols
-    cdef CriterionWrapper2D criterion_wrapper
-    cdef SIZE_t n_row_features      # Number of row features (X[0].shape[0]).
+    cdef public Splitter splitter_rows
+    cdef public Splitter splitter_cols
+    cdef public CriterionWrapper2D criterion_wrapper
+    cdef public SIZE_t n_row_features      # Number of row features (X[0].shape[0]).
     cdef const DOUBLE_t[:, ::1] X_rows
     cdef const DOUBLE_t[:, ::1] X_cols
     cdef const DOUBLE_t[:, ::1] y
@@ -45,10 +45,13 @@ cdef class Splitter2D:
     cdef double weighted_n_cols
     cdef double weighted_n_samples
 
-    cdef SIZE_t min_samples_leaf
-    cdef SIZE_t min_rows_leaf
-    cdef SIZE_t min_cols_leaf
-    cdef double min_weight_leaf
+    cdef public SIZE_t min_samples_leaf
+    cdef public SIZE_t min_rows_leaf
+    cdef public SIZE_t min_cols_leaf
+    cdef public double min_weight_leaf
+    # TODO
+    # cdef public double min_row_weight_leaf
+    # cdef public double min_col_weight_leaf
 
     cdef DOUBLE_t* row_sample_weight
     cdef DOUBLE_t* col_sample_weight

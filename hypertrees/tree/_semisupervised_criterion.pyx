@@ -174,7 +174,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
 
         return (
             sup * self.supervised_criterion.node_impurity() + \
-            (1-sup) * self.unsupervised_criterion.node_impurity()
+            (1.0-sup) * self.unsupervised_criterion.node_impurity()
         )
 
     cdef void children_impurity(self, double* impurity_left,
@@ -203,8 +203,8 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
             &u_impurity_left, &u_impurity_right,
         )
 
-        impurity_left[0] = sup*s_impurity_left + (1-sup)*u_impurity_left
-        impurity_right[0] = sup*s_impurity_right + (1-sup)*u_impurity_right
+        impurity_left[0] = sup*s_impurity_left + (1.0-sup)*u_impurity_left
+        impurity_right[0] = sup*s_impurity_right + (1.0-sup)*u_impurity_right
 
     cdef void node_value(self, double* dest) nogil:
         """Store the node value.
@@ -233,7 +233,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         return (
             sup * self.supervised_criterion.proxy_impurity_improvement()
                 / self.n_outputs  # self.supervised_criterion.n_outputs
-            + (1-sup) * self.unsupervised_criterion.proxy_impurity_improvement()
+            + (1.0-sup) * self.unsupervised_criterion.proxy_impurity_improvement()
                 / self.n_features  # self.unsupervised_criterion.n_outputs
         )
 
@@ -249,7 +249,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         # NOTE: both s_imp and u_imp impurities would actually be equal, unless
         # the two criteria calculates them in different ways.
 
-        return sup*s_imp + (1-sup)*u_imp
+        return sup*s_imp + (1.0-sup)*u_imp
 
 
 # FIXME
@@ -352,10 +352,10 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
 
         self.supervised_bipartite_criterion = supervised_bipartite_criterion
         self.supervised_criterion_rows = (
-            supervised_bipartite_criterion.criterion_rows
+            self.supervised_bipartite_criterion.criterion_rows
         )
         self.supervised_criterion_cols = (
-            supervised_bipartite_criterion.criterion_cols
+            self.supervised_bipartite_criterion.criterion_cols
         )
 
         self.ss_criterion_rows = ss_criterion_rows
@@ -462,20 +462,46 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
                     original_supervision=self.supervision_cols,
                 )
 
-                # FIXME: if the criteria given to the splitter is composite
-                # (axis_decision_only=False), they will not update supervision
-                # to use in proxy_impurity_improvement(). So we mannually set
-                # them here, being the only thing requiring us to mantain
-                # references to the splitters' semisupervised criterion
-                # wrappers.
-                if self.ss_criterion_rows is not None:
-                    self.ss_criterion_rows._curr_supervision = (
-                        self._curr_supervision_rows
-                    )
-                if self.ss_criterion_cols is not None:
-                    self.ss_criterion_cols._curr_supervision = (
-                        self._curr_supervision_cols
-                    )
+        cdef double eff_sup_rows
+        cdef double eff_sup_cols
+        cdef double const
+        cdef double total_samples
+        cdef double w_rows, w_cols
+
+        total_node_samples = (
+            self.weighted_n_node_rows + self.weighted_n_node_cols
+        )
+
+        # FIXME: different for pairwise unsupervised criterion
+        w_rows = self.n_row_features
+        w_cols = self.n_col_features
+
+        const = (
+            (w_rows + w_cols) * (
+                self.weighted_n_node_rows * self._curr_supervision_rows
+                + self.weighted_n_node_cols * self._curr_supervision_cols
+            )
+        )
+        eff_sup_rows = const / (
+            const + total_node_samples * w_rows * (
+                (1.0 - self._curr_supervision_rows)
+            )
+        )
+        eff_sup_cols = const / (
+            const + total_node_samples * w_cols * (
+                (1.0 - self._curr_supervision_cols)
+            )
+        )
+        # FIXME: if the criteria given to the splitter is composite
+        # (axis_decision_only=False), they will not update supervision
+        # to use in proxy_impurity_improvement(). So we mannually set
+        # them here, being the only thing requiring us to mantain
+        # references to the splitters' semisupervised criterion
+        # wrappers.
+        if self.ss_criterion_rows is not None:
+            self.ss_criterion_rows._curr_supervision = eff_sup_rows
+        if self.ss_criterion_cols is not None:
+            self.ss_criterion_cols._curr_supervision = eff_sup_cols
 
     cdef void node_value(self, double* dest) nogil:
         self.supervised_bipartite_criterion.node_value(dest)
@@ -494,13 +520,19 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         sup_cols = self._curr_supervision_cols
 
         s_imp = self.supervised_bipartite_criterion.node_impurity()
-        s_imp *= (sup_rows + sup_cols) / 2
+        s_imp *= (
+            (
+                sup_rows * self.weighted_n_node_rows
+                + sup_cols * self.weighted_n_node_cols
+            ) 
+            / (self.weighted_n_node_rows + self.weighted_n_node_cols)
+        )
 
         u_imp_rows = self.unsupervised_criterion_rows.node_impurity()
         u_imp_cols = self.unsupervised_criterion_cols.node_impurity()
 
-        wu_rows = self.n_row_features * (1-sup_rows)
-        wu_cols = self.n_col_features * (1-sup_cols)
+        wu_rows = self.n_row_features * (1.0-sup_rows)
+        wu_cols = self.n_col_features * (1.0-sup_cols)
         u_imp = (
             (wu_rows * u_imp_rows + wu_cols * u_imp_cols)
             / (self.n_row_features + self.n_col_features)
@@ -518,7 +550,10 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         cdef double sup, other_sup
         cdef double n_feat, other_n_feat, n_total_feat
         cdef double u_imp_left, u_imp_right
-        cdef double wu, other_wu, ws
+        cdef double wu, other_wu, ws_left, ws_right
+        cdef double weighted_n_left
+        cdef double weighted_n_right
+        cdef double weighted_n_other
         cdef SIZE_t pos
 
         if axis == 0:
@@ -540,6 +575,10 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             n_feat = self.n_row_features
             other_n_feat = self.n_col_features
 
+            weighted_n_left = self.supervised_criterion_rows.weighted_n_left
+            weighted_n_right = self.supervised_criterion_rows.weighted_n_right
+            weighted_n_other = self.weighted_n_cols
+
         elif axis == 1:
             other_u_imp = self.unsupervised_criterion_rows.node_impurity()
 
@@ -555,6 +594,10 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
             n_feat = self.n_col_features
             other_n_feat = self.n_row_features
 
+            weighted_n_left = self.supervised_criterion_cols.weighted_n_left
+            weighted_n_right = self.supervised_criterion_cols.weighted_n_right
+            weighted_n_other = self.weighted_n_rows
+
         else:
             with gil:
                 raise InvalidAxisError
@@ -569,13 +612,20 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         u_imp_right = (
             (wu * u_imp_right + other_wu * other_u_imp) / n_total_feat
         )
+        ws_left = (
+            (sup * weighted_n_left + other_sup * weighted_n_other)
+            / (weighted_n_left + weighted_n_other)
+        )
+        ws_right = (
+            (sup * weighted_n_right + other_sup * weighted_n_other)
+            / (weighted_n_right + weighted_n_other)
+        )
 
-        ws = 0.5 * (sup + other_sup)
         self.supervised_bipartite_criterion.children_impurity(
             impurity_left, impurity_right, axis,
         )
-        impurity_left[0] =  u_imp_left + ws * impurity_left[0]
-        impurity_right[0] =  u_imp_right + ws * impurity_right[0]
+        impurity_left[0] =  u_imp_left + ws_left * impurity_left[0]
+        impurity_right[0] =  u_imp_right + ws_right * impurity_right[0]
 
 
     cdef double impurity_improvement(

@@ -3,7 +3,9 @@ from sklearn.tree._splitter cimport Splitter, SplitRecord
 from sklearn.tree._tree cimport SIZE_t, DOUBLE_t
 
 from hypertrees.tree._nd_criterion cimport CriterionWrapper2D
-from hypertrees.tree._semisupervised_criterion cimport BipartiteSemisupervisedCriterion
+from hypertrees.tree._semisupervised_criterion cimport (
+    SSCompositeCriterion, BipartiteSemisupervisedCriterion,
+)
 from hypertrees.tree._nd_splitter cimport (
     SplitRecord as SplitRecordND,
     Splitter2D
@@ -246,7 +248,7 @@ cpdef apply_bipartite_ss_criterion(
         Criterion sup_criterion, unsup_criterion, ss_criterion
         Criterion sup_criterion_rows, unsup_criterion_rows
         Criterion sup_criterion_cols, unsup_criterion_cols
-        Criterion ss_criterion_rows, ss_criterion_cols
+        SSCompositeCriterion ss_criterion_rows, ss_criterion_cols
 
         double weighted_n_rows
         double weighted_n_cols
@@ -280,20 +282,20 @@ cpdef apply_bipartite_ss_criterion(
         col_weight_ptr = &col_weight_[0]
         weighted_n_rows = row_weight_.sum()
         weighted_n_cols = col_weight_.sum()
-    
+
     bipartite_ss_criterion.init(
-        X_rows_,
-        X_cols_,
-        y_,
-        y_transposed,
-        row_weight_ptr,
-        col_weight_ptr,
-        weighted_n_rows,
-        weighted_n_cols,
-        &row_samples[0],
-        &col_samples[0],
-        start_,
-        end_,
+        X_rows=X_rows_,
+        X_cols=X_cols_,
+        y=y_,
+        y_transposed=y_transposed,
+        row_sample_weight=row_weight_ptr,
+        col_sample_weight=col_weight_ptr,
+        weighted_n_rows=weighted_n_rows,
+        weighted_n_cols=weighted_n_cols,
+        row_samples=&row_samples[0],
+        col_samples=&col_samples[0],
+        start=start_,
+        end=end_,
     )
 
     unsup_criterion_rows = bipartite_ss_criterion.unsupervised_criterion_rows
@@ -341,6 +343,8 @@ cpdef apply_bipartite_ss_criterion(
 
         for pos in range(start_[ax]+1, end_[ax]):  # Start from 1 element on left
             i = pos - start_[ax] - 1
+            sup_criterion.reset()
+            unsup_criterion.reset()
             sup_criterion.update(pos)
             unsup_criterion.update(pos)
             axis_result['pos'][i] = sup_criterion.pos
@@ -359,10 +363,10 @@ cpdef apply_bipartite_ss_criterion(
             axis_result['weighted_n_left'][i] = sup_criterion.weighted_n_left
             axis_result['weighted_n_right'][i] = sup_criterion.weighted_n_right
 
-            if ss_criterion is not None:
-                axis_result['proxy_improvement'][i] = ss_criterion.proxy_impurity_improvement()
-            else:
+            if ss_criterion is None:
                 axis_result['proxy_improvement'][i] = sup_criterion.proxy_impurity_improvement()
+            else:
+                axis_result['proxy_improvement'][i] = ss_criterion.proxy_impurity_improvement()
 
             axis_result['supervised_proxy_improvement'][i] = sup_criterion.proxy_impurity_improvement()
             axis_result['unsupervised_proxy_improvement'][i] = unsup_criterion.proxy_impurity_improvement()
@@ -397,7 +401,7 @@ cpdef get_criterion_status(
 ):
     cdef double imp_left, imp_right, node_imp
     result = {
-        # 'y': criterion.y,
+        # 'y': np.asarray(criterion.y),
         'start': criterion.start,
         'end': criterion.end,
         'pos': criterion.pos,
@@ -411,6 +415,7 @@ cpdef get_criterion_status(
     }
     node_imp = criterion.node_impurity()
     criterion.children_impurity(&imp_left, &imp_right)
+    result['node_impurity'] = node_imp
     result['impurity_left'] = imp_left
     result['impurity_right'] = imp_right
     result['proxy_impurity_improvement'] = criterion.proxy_impurity_improvement()

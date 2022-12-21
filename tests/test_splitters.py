@@ -515,7 +515,7 @@ def test_ss_1d2d_blobs(supervision, random_state, **params):
         n_features=params['nattrs'],
         n_samples=params['shape'],
         random_state=check_random_state(random_state),
-        noise=2.0,
+        noise=5.0,
         centers=10,
     )
 
@@ -1053,3 +1053,78 @@ def test_ss_axis_decision_only(supervision, random_state, **params):
         atol=1e-8,
     )
 
+
+@pytest.mark.parametrize('axis_decision_only', (True, False))
+def test_criterion_identity_in_wrappers(axis_decision_only):
+    # splitter1 = BestSplitter(
+    #     criterion=make_semisupervised_criterion(
+    #         supervised_criterion=MSE,
+    #         unsupervised_criterion=MSE,
+    #         n_samples=10,
+    #         n_outputs=10,
+    #         n_features=10,
+    #         supervision=supervision,
+    #     ),
+    #     max_features=10,
+    #     min_samples_leaf=1,
+    #     min_weight_leaf=0.0,
+    #     random_state=check_random_state(random_state),
+    # )
+    splitter = make_2dss_splitter(
+        splitters=BestSplitter,
+        supervised_criteria=MSE,
+        unsupervised_criteria=MSE,
+        supervision=0.1,
+        max_features=10,
+        n_features=10,
+        n_samples=10,
+        n_outputs=1,
+        min_samples_leaf=1,
+        min_weight_leaf=0.0,
+        random_state=0,
+        axis_decision_only=axis_decision_only,
+    )
+    assert (
+        splitter.criterion_wrapper.supervised_bipartite_criterion.criterion_rows
+        is splitter.criterion_wrapper.supervised_criterion_rows
+    )
+    assert (
+        splitter.criterion_wrapper.supervised_bipartite_criterion.criterion_cols
+        is splitter.criterion_wrapper.supervised_criterion_cols
+    )
+
+    if axis_decision_only:
+        assert (
+            splitter.splitter_rows.criterion
+            is splitter.criterion_wrapper.supervised_criterion_rows
+        )
+        assert (
+            splitter.splitter_cols.criterion
+            is splitter.criterion_wrapper.supervised_criterion_cols
+        )
+
+    else:
+        assert (
+            splitter.splitter_rows.criterion
+            is splitter.criterion_wrapper.ss_criterion_rows
+        )
+        assert (
+            splitter.splitter_cols.criterion
+            is splitter.criterion_wrapper.ss_criterion_cols
+        )
+        assert (
+            splitter.splitter_rows.criterion.supervised_criterion
+            is splitter.criterion_wrapper.supervised_criterion_rows
+        )
+        assert (
+            splitter.splitter_rows.criterion.unsupervised_criterion
+            is splitter.criterion_wrapper.unsupervised_criterion_rows
+        )
+        assert (
+            splitter.splitter_cols.criterion.supervised_criterion
+            is splitter.criterion_wrapper.supervised_criterion_cols
+        )
+        assert (
+            splitter.splitter_cols.criterion.unsupervised_criterion
+            is splitter.criterion_wrapper.unsupervised_criterion_cols
+        )

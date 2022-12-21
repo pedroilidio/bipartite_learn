@@ -396,21 +396,47 @@ def test_bipartite_ss_criterion_proxy_improvement(
         k: v[col_indices-1] if isinstance(v, np.ndarray) else v
         for k, v in col_splits_mono.items()
     }
-    # pos = 3
-    # update_criterion(criterion.unsupervised_criterion_rows, pos)
-    # update_criterion(criterion.unsupervised_criterion_cols, pos)
-    # update_criterion(criterion.supervised_criterion_rows, pos)
-    # update_criterion(criterion.supervised_criterion_cols, pos)
-    # update_criterion(mono_criterion.supervised_criterion, pos * n_rows)
-    # update_criterion(mono_criterion.unsupervised_criterion, pos * n_rows)
 
-    # print(get_criterion_status(criterion.unsupervised_criterion_rows))
-    # print(get_criterion_status(criterion.unsupervised_criterion_cols))
-    # print(get_criterion_status(criterion.supervised_criterion_rows))
-    # print(get_criterion_status(criterion.supervised_criterion_cols))
-    # print(get_criterion_status(mono_criterion.supervised_criterion))
-    # print(get_criterion_status(mono_criterion.unsupervised_criterion))
-    # breakpoint()
+    # FIXME: remove! ##########################
+    # row_splits_mono_subsample['proxy_improvement'] *= n_rows
+    # col_splits_mono_subsample['proxy_improvement'] *= n_cols
+    pos = 3
+    update_criterion(criterion.unsupervised_criterion_rows, pos)
+    update_criterion(criterion.unsupervised_criterion_cols, pos)
+    update_criterion(criterion.supervised_criterion_rows, pos)
+    update_criterion(criterion.supervised_criterion_cols, pos)
+    update_criterion(mono_criterion.supervised_criterion, pos)# * n_rows)
+    update_criterion(mono_criterion.unsupervised_criterion, pos)# * n_rows)
+
+    # FIXME: sq_sum_total  and sum_total are not set by wrapper init
+    print('* unsuper rows:', get_criterion_status(criterion.unsupervised_criterion_rows))
+    print('* unsuper cols:', get_criterion_status(criterion.unsupervised_criterion_cols))
+    print('* super rows:', get_criterion_status(criterion.supervised_criterion_rows))
+    print('* super cols:', get_criterion_status(criterion.supervised_criterion_cols))
+    print('* mono_super:', get_criterion_status(mono_criterion.supervised_criterion))
+    print('* mono_unsuper:', get_criterion_status(mono_criterion.unsupervised_criterion))
+
+    sup_row_splits_mono = apply_criterion(
+        mono_criterion.supervised_criterion,
+        y=y,
+        start=start_row * n_cols,
+        end=end_row * n_cols,
+    )
+    sup_row_splits_mono_subsample = {
+        k: v[row_indices-1] if isinstance(v, np.ndarray) else v
+        for k, v in sup_row_splits_mono.items()
+    }
+    unsup_row_splits_mono = apply_criterion(
+        mono_criterion.supervised_criterion,
+        y=x.astype('float64'),
+        start=start_row * n_cols,
+        end=end_row * n_cols,
+    )
+    unsup_row_splits_mono_subsample = {
+        k: v[row_indices-1] if isinstance(v, np.ndarray) else v
+        for k, v in unsup_row_splits_mono.items()
+    }
+    #################################
 
     top_proxies = 3
 
@@ -453,7 +479,12 @@ def test_bipartite_ss_criterion_proxy_improvement(
         row_splits,
         row_splits_mono_subsample,
         msg_prefix='(rows 1d2d) ',
-        ignore={'pos', 'weighted_n_left', 'weighted_n_right'},
+        ignore={
+            'pos',
+            'weighted_n_left',
+            'weighted_n_right',
+            'proxy_improvement',
+        },
         rtol=1e-4,
         atol=1e-8,
         # differing_keys="raise",
@@ -462,7 +493,12 @@ def test_bipartite_ss_criterion_proxy_improvement(
         col_splits,
         col_splits_mono_subsample,
         msg_prefix='(cols 1d2d) ',
-        ignore={'pos', 'weighted_n_left', 'weighted_n_right'},
+        ignore={
+            'pos',
+            'weighted_n_left',
+            'weighted_n_right',
+            'proxy_improvement',
+        },
         rtol=1e-4,
         atol=1e-8,
         # differing_keys="raise",
