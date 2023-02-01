@@ -493,21 +493,26 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
         #     )
         # )
 
-        # FIXME: will not work if sup rows different from cols
+        # FIXME: will not work for GMO, only GSO
         # FIXME: calc bellow is wrong
-        const = (  # average sup
-            self.weighted_n_node_rows * self._curr_supervision_rows
-                + self.weighted_n_node_cols * self._curr_supervision_cols
-        ) / (self.weighted_n_node_rows + self.weighted_n_node_cols)
+        # FIXME: do it before changing dynamic supervision
+        const = (self._curr_supervision_rows + self._curr_supervision_cols) / 2
+        # const = (self._curr_supervision_rows + self._curr_supervision_cols)
 
-        eff_sup_rows = const / (const + (
-                w_rows * (1.0 - self._curr_supervision_rows)
-                / (w_rows + w_cols)
+        # eff_sup_rows = const / (
+        #     const + (1.0 - self._curr_supervision_rows) #/ 2
+        # )
+        # eff_sup_cols = const / (
+        #     const + (1.0 - self._curr_supervision_cols) #/ 2
+        # )
+        eff_sup_rows = const/self.weighted_n_node_cols / (
+            const/self.weighted_n_node_cols + (
+                (1.0 - self._curr_supervision_rows) / 2  # XXX
             )
         )
-        eff_sup_cols = const / (const + (
-                w_cols * (1.0 - self._curr_supervision_cols)
-                / (w_rows + w_cols)
+        eff_sup_cols = const/self.weighted_n_node_rows / (
+            const/self.weighted_n_node_rows + (
+                (1.0 - self._curr_supervision_cols) / 2  # XXX
             )
         )
         # FIXME: if the criteria given to the splitter is composite
@@ -544,6 +549,7 @@ cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
                 + sup_cols * self.weighted_n_node_cols
             ) 
             / (self.weighted_n_node_rows + self.weighted_n_node_cols)
+            # / (self.weighted_n_node_rows * self.weighted_n_node_cols)  # XXX
         )
 
         u_imp_rows = self.unsupervised_criterion_rows.node_impurity()

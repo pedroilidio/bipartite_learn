@@ -223,6 +223,7 @@ def compare_splitters_1d2d(
         pos = result1['pos'] - start1d
 
         if semisupervised_1d:
+            # TODO: different row and column supervisions
             # NOTE: only single-output
             x_, y_ = x_.copy(), y_.copy()
             # Apply 'supervision' parameter weighting

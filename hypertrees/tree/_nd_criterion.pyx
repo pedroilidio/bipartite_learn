@@ -236,7 +236,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
             samples=self.row_samples,
             start=self.start[0],
             end=self.end[0],
-            n_node_samples=self.n_node_rows,
+            n_node_samples=self.n_node_rows,  # XXX
             weighted_n_samples=self.weighted_n_rows,
             weighted_n_node_samples=self.weighted_n_node_rows,
         )
@@ -247,7 +247,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
             samples=self.col_samples,
             start=self.start[1],
             end=self.end[1],
-            n_node_samples=self.n_node_cols,
+            n_node_samples=self.n_node_cols,  # XXX
             weighted_n_samples=self.weighted_n_cols,
             weighted_n_node_samples=self.weighted_n_node_cols,
         )
@@ -298,14 +298,14 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     ) nogil:
         if axis == 0:
             return (
-                self.n_node_cols / self.n_cols
+                self.weighted_n_node_cols / self.weighted_n_cols
                 * self.criterion_rows.impurity_improvement(
                     impurity_parent, impurity_left, impurity_right,
                 )
             )
         elif axis == 1:
             return (
-                self.n_node_rows / self.n_rows
+                self.weighted_n_node_rows / self.weighted_n_rows
                 * self.criterion_cols.impurity_improvement(
                     impurity_parent, impurity_left, impurity_right,
                 )
@@ -373,8 +373,12 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
             sum_right = self.criterion_rows.sum_right[0]
             weighted_n_left = self.criterion_rows.weighted_n_left
             weighted_n_right = self.criterion_rows.weighted_n_right
+
+            # TODO: changing axis crit weight to sum of column weights would
+            # eliminate these lines
             weighted_n_left *= self.weighted_n_node_cols
             weighted_n_right *= self.weighted_n_node_cols
+
             end[0] = self.criterion_rows.pos
 
         elif axis == 1:
@@ -382,8 +386,12 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
             sum_right = self.criterion_cols.sum_right[0]
             weighted_n_left = self.criterion_cols.weighted_n_left
             weighted_n_right = self.criterion_cols.weighted_n_right
+
+            # TODO: changing axis crit weight to sum of column weights would
+            # eliminate these lines
             weighted_n_left *= self.weighted_n_node_rows
             weighted_n_right *= self.weighted_n_node_rows
+
             end[1] = self.criterion_cols.pos
         else:
             with gil:
@@ -415,6 +423,7 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         )
 
 
+# TODO: changing axis crit weight to sum of column weights would benefit
 cdef class FriedmanAdapter(MSE_Wrapper2D):
     cdef double impurity_improvement(
         self,
