@@ -399,6 +399,8 @@ def test_bipartite_ss_criterion_proxy_improvement(
     }
 
     top_proxies = 0  # consider all positions
+    bipartite_proxy=row_splits['proxy_improvement']
+    monopartite_proxy=row_splits_mono_subsample['proxy_improvement']
 
     row_proxy_order = row_splits['proxy_improvement'].argsort()
     row_proxy_order_mono = row_splits_mono_subsample['proxy_improvement'].argsort()
@@ -416,12 +418,42 @@ def test_bipartite_ss_criterion_proxy_improvement(
     col_proxy_order_mono = col_proxy_order_mono[-top_proxies:]
     comparison_col_proxy = col_proxy_order == col_proxy_order_mono
 
+    corr = np.corrcoef(bipartite_proxy, monopartite_proxy)[0, 1]
+
+    assert_equal_dicts(
+        dict(corr=corr),
+        dict(corr=1),
+        rtol=1e-4,
+        msg_prefix=f'Error: {1 - corr:.7f} | ',
+    )
+
+    bipartite_order = dict(
+        bipartite_proxy=bipartite_proxy[row_proxy_order],
+        monopartite_proxy=monopartite_proxy[row_proxy_order],
+    )
+    monopartite_order = dict(
+        bipartite_proxy=bipartite_proxy[row_proxy_order_mono],
+        monopartite_proxy=monopartite_proxy[row_proxy_order_mono],
+    )
+
+    assert_equal_dicts(
+        bipartite_order,
+        monopartite_order,
+        msg_prefix=f'Corr. error: {1 - corr:.7f} | ',
+    )
+
+    return  # XXX
     assert_allclose(
         row_splits['proxy_improvement'][row_proxy_order],
         row_splits['proxy_improvement'][row_proxy_order_mono],
         rtol=1e-4,
     )
-    return  # XXX
+    assert_allclose(
+        row_splits_mono_subsample['proxy_improvement'][row_proxy_order],
+        row_splits_mono_subsample['proxy_improvement'][row_proxy_order_mono],
+        rtol=1e-4,
+    )
+    # =====
 
     assert comparison_row_proxy.all(), (
         f'(row proxy argsort) {row_proxy_order} {row_proxy_order_mono} = \n\t'

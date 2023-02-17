@@ -898,8 +898,8 @@ class BipartiteDecisionTreeRegressor(
         ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
         :ref:`minimal_cost_complexity_pruning` for details.
 
-    prediction_weights : {"uniform", "x", "raw"}, float, 1D-array or callable,
-                         default="uniform"
+    prediction_weights : {"uniform", "leaf_uniform", "uniform", "raw",\
+                          "precomputed"}, 1D-array or callable, default="uniform"
         Determines how to compute the final predicted value. Initially, all
         predictions for each row and column instance from the training set that
         share the leaf node with the predicting sample are obtained.
@@ -913,7 +913,7 @@ class BipartiteDecisionTreeRegressor(
           for instances present in the training set, it uses the leaf's row or
           column mean corresponding to it. Known instances are recognized by a
           a similarity value of 1. This is the main approach presented by [1],
-          named simply global multi-output (GMO).
+          named global multi-output (GMO).
 
         Other options return the weighted average of the leaf values:
 

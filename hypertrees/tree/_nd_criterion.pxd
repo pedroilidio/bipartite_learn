@@ -93,6 +93,8 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     cdef DOUBLE_t[:, ::1] y_row_sums
     cdef DOUBLE_t[:, ::1] y_col_sums
 
+    cdef void* _get_criterion(self, SIZE_t axis) nogil except NULL
+
     cdef inline int _init_child_criterion(
             self,
             RegressionCriterion criterion,
@@ -112,8 +114,10 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
 
     See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
     """
-    cdef AxisCriterion criterion_rows
-    cdef AxisCriterion criterion_cols
+    cdef public AxisCriterion criterion_rows
+    cdef public AxisCriterion criterion_cols
+
+    cdef void* _get_criterion(self, SIZE_t axis) nogil except NULL
 
 
 cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):

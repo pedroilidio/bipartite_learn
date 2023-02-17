@@ -342,7 +342,7 @@ def test_weight_normalization():
 
 
 @pytest.mark.parametrize("mrl,mcl", [(1, 5), (2, 1), (11, 19)])
-def test_leaf_shape(mrl, mcl, random_state, **params):
+def test_leaf_shape_gmo(mrl, mcl, random_state, **params):
     params = DEF_PARAMS | params
     # XX, Y, x, y = gen_mock_data(melt=True, **params)
     rng = check_random_state(random_state)

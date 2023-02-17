@@ -13,6 +13,11 @@ from sklearn.tree._tree cimport UINT32_t        # Unsigned 32 bit integer
 from sklearn.tree._criterion cimport Criterion        # Unsigned 32 bit integer
 
 cdef class AxisCriterion(Criterion):
+    """Criterion that is able to select a subset of columns to consider.
+
+    It can also calculate the impurity on the other axis, for the current node
+    and children.
+    """
     cdef const DOUBLE_t* col_sample_weight
 
     cdef SIZE_t* col_samples
@@ -39,17 +44,49 @@ cdef class AxisCriterion(Criterion):
     # cdef double weighted_n_cols  # TODO: not needed for now
 
     cdef SIZE_t n_node_cols
+    cdef double weighted_n_cols
     cdef double weighted_n_node_cols
 
     cdef bint _columns_are_set
 
+    # FIXME: Since we cannot access rows_impurity and cols_impurity separately,
+    # we have to discard self.impurity_improvement()'s input and calculate
+    # them again. To mitigate this problem, self.axes_children_impurities()
+    # caches the previous values it calculated and reuses them if
+    # self.pos == self._cached_pos.
+    # NOTE: self._cached_pos must be reset at AxisCriterion.init() to
+    # ensure it always corresponds to the current tree node.
+    cdef SIZE_t _cached_pos
+    cdef double _cached_rows_node_impurity
+    cdef double _cached_cols_node_impurity
+    cdef double _cached_rows_impurity_left
+    cdef double _cached_rows_impurity_right
+    cdef double _cached_cols_impurity_left
+    cdef double _cached_cols_impurity_right
+
     cdef void init_columns(
         self,
-        SIZE_t* col_samples,
         const DOUBLE_t* col_sample_weight,
+        double weighted_n_cols,
+        SIZE_t* col_samples,
         SIZE_t col_start,
         SIZE_t col_end,
     ) nogil
+
+    cdef double node_axes_impurities(
+        self,
+        double* rows_impurity,
+        double* cols_impurity,
+    ) nogil
+
+    cdef void children_axes_impurities(
+        self,
+        double* rows_impurity_left,
+        double* rows_impurity_right,
+        double* cols_impurity_left,
+        double* cols_impurity_right,
+    ) nogil
+
 
 # (TODO)
 # cdef class ClassificationCriterion(AxisCriterion):
@@ -69,7 +106,7 @@ cdef class AxisRegressionCriterion(AxisCriterion):
     # TODO: sq_row_sums is naturally calculated by the criterion in the other
     #       axis. We could set it as a pointer to the other axis criterion's
     #       sum_total.
-    cdef double sq_row_sums  # np.sum(sample_weights * np.sum(y, axis=1) ** 2)
+    cdef double sum_sq_row_sums  # np.sum(sample_weights * np.sum(y, axis=1) ** 2)
 
     cdef double[::1] sum_total  # The sum of w*y.
     cdef double[::1] sum_left   # Same as above, but for the left side of the split

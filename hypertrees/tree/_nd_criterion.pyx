@@ -55,8 +55,9 @@ cdef class CriterionWrapper2D:
         double impurity_right,
         SIZE_t axis,
     ) nogil:
-        pass
-
+        """The final value to express the split quality. 
+        """
+    
 
 # TODO: global in the name
 cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
@@ -137,20 +138,21 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         SIZE_t[2] end,
     ) nogil except -1:
         """This function adapts RegressionCriterion.init to 2D data."""
-        cdef SIZE_t i, j, p, q
-        cdef DOUBLE_t wi, wj, y_ij, w_y_ij
-        cdef DOUBLE_t sum_total
-        cdef double sq_sum_total
-        cdef bint is_first_row
+        cdef:
+            SIZE_t i, j, p, q
+            DOUBLE_t wi, wj, y_ij, w_y_ij
+            DOUBLE_t sum_total
+            double sq_sum_total
+            bint is_first_row
 
-        # Just to use y_row_sums[i] instead of y_row_sums[i, 0]
-        cdef DOUBLE_t* y_row_sums = &self.y_row_sums[0, 0]
-        cdef DOUBLE_t* y_col_sums = &self.y_col_sums[0, 0]
+            # Just to use y_row_sums[i] instead of y_row_sums[i, 0]
+            DOUBLE_t* y_row_sums = &self.y_row_sums[0, 0]
+            DOUBLE_t* y_col_sums = &self.y_col_sums[0, 0]
 
-        cdef SIZE_t start_row = start[0]
-        cdef SIZE_t start_col = start[1]
-        cdef SIZE_t end_row = end[0]
-        cdef SIZE_t end_col = end[1]
+            SIZE_t start_row = start[0]
+            SIZE_t start_col = start[1]
+            SIZE_t end_row = end[0]
+            SIZE_t end_col = end[1]
 
         # Initialize fields
         self.X_rows = X_rows
@@ -296,20 +298,23 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         double impurity_right,
         SIZE_t axis,  # Needs axis because of weighted_n_left/weighted_n_right.
     ) nogil:
+        # Fetch improvement according to the criterion on 'axis'.
+        cdef double ret = (<RegressionCriterion> self._get_criterion(axis)) \
+            .impurity_improvement(
+                impurity_parent,
+                impurity_left,
+                impurity_right,
+            )
         if axis == 0:
-            return (
-                self.weighted_n_node_cols / self.weighted_n_cols
-                * self.criterion_rows.impurity_improvement(
-                    impurity_parent, impurity_left, impurity_right,
-                )
-            )
+            return ret * self.weighted_n_node_cols / self.weighted_n_cols
         elif axis == 1:
-            return (
-                self.weighted_n_node_rows / self.weighted_n_rows
-                * self.criterion_cols.impurity_improvement(
-                    impurity_parent, impurity_left, impurity_right,
-                )
-            )
+            return ret * self.weighted_n_node_rows / self.weighted_n_rows
+
+    cdef void* _get_criterion(self, SIZE_t axis) nogil except NULL:
+        if axis == 0:
+            return <void*> self.criterion_rows
+        elif axis == 1:
+            return <void*> self.criterion_cols
         else:
             with gil:
                 raise InvalidAxisError
@@ -325,11 +330,11 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         i.e. the impurity of samples[start:end]. The smaller the impurity the
         better.
         """
-        cdef double sum_total = self.sum_total[0]  # self.n_outputs == 1
+        # self.n_outputs == 1
         return (
-            self.sq_sum_total
-            - (sum_total * sum_total) / self.weighted_n_node_samples
-        ) / self.weighted_n_node_samples
+            self.sq_sum_total / self.weighted_n_node_samples
+            - (self.sum_total[0] / self.weighted_n_node_samples) ** 2.0
+        )
 
     cdef void children_impurity(
         self,
@@ -342,60 +347,54 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         i.e. the impurity of the left child (samples[start:pos]) and the
         impurity the right child (samples[pos:end]).
 
-        Is done here because sq_sum_* of children criterion is messed up, as
-        they receive axis means as y.
+        It is done here because sq_sum_* of children criterion is set
+        differently, as they receive axis sums as y.
         """
-        cdef DOUBLE_t y_ij
-        cdef const DOUBLE_t[:, ::1] y = self.y
+        cdef:
+            DOUBLE_t y_ij
+            const DOUBLE_t[:, ::1] y = self.y
 
-        cdef double sq_sum_left = 0.0
-        cdef double sq_sum_right
+            double sq_sum_left = 0.0
+            double sq_sum_right
 
-        cdef SIZE_t i, j, q, p
-        cdef DOUBLE_t wi = 1.0, wj = 1.0
+            SIZE_t i, j, q, p
+            DOUBLE_t wi = 1.0, wj = 1.0
 
-        cdef SIZE_t* row_samples = self.row_samples
-        cdef SIZE_t* col_samples = self.col_samples
-        cdef DOUBLE_t* row_sample_weight = self.row_sample_weight
-        cdef DOUBLE_t* col_sample_weight = self.col_sample_weight
+            SIZE_t* row_samples = self.row_samples
+            SIZE_t* col_samples = self.col_samples
+            DOUBLE_t* row_sample_weight = self.row_sample_weight
+            DOUBLE_t* col_sample_weight = self.col_sample_weight
 
-        cdef double sum_left
-        cdef double sum_right
+            double sum_left
+            double sum_right
+            double weighted_n_left
+            double weighted_n_right
 
-        cdef SIZE_t start[2]
-        cdef SIZE_t end[2]
+            SIZE_t start[2]
+            SIZE_t end[2]
+
+            void* criterion = self._get_criterion(axis)
+
         end[0], end[1] = self.end[0], self.end[1]
         start[0], start[1] = self.start[0], self.start[1]
 
         # Note that n_outputs is always 1
         if axis == 0:
-            sum_left = self.criterion_rows.sum_left[0]
-            sum_right = self.criterion_rows.sum_right[0]
-            weighted_n_left = self.criterion_rows.weighted_n_left
-            weighted_n_right = self.criterion_rows.weighted_n_right
-
-            # TODO: changing axis crit weight to sum of column weights would
-            # eliminate these lines
-            weighted_n_left *= self.weighted_n_node_cols
-            weighted_n_right *= self.weighted_n_node_cols
-
-            end[0] = self.criterion_rows.pos
-
+            weighted_n_node_other = self.weighted_n_node_cols
         elif axis == 1:
-            sum_left = self.criterion_cols.sum_left[0]
-            sum_right = self.criterion_cols.sum_right[0]
-            weighted_n_left = self.criterion_cols.weighted_n_left
-            weighted_n_right = self.criterion_cols.weighted_n_right
+            weighted_n_node_other = self.weighted_n_node_rows
 
-            # TODO: changing axis crit weight to sum of column weights would
-            # eliminate these lines
-            weighted_n_left *= self.weighted_n_node_rows
-            weighted_n_right *= self.weighted_n_node_rows
+        sum_left = (<RegressionCriterion> criterion).sum_left[0]
+        sum_right = (<RegressionCriterion> criterion).sum_right[0]
+        weighted_n_left = (<Criterion> criterion).weighted_n_left
+        weighted_n_right = (<Criterion> criterion).weighted_n_right
 
-            end[1] = self.criterion_cols.pos
-        else:
-            with gil:
-                raise InvalidAxisError
+        # TODO: changing axis crit weight to sum of column weights would
+        # eliminate these lines
+        weighted_n_left *= weighted_n_node_other
+        weighted_n_right *= weighted_n_node_other
+
+        end[axis] = (<Criterion> criterion).pos
 
         for p in range(start[0], end[0]):
             i = row_samples[p]
@@ -432,17 +431,14 @@ cdef class FriedmanAdapter(MSE_Wrapper2D):
         double impurity_right,
         SIZE_t axis,  # Needs axis because of weighted_n_left/weighted_n_right.
     ) nogil:
+        # Fetch improvement according to the criterion on 'axis'.
+        cdef double imp = RegressionCriterionWrapper2D.impurity_improvement(
+            self, impurity_parent, impurity_left, impurity_right, axis,
+        )
         if axis == 0:
-            return self.criterion_rows.impurity_improvement(
-                impurity_parent, impurity_left, impurity_right,
-            ) / self.n_node_cols
+            return imp / self.weighted_n_node_cols
         elif axis == 1:
-            return self.criterion_cols.impurity_improvement(
-                    impurity_parent, impurity_left, impurity_right,
-            ) / self.n_node_rows
-        else:
-            with gil:
-                raise InvalidAxisError
+            return imp / self.weighted_n_node_rows
 
 
 # TODO: should work for classification as well.
@@ -530,16 +526,6 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         self.row_samples = row_samples
         self.col_samples = col_samples
 
-        # TODO: does not work because of depth first-tree building
-        # Use last split axis to avoid redundantly calculating node impurity
-        # in self.impurity_improvement()
-        # if self.start[0] == start[0] and self.end[0] == end[0]:
-        #     self.last_split_axis = 1
-        # elif self.start[1] == start[1] and self.end[1] == end[1]:
-        #     self.last_split_axis = 0
-        # else:
-        #     self.last_split_axis = -1
-
         self.start[0], self.start[1] = start[0], start[1]
         self.end[0], self.end[1] = end[0], end[1]
 
@@ -547,8 +533,9 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         cdef SIZE_t n_node_cols = end[1] - start[1]
 
         self.criterion_rows.init_columns(
-            self.col_samples,
             self.col_sample_weight,
+            self.weighted_n_cols,
+            self.col_samples,
             self.start[1],
             self.end[1],
         )
@@ -562,12 +549,12 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         )
 
         self.criterion_cols.init_columns(
-            self.row_samples,
             self.row_sample_weight,
+            self.weighted_n_rows,
+            self.row_samples,
             self.start[0],
             self.end[0],
         )
-
         self.criterion_cols.init(
             y=self.y_transposed,
             sample_weight=self.col_sample_weight,
@@ -608,16 +595,10 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
             double* impurity_right,
             SIZE_t axis,
     ) nogil:
-        # FIXME: pass  # Impurities should not need correction.
-        if axis == 0:
-            self.criterion_rows.children_impurity(
-                impurity_left, impurity_right)
-        elif axis == 1:
-            self.criterion_cols.children_impurity(
-                impurity_left, impurity_right)
-        else:
-            with gil:
-                raise InvalidAxisError
+        (<AxisCriterion> self._get_criterion(axis)).children_impurity(
+            impurity_left,
+            impurity_right,
+        )
 
     cdef double impurity_improvement(
         self,
@@ -628,17 +609,17 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
     ) nogil:
         """The final value to express the split quality. 
         """
-        # FIXME: They actually do not need corrections, this will yield the
-        #        same result.
+        return (<AxisCriterion> self._get_criterion(axis)).impurity_improvement(
+            impurity_parent,
+            impurity_left,
+            impurity_right,
+        )
+ 
+    cdef void* _get_criterion(self, SIZE_t axis) nogil except NULL:
         if axis == 0:
-            return self.criterion_rows.impurity_improvement(
-                impurity_parent,
-                impurity_left,
-                impurity_right,
-            )
+            return <void*> self.criterion_rows
         elif axis == 1:
-            return self.criterion_cols.impurity_improvement(
-                impurity_parent,
-                impurity_left,
-                impurity_right,
-            )
+            return <void*> self.criterion_cols
+        else:
+            with gil:
+                raise InvalidAxisError

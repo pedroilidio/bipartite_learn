@@ -1,4 +1,4 @@
-from sklearn.utils import _safe_tags
+from sklearn.utils._tags import _safe_tags
 from imblearn.pipeline import make_pipeline
 from .wrappers import MultipartiteTransformerWrapper
 
