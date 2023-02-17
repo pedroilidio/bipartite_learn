@@ -276,19 +276,22 @@ def compare_splitters_1d2d(
     if multioutput_1d:
         y_sort = y_[sorted_indices]
         result1['feature'] += ax * XX[0].shape[1]
-        parent_impurity = 0.5 * (y_sort.var(1).mean() + y_sort.var(0).mean())
 
         other_axis_imp_left = y_sort[:pos].var(1).mean()
         other_axis_imp_right = y_sort[pos:].var(1).mean()
+
+        # Improvement is based on a single axis.
+        parent_impurity = y_sort.var(0).mean()
+        # parent_impurity = 0.5 * (y_sort.var(1).mean() + y_sort.var(0).mean())
+        result1['improvement'] = parent_impurity - (
+            pos * result1['impurity_left']
+            + (y_.shape[0]-pos) * result1['impurity_right']
+        ) / y_.shape[0]
 
         result1['impurity_left'] += other_axis_imp_left
         result1['impurity_left'] /= 2
         result1['impurity_right'] += other_axis_imp_right
         result1['impurity_right'] /= 2
-        result1['improvement'] = parent_impurity - (
-            pos * result1['impurity_left']
-            + (y_.shape[0]-pos) * result1['impurity_right']
-        ) / y_.shape[0]
 
         print('GMO-specific updated target impurities:\n'
               '* Left:  {impurity_left}\n'
@@ -934,7 +937,7 @@ def test_sfssmse_1d2d(**params):
     )
 
 
-def test_pbct_splitter(**params):
+def test_splitter_gmo(**params):
     params = DEF_PARAMS | params
     splitter2d = make_2d_splitter(
         criterion_wrapper_class=PBCTCriterionWrapper,
