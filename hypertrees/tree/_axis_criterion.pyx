@@ -30,8 +30,9 @@ cdef class AxisCriterion(Criterion):
         # TODO: use cached node impurity
         self._cached_rows_node_impurity = 0.0
         self._cached_cols_node_impurity = 0.0
-        # TODO: avoid using memory
-        # TODO: remove if splitter can find split without reordering samples
+        # TODO: Possibly remove if Splitter can find split without reordering
+        # samples. The upside is that we reduce memory usage, the downside is
+        # that we lose C contiguity, which seems important here.
         self._col_indices = np.empty(n_outputs, dtype=np.intp, order='C')
     
     cdef void init_columns(
@@ -85,7 +86,7 @@ cdef class AxisCriterion(Criterion):
         return only the impurity over rows.
         """
         # FIXME: Since we cannot access rows_impurity and cols_impurity
-        # separately, we have to discard this function's input and calculate
+        # separately, we have to discard this method's input and calculate
         # them again. To mitigate this problem, self.children_impurity()
         # caches the previous values it calculated and reuses them if
         # self.pos == self._cached_pos.

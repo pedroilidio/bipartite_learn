@@ -32,6 +32,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     # the constructor's update_supervision parameter, which should only receive
     # the current SSCompositeCriterion instance as argument and return a float.
 
+    # TODO: setter method instead of public.
     cdef public double _curr_supervision     # Current supervision amount
     cdef public double supervision           # first supervision value received
     cdef public object update_supervision    # callable to update supervision
@@ -41,7 +42,22 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     cdef bint _supervision_is_dynamic
 
     # TODO: explain
+    cdef SIZE_t _cached_pos
+    cdef double _cached_u_impurity_left
+    cdef double _cached_u_impurity_right
+    cdef double _cached_s_impurity_left
+    cdef double _cached_s_impurity_right
+
+    # TODO: explain
     cdef void unpack_y(self, const DOUBLE_t[:, ::1] y) nogil
+
+    cdef void ss_children_impurities(
+        self,
+        double* u_impurity_left,
+        double* u_impurity_right,
+        double* s_impurity_left,
+        double* s_impurity_right,
+    ) nogil
 
 # FIXME
 cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):

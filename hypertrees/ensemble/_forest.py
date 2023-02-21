@@ -113,7 +113,9 @@ def _get_n_samples_bootstrap_nd(n_samples, max_samples):
         The total number of samples to draw from each axis for the
         bootstrap sample.
     """
-    if isinstance(max_samples, float):
+    # NOTE: This strategy is inherently different from the monopartite version,
+    # being naturally more agressive.
+    if isinstance(max_samples, float):  # TODO: remove?
         max_samples = max_samples ** (1/len(n_samples))
 
     if not isinstance(max_samples, Iterable):

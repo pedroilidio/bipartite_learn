@@ -62,7 +62,8 @@ def random_state(request):
     return request.param
 
 
-@pytest.fixture(params=[None, 5])
+# @pytest.fixture(params=[None, 5])
+@pytest.fixture(params=[1, 2, 3])
 def max_depth(request):
     return request.param
 

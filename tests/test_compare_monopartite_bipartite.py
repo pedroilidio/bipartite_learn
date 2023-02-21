@@ -31,20 +31,12 @@ from sklearn import metrics
     "monopartite_estimator,bipartite_estimator,common_estimator_params",
     [
         (
-            GradientBoostingRegressor,
-            BipartiteGradientBoostingRegressor,
-            dict(
-                criterion='friedman_mse',
-                subsample=0.2,
-                n_estimators=10,
-            ),
-        ),
-        (
             RandomForestRegressor,
             BipartiteRandomForestRegressor,
             dict(
                 criterion='squared_error',
                 n_estimators=10,
+                bootstrap=False,  # Bootstrapping in bipartite data is different.
             ),
         ),
         (
@@ -55,9 +47,18 @@ from sklearn import metrics
                 n_estimators=30,
             ),
         ),
+        (
+            GradientBoostingRegressor,
+            BipartiteGradientBoostingRegressor,
+            dict(
+                criterion='friedman_mse',
+                subsample=0.2,
+                n_estimators=10,
+            ),
+        ),
     ],
 )
-def test_gradient_boosting(
+def test_compare_estimators(
     monopartite_estimator,
     bipartite_estimator,
     common_estimator_params,
