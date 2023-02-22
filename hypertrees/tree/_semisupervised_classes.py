@@ -48,7 +48,6 @@ from sklearn.tree import (
 # Hypertree-specific:
 from itertools import product
 from typing import Iterable
-from ..base import MultipartiteRegressorMixin
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_splitter import Splitter2D
 from ._splitter_factory import (
@@ -1851,8 +1850,9 @@ class BaseBipartiteDecisionTreeSS(
         self,
         *,
         X,
-        n_samples,
         n_outputs,
+        n_samples,
+        n_classes,
         min_samples_leaf,
         min_weight_leaf,
         ax_max_features,
@@ -1867,7 +1867,7 @@ class BaseBipartiteDecisionTreeSS(
 
         # NOTE: It is possible to use diferent ss_adaptor for rows and columns,
         #       but the user needs to pass an already built Splitter2D instance
-        #       if they want so.
+        #       if they want to do so.
         if isinstance(self.ss_adapter, SemisupervisedCriterion):
             ss_adapter = deepcopy(self.ss_adapter)
         else:  # str
@@ -1892,9 +1892,9 @@ class BaseBipartiteDecisionTreeSS(
 
         if isinstance(criterion, str) and isinstance(bipartite_adapter, str):
             bipartite_adapter, criterion = _get_criterion_classes(
-                bipartite_adapter,
-                criterion,
-                is_classifier(self),
+                adapter=bipartite_adapter,
+                criterion=criterion,
+                is_classification=is_classifier(self),
             )
         elif isinstance(criterion, str) or isinstance(bipartite_adapter, str):
             raise ValueError(
@@ -1932,6 +1932,7 @@ class BaseBipartiteDecisionTreeSS(
                 self.n_row_features_in_,
                 self.n_col_features_in_,
             ],
+            n_classes=n_classes,
             n_outputs=n_outputs,
             max_features=ax_max_features,
             min_samples_leaf=min_samples_leaf,
