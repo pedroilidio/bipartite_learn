@@ -299,16 +299,16 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         SIZE_t axis,  # Needs axis because of weighted_n_left/weighted_n_right.
     ) nogil:
         # Fetch improvement according to the criterion on 'axis'.
-        cdef double ret = (<RegressionCriterion> self._get_criterion(axis)) \
+        cdef double imp = (<RegressionCriterion> self._get_criterion(axis)) \
             .impurity_improvement(
                 impurity_parent,
                 impurity_left,
                 impurity_right,
             )
         if axis == 0:
-            return ret * self.weighted_n_node_cols / self.weighted_n_cols
+            return imp * self.weighted_n_node_cols / self.weighted_n_cols
         elif axis == 1:
-            return ret * self.weighted_n_node_rows / self.weighted_n_rows
+            return imp * self.weighted_n_node_rows / self.weighted_n_rows
 
     cdef void* _get_criterion(self, SIZE_t axis) nogil except NULL:
         if axis == 0:
@@ -432,9 +432,12 @@ cdef class FriedmanAdapter(MSE_Wrapper2D):
         SIZE_t axis,  # Needs axis because of weighted_n_left/weighted_n_right.
     ) nogil:
         # Fetch improvement according to the criterion on 'axis'.
-        cdef double imp = RegressionCriterionWrapper2D.impurity_improvement(
-            self, impurity_parent, impurity_left, impurity_right, axis,
-        )
+        cdef double imp = (<RegressionCriterion> self._get_criterion(axis)) \
+            .impurity_improvement(
+                impurity_parent,
+                impurity_left,
+                impurity_right,
+            )
         if axis == 0:
             return imp / self.weighted_n_node_cols
         elif axis == 1:
