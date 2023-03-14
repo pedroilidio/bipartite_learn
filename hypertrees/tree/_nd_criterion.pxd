@@ -5,24 +5,22 @@ from sklearn.tree._tree cimport DTYPE_t         # Type of X
 from sklearn.tree._tree cimport DOUBLE_t        # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t          # Type for indices and counters
 
-from sklearn.tree._criterion cimport Criterion, RegressionCriterion
+from sklearn.tree._criterion cimport RegressionCriterion
 from ._axis_criterion cimport AxisCriterion
 
 
-cdef class CriterionWrapper2D:
+cdef class BipartiteCriterion:
     """Abstract base class."""
-    cdef const DOUBLE_t[:, ::1] X_rows
-    cdef const DOUBLE_t[:, ::1] X_cols
-    cdef const DOUBLE_t[:, ::1] y
-    # FIXME: Contiguous layout forces us to keep a transposed copy of y in
-    #        Splitter2D. This can represent a significant memory burden for
-    #        large forests.
-    cdef const DOUBLE_t[:, ::1] y_transposed  
+    # TODO: X dtype must be DOUBLE_t, not DTYPE_t (float32) to use
+    # semisupervision.
+    cdef const DTYPE_t[:, ::1] X_rows
+    cdef const DTYPE_t[:, ::1] X_cols
+    cdef const DOUBLE_t[:, :] y
 
-    cdef DOUBLE_t* row_sample_weight
-    cdef DOUBLE_t* col_sample_weight
-    cdef SIZE_t* row_samples
-    cdef SIZE_t* col_samples
+    cdef const DOUBLE_t[:] row_weights
+    cdef const DOUBLE_t[:] col_weights
+    cdef const SIZE_t[:] row_indices
+    cdef const SIZE_t[:] col_indices
     cdef SIZE_t[2] start
     cdef SIZE_t[2] end
 
@@ -51,16 +49,15 @@ cdef class CriterionWrapper2D:
 
     cdef int init(
         self,
-        const DOUBLE_t[:, ::1] X_rows,
-        const DOUBLE_t[:, ::1] X_cols,
-        const DOUBLE_t[:, ::1] y,
-        const DOUBLE_t[:, ::1] y_transposed,
-        DOUBLE_t* row_sample_weight,
-        DOUBLE_t* col_sample_weight,
+        const DTYPE_t[:, ::1] X_rows,
+        const DTYPE_t[:, ::1] X_cols,
+        const DOUBLE_t[:, :] y,
+        const DOUBLE_t[:] row_weights,
+        const DOUBLE_t[:] col_weights,
         double weighted_n_rows,
         double weighted_n_cols,
-        SIZE_t* row_samples,
-        SIZE_t* col_samples,
+        const SIZE_t[:] row_indices,
+        const SIZE_t[:] col_indices,
         SIZE_t[2] start,
         SIZE_t[2] end,
     ) nogil except -1
@@ -85,8 +82,7 @@ cdef class CriterionWrapper2D:
     ) nogil
 
 
-cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
-    # FIXME: We need X here because BaseDenseSplitter.X is not accessible.
+cdef class BipartiteRegressionCriterion(BipartiteCriterion):
     cdef public RegressionCriterion criterion_rows
     cdef public RegressionCriterion criterion_cols
 
@@ -99,8 +95,8 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
             self,
             RegressionCriterion criterion,
             const DOUBLE_t[:, ::1] y,
-            DOUBLE_t* sample_weight,
-            SIZE_t* samples,
+            const DOUBLE_t[:] sample_weight,
+            const SIZE_t[:] sample_indices,
             SIZE_t start,
             SIZE_t end,
             SIZE_t n_node_samples,
@@ -109,20 +105,21 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
     ) nogil except -1
 
 
-cdef class PBCTCriterionWrapper(CriterionWrapper2D):
+cdef class PBCTCriterionWrapper(BipartiteCriterion):
     """Applies Predictive Bi-Clustering Trees method.
 
     See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
     """
     cdef public AxisCriterion criterion_rows
     cdef public AxisCriterion criterion_cols
+    cdef SIZE_t max_n_classes
 
     cdef void* _get_criterion(self, SIZE_t axis) nogil except NULL
 
 
-cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
+cdef class BipartiteSquaredError(BipartiteRegressionCriterion):
     pass
 
 
-cdef class FriedmanAdapter(MSE_Wrapper2D):
+cdef class BipartiteFriedman(BipartiteSquaredError):
     pass

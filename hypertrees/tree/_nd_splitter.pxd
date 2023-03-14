@@ -1,28 +1,19 @@
-from sklearn.tree._splitter cimport Splitter
+from sklearn.tree._splitter cimport SplitRecord, Splitter
 
 from sklearn.tree._tree cimport DTYPE_t          # Type of X
 from sklearn.tree._tree cimport DOUBLE_t         # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t           # Type for indices and counters
 
-from ._nd_criterion cimport CriterionWrapper2D
+from ._nd_criterion cimport BipartiteCriterion
 
 
-cdef struct SplitRecord:
-    # Data to track sample split
-    SIZE_t feature         # Which feature to split on.
-    SIZE_t pos             # Split samples array at the given position,
-                           # i.e. count of samples below threshold for feature.
-                           # pos is >= end if the node is a leaf.
-    double threshold       # Threshold to split at.
-    double improvement     # Impurity improvement given parent node.
-    double impurity_left   # Impurity of the left split.
-    double impurity_right  # Impurity of the right split.
-
-    # ND new:
-    SIZE_t axis             # Axis in which the split occurred.
+# Data to track sample split
+cdef struct MultipartiteSplitRecord:
+    SplitRecord split_record  # Monopartite object to use struct composition.
+    SIZE_t axis               # Axis in which the split occurred.
 
 
-cdef class Splitter2D:
+cdef class BipartiteSplitter:
     # Wrapper class to coordinate 2 Splitters at the same time.
 
     # The splitter searches in the input space for a feature and a threshold
@@ -31,12 +22,13 @@ cdef class Splitter2D:
     # The impurity computations are delegated to a criterion object.
     cdef public Splitter splitter_rows
     cdef public Splitter splitter_cols
-    cdef public CriterionWrapper2D criterion_wrapper
-    cdef public SIZE_t n_row_features      # Number of row features (X[0].shape[0]).
-    cdef const DOUBLE_t[:, ::1] X_rows
-    cdef const DOUBLE_t[:, ::1] X_cols
-    cdef const DOUBLE_t[:, ::1] y
-    cdef const DOUBLE_t[:, ::1] y_transposed
+    cdef public BipartiteCriterion criterion_wrapper
+    cdef public SIZE_t n_row_features  # Number of row features (X[0].shape[0]).
+    # TODO: X dtype must be DOUBLE_t, not DTYPE_t (float32) to use
+    # semisupervision.
+    cdef const DTYPE_t[:, ::1] X_rows
+    cdef const DTYPE_t[:, ::1] X_cols
+    cdef const DOUBLE_t[:, :] y
 
     cdef SIZE_t n_rows
     cdef SIZE_t n_cols
@@ -53,25 +45,34 @@ cdef class Splitter2D:
     # cdef public double min_row_weight_leaf
     # cdef public double min_col_weight_leaf
 
-    cdef DOUBLE_t* row_sample_weight
-    cdef DOUBLE_t* col_sample_weight
-    cdef SIZE_t[::1] row_samples
-    cdef SIZE_t[::1] col_samples
+    cdef const DOUBLE_t[:] row_weights
+    cdef const DOUBLE_t[:] col_weights
+    cdef SIZE_t[::1] row_indices  # TODO: Drop contiguity?
+    cdef SIZE_t[::1] col_indices
     cdef SIZE_t[2] start
     cdef SIZE_t[2] end
 
     # Methods
-    cdef int init(self,
-                  object X,
-                  const DOUBLE_t[:, ::1] y,
-                  DOUBLE_t* sample_weight,
+    cdef int init(
+        self,
+        object X,
+        const DOUBLE_t[:, :] y,
+        const DOUBLE_t[:] sample_weight,
     ) except -1
 
-    cdef int node_reset(self, SIZE_t[2] start, SIZE_t[2] end,
-                        double* weighted_n_node_samples) nogil except -1
+    cdef int node_reset(
+        self,
+        SIZE_t[2] start,
+        SIZE_t[2] end,
+        double* weighted_n_node_samples
+    ) nogil except -1
 
-    cdef int node_split(self, double impurity, SplitRecord* split,
-                        SIZE_t[2] n_constant_features) nogil except -1
+    cdef int node_split(
+        self,
+        double impurity,
+        MultipartiteSplitRecord* split,
+        SIZE_t[2] n_constant_features,
+    ) nogil except -1
 
     cdef void node_value(self, double* dest) nogil
 

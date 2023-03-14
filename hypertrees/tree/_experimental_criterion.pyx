@@ -30,11 +30,11 @@ cdef class UD3(RegressionCriterion):
             double w_first = 1.
             double w_last = 1.
             double impurity = 0.
-            SIZE_t first_index = self.samples[self.start]
-            SIZE_t last_index = self.samples[self.end - 1]
+            SIZE_t first_index = self.sample_indices[self.start]
+            SIZE_t last_index = self.sample_indices[self.end - 1]
             SIZE_t k
 
-        if self.sample_weight != NULL:
+        if self.sample_weight is None:
             w_first = self.sample_weight[first_index]
             w_last = self.sample_weight[last_index]
 
@@ -73,13 +73,13 @@ cdef class UD35(RegressionCriterion):
             double first_left, last_left, first_right, last_right
             double _impurity_left = 0., _impurity_right = 0.
             double w_first_left, w_last_left, w_first_right, w_last_right
-            SIZE_t first_index_left = self.samples[self.start]
-            SIZE_t last_index_left = self.samples[self.pos - 1]
-            SIZE_t first_index_right = self.samples[self.pos]
-            SIZE_t last_index_right = self.samples[self.end - 1]
+            SIZE_t first_index_left = self.sample_indices[self.start]
+            SIZE_t last_index_left = self.sample_indices[self.pos - 1]
+            SIZE_t first_index_right = self.sample_indices[self.pos]
+            SIZE_t last_index_right = self.sample_indices[self.end - 1]
             SIZE_t k
 
-        if self.sample_weight != NULL:
+        if self.sample_weight is None:
             w_first_left = self.sample_weight[first_index_left]
             w_last_left = self.sample_weight[last_index_left]
             w_first_right = self.sample_weight[first_index_right]

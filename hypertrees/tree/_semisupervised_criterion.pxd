@@ -3,7 +3,7 @@ from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 from sklearn.tree._tree cimport DTYPE_t         # Type of X
 from sklearn.tree._tree cimport DOUBLE_t        # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t          # Type for indices and counters
-from ._nd_criterion cimport CriterionWrapper2D, RegressionCriterionWrapper2D
+from ._nd_criterion cimport BipartiteCriterion, BipartiteRegressionCriterion
 
 
 cdef class BaseDenseSplitter(Splitter):
@@ -68,10 +68,10 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
     cdef const DOUBLE_t[:, ::1] full_X
 
 # Regression?
-cdef class BipartiteSemisupervisedCriterion(CriterionWrapper2D):
+cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
     cdef public Criterion unsupervised_criterion_rows
     cdef public Criterion unsupervised_criterion_cols
-    cdef public CriterionWrapper2D supervised_bipartite_criterion
+    cdef public BipartiteCriterion supervised_bipartite_criterion
 
     # TODO: we need to get access to the wrappers owned by the splitters to
     # dynamically change the supervision, since supervision is utilized in

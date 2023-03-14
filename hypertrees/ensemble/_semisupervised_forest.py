@@ -1,8 +1,8 @@
 # TODO: Documentation.
 # TODO: Classifiers.
+from sklearn.base import RegressorMixin
 from sklearn.ensemble._forest import ForestRegressor, ForestClassifier
 from sklearn.utils._param_validation import StrOptions
-from ..base import MultipartiteRegressorMixin
 from ..tree._semisupervised_classes import (
     ExtraTreeClassifierSS,
     DecisionTreeClassifierSS,
@@ -457,7 +457,7 @@ class ExtraTreesRegressorSS(ForestRegressor):
 class BipartiteRandomForestRegressorSS(
     BaseMultipartiteForest,
     ForestRegressor,
-    MultipartiteRegressorMixin,
+    RegressorMixin,
 ):
 
     _parameter_constraints: dict = {
@@ -584,7 +584,7 @@ class BipartiteRandomForestRegressorSS(
 class BipartiteExtraTreesRegressorSS(
     BaseMultipartiteForest,
     ForestRegressor,
-    MultipartiteRegressorMixin,
+    RegressorMixin,
 ):
 
     _parameter_constraints: dict = {

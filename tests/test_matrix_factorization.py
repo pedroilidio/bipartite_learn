@@ -11,7 +11,7 @@ from hypertrees.matrix_factorization._dnilmf import DNILMF
 from hypertrees.preprocessing.multipartite import DTHybridSampler
 from hypertrees.preprocessing.monopartite import TargetKernelLinearCombiner
 from hypertrees.wrappers import (
-    BipartiteLocalWrapper, MultipartiteTransformerWrapper,
+    BipartiteLocalWrapper, MultipartiteSamplerWrapper,
 )
 from test_utils import gen_mock_data, DEF_PARAMS, parse_args
 
@@ -25,6 +25,7 @@ def test_nrlmf(**params):
 
     nrlmf = NRLMF(verbose=True)
     XXt, Yt = nrlmf.fit_resample(XX, Y)
+    nrlmf.predict([XX[0][:5], XX[1][:3]])
     Y_positive = Y.astype(bool)
 
     assert Yt[Y_positive].mean() > Yt[~Y_positive].mean()
@@ -86,6 +87,7 @@ def test_dnilmf(**params):
 
     dnilmf = DNILMF(verbose=True)
     XXt, Yt = dnilmf.fit_resample(XX, Y)
+    dnilmf.predict([XX[0][:5], XX[1][:3]])
     Y_positive = Y.astype(bool)
 
     assert Yt[Y_positive].mean() > Yt[~Y_positive].mean()
@@ -119,7 +121,7 @@ def test_blmnii(**params):
     params["shape"] = params["nattrs"]  # X must be kernel matrices
 
     # Gaussian interaction profile
-    gip_transformer = MultipartiteTransformerWrapper(TargetKernelLinearCombiner())
+    gip_transformer = MultipartiteSamplerWrapper(TargetKernelLinearCombiner())
 
     XX, Y, = gen_mock_data(**params, melt=False)
 

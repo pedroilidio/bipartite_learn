@@ -49,7 +49,6 @@ from abc import ABCMeta, abstractmethod
 import numpy as np
 from scipy.sparse import issparse
 from scipy.sparse import hstack as sparse_hstack
-from joblib import Parallel
 
 from sklearn.base import is_classifier
 from sklearn.base import ClassifierMixin, MultiOutputMixin, RegressorMixin, TransformerMixin
@@ -61,7 +60,7 @@ from sklearn.tree._tree import DTYPE, DOUBLE
 from sklearn.utils import check_random_state, compute_sample_weight, deprecated
 from sklearn.exceptions import DataConversionWarning
 from sklearn.ensemble._base import BaseEnsemble, _partition_estimators
-from sklearn.utils.fixes import delayed
+from sklearn.utils.parallel import Parallel, delayed
 from sklearn.utils.multiclass import check_classification_targets, type_of_target
 from sklearn.utils.validation import (
     check_is_fitted,
@@ -79,7 +78,7 @@ from ..tree import (
     BipartiteDecisionTreeRegressor,
     BipartiteExtraTreeRegressor,
 )
-from ..base import BaseBipartiteEstimator, MultipartiteRegressorMixin
+from ..base import BaseBipartiteEstimator
 from ..utils import _X_is_multipartite
 
 __all__ = [
@@ -263,6 +262,18 @@ class BaseMultipartiteForest(
         X, y = self._validate_data(
             X, y, accept_sparse="csc", dtype=DTYPE,  # multi_output=True, 
         )
+
+        # FIXME: is validation correct?
+        ### Copied from ..tree._classes.BaseDecisionTree 
+        # # Need to validate separately here.
+        # # We can't pass multi_output=True because that would allow y to be
+        # # csr.
+        # check_X_params = dict(dtype=DTYPE, accept_sparse="csc")
+        # check_y_params = dict(dtype=None, ensure_2d=False)
+        # X, y = self._validate_data(
+        #     X, y, validate_separately=(check_X_params, check_y_params)
+        # )
+
         if sample_weight is not None:
             sample_weight = _check_sample_weight(
                 sample_weight, row_cartesian_product(X),
@@ -502,7 +513,7 @@ class BaseMultipartiteForest(
 class BipartiteRandomForestRegressor(
     BaseMultipartiteForest,
     ForestRegressor,
-    MultipartiteRegressorMixin,
+    RegressorMixin,
 ):
     """
     A random forest regressor.
@@ -876,7 +887,7 @@ class BipartiteRandomForestRegressor(
 class BipartiteExtraTreesRegressor(
     BaseMultipartiteForest,
     ForestRegressor,
-    MultipartiteRegressorMixin,
+    RegressorMixin,
 ):
     """
     An extra-trees regressor.

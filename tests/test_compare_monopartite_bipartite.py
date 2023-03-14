@@ -85,6 +85,7 @@ def test_compare_estimators(
 
         XX, Y, X, y = make_interaction_regression(
             n_samples=(40, 50),
+            n_features=(9, 10),
             return_molten=True,
             random_state=seed,
             # max_target=2,

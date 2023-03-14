@@ -6,7 +6,7 @@ cdef class PairwiseCriterion(Criterion):
     """Unsupervision-focused criterion to use with pairwise data.
 
     It wraps an AxisCriterion instance and selects the columns corresponding
-    to the rows selected with 'start', 'end' and 'samples' during init(). 
+    to the rows selected with 'start', 'end' and 'sample_indices' during init(). 
 
     It is intended to pass an square (pairwise) X as the y argument of init().
     """
@@ -18,17 +18,17 @@ cdef class PairwiseCriterion(Criterion):
     cdef int init(
         self,
         const DOUBLE_t[:, ::1] y,
-        const DOUBLE_t* sample_weight,
+        const DOUBLE_t[:] sample_weight,
         double weighted_n_samples,
-        SIZE_t* samples,
+        SIZE_t[:] sample_indices,
         SIZE_t start,
         SIZE_t end,
     ) nogil except -1:
         self.criterion.init_columns(
-            sample_weight, weighted_n_samples, samples, start, end,
+            sample_weight, weighted_n_samples, sample_indices, start, end,
         )
         return self.criterion.init(
-            y, sample_weight, weighted_n_samples, samples, start, end,
+            y, sample_weight, weighted_n_samples, sample_indices, start, end,
         )
 
     cdef int reset(self) nogil except -1:

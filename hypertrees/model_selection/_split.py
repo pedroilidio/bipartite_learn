@@ -210,8 +210,8 @@ def make_kfold_nd(
     Wraps n_dim KFold or StratifiedKFold cross-validators with a
     CrossValidatorNDWrapper, that provides train-test indices for splitting
     InputDataND objects. The returned wrapper object is compatible with paramet-
-    er search objects in hypertrees.model_selection, such as GridSearchCVND and
-    RandomizedSearchCVND.
+    er search objects in hypertrees.model_selection, such as MultipartiteGridSearchCV and
+    MultipartiteRandomizedSearchCV.
 
     The parameters 'cv', 'shuffle' and 'stratified' can be
     optionally passed as a tuple or list of values intended for each respective
@@ -285,8 +285,8 @@ def make_train_test_splitter_nd(
     Wraps len(n_samples) CrossValidator data splitters with a
     CrossValidatorNDWrapper, that provides train-test indices for splitting
     InputDataND objects. The returned wrapper object is compatible with paramet-
-    er search objects in hypertrees.model_selection, such as GridSearchCVND and
-    RandomizedSearchCVND.
+    er search objects in hypertrees.model_selection, such as MultipartiteGridSearchCV and
+    MultipartiteRandomizedSearchCV.
 
     The parameters 'test_size', 'train_size', 'shuffle' and 'stratify' can be
     optionally passed as a tuple or list of values intended for each respective

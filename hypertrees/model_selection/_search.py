@@ -10,13 +10,6 @@ parameters of an estimator.
 #         Raghav RV <rvraghav93@gmail.com>
 # License: BSD 3 clause
 
-# ND specific
-from sklearn.model_selection._search import RandomizedSearchCV
-from sklearn.model_selection._search import BaseSearchCV
-from sklearn.model_selection._search import GridSearchCV
-from ._validation import _fit_and_score_nd, _check_train_test_combinations
-from ._split import check_cv_nd
-
 from abc import ABCMeta, abstractmethod
 from collections import defaultdict
 from functools import partial
@@ -40,10 +33,24 @@ from sklearn.utils.fixes import delayed
 from sklearn.metrics._scorer import _check_multimetric_scoring
 from sklearn.metrics import check_scoring
 
-__all__ = ["GridSearchCVND", "RandomizedSearchCVND"]
+# Added
+from sklearn.model_selection._search import (
+    RandomizedSearchCV,
+    BaseSearchCV,
+    GridSearchCV,
+)
+from ..base import BaseMultipartiteEstimator
+from ._validation import _fit_and_score_nd, _check_train_test_combinations
+from ._split import check_cv_nd
+
+__all__ = ["MultipartiteGridSearchCV", "MultipartiteRandomizedSearchCV"]
 
 
-class BaseSearchCVND(BaseSearchCV, metaclass=ABCMeta):
+class BaseMultipartiteSearchCV(
+    BaseMultipartiteEstimator,
+    BaseSearchCV,
+    metaclass=ABCMeta,
+):
     """Abstract base class for hyper parameter search with cross-validation."""
 
     @abstractmethod
@@ -381,14 +388,8 @@ class BaseSearchCVND(BaseSearchCV, metaclass=ABCMeta):
 
         return results
 
-    def score(self, X, y=None):
-        # TODO: multi-output.
-        if y is not None:
-            y = y.reshape(-1)
-        return super().score(X, y)
 
-
-class GridSearchCVND(BaseSearchCVND, GridSearchCV):
+class MultipartiteGridSearchCV(BaseMultipartiteSearchCV, GridSearchCV):
     """Exhaustive search over specified parameter values for an estimator.
 
     Important members are fit, predict.
@@ -747,7 +748,7 @@ class GridSearchCVND(BaseSearchCVND, GridSearchCV):
         self.param_grid = param_grid
 
 
-class RandomizedSearchCVND(BaseSearchCVND, RandomizedSearchCV):
+class MultipartiteRandomizedSearchCV(BaseMultipartiteSearchCV, RandomizedSearchCV):
     """Randomized search on hyper parameters.
 
     RandomizedSearchCV implements a "fit" and a "score" method.

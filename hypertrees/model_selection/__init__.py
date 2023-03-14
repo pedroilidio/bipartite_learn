@@ -8,8 +8,8 @@ from hypertrees.model_selection._split import (
     make_kfold_nd,
     train_test_split_nd,
 )
-from hypertrees.model_selection._search import GridSearchCVND
-from hypertrees.model_selection._search import RandomizedSearchCVND
+from hypertrees.model_selection._search import MultipartiteGridSearchCV
+from hypertrees.model_selection._search import MultipartiteRandomizedSearchCV
 
 
 __all__ = [
@@ -17,6 +17,6 @@ __all__ = [
     "make_train_test_splitter_nd",
     "cross_validate_nd",
     "CrossValidatorNDWrapper",
-    "GridSearchCVND",
-    "RandomizedSearchCVND",
+    "MultipartiteGridSearchCV",
+    "MultipartiteRandomizedSearchCV",
 ]

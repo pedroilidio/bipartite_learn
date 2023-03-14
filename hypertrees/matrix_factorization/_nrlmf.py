@@ -1,7 +1,8 @@
 import numpy as np
+from sklearn.base import RegressorMixin
 from sklearn.utils import check_random_state
 from sklearn.neighbors import KNeighborsRegressor
-from ..base import BaseMultipartiteSampler, MultipartiteRegressorMixin
+from ..base import BaseMultipartiteSampler
 from ..utils import check_similarity_matrix
 
 __all__ = ["NRLMF"]
@@ -9,7 +10,7 @@ __all__ = ["NRLMF"]
 
 class NRLMF(
     BaseMultipartiteSampler,
-    MultipartiteRegressorMixin,
+    RegressorMixin,
 ):
     """Neighborhood Regularized Logistic Matrix Factorization.
 
@@ -266,6 +267,7 @@ class NRLMF(
         step_sq_sum_rows = np.zeros_like(U)
         step_sq_sum_cols = np.zeros_like(V)
 
+        # TODO: eliminate y_scaled to lower memory consumption?
         # y_scaled[i, j] = positive_importance if y[i, j] == 1 else 1
         y_scaled = 1 + (self.positive_importance-1) * y
 

@@ -47,18 +47,19 @@ from sklearn.tree._classes import (
 from sklearn.tree._tree import DTYPE, DOUBLE
 
 from sklearn.tree._classes import BaseDecisionTree
-from ..base import BaseMultipartiteEstimator, MultipartiteRegressorMixin
+from ..base import BaseMultipartiteEstimator
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import (
-    CriterionWrapper2D,
-    MSE_Wrapper2D,
-    FriedmanAdapter,
+    BipartiteCriterion,
+    BipartiteSquaredError,
+    BipartiteFriedman,
     PBCTCriterionWrapper,
+    PBCTCriterionWrapperSA,
 )
-from ._nd_splitter import Splitter2D
+from ._nd_splitter import BipartiteSplitter
 from ..melter import row_cartesian_product
 from ..utils import check_similarity_matrix, _X_is_multipartite
-from ._axis_criterion import AxisMSE
+from ._axis_criterion import AxisMSE, AxisFriedmanMSE, AxisGini, AxisEntropy
 from ._splitter_factory import make_2d_splitter
 
 
@@ -72,10 +73,6 @@ __all__ = [
 # Types and constants
 # =============================================================================
 
-AXIS_CRITERIA_REG = {
-    "squared_error": AxisMSE,
-}
-
 SPARSE_SPLITTERS = {}
 
 
@@ -83,28 +80,42 @@ SPARSE_SPLITTERS = {}
 BIPARTITE_CRITERIA = {
     "global_single_output": {
         "regression": {
-            "squared_error": (MSE_Wrapper2D, CRITERIA_REG['squared_error']),
-            "friedman_mse": (FriedmanAdapter, CRITERIA_REG['friedman_mse']),
+            "squared_error": (BipartiteSquaredError, CRITERIA_REG['squared_error']),
+            "friedman_mse": (BipartiteFriedman, CRITERIA_REG['friedman_mse']),
         },
         "classification": {},
     },
     "local_multioutput": {
         "regression": {
-            "squared_error": (
-                PBCTCriterionWrapper,
-                AXIS_CRITERIA_REG['squared_error'],
-            ),
+            "squared_error": (PBCTCriterionWrapper, AxisMSE),
+            "friedman_mse": (PBCTCriterionWrapper, AxisFriedmanMSE),
         },
-        "classification": {},
+        "classification": {
+            "gini": (PBCTCriterionWrapper, AxisGini),
+            "entropy": (PBCTCriterionWrapper, AxisEntropy),
+            "log_loss": (PBCTCriterionWrapper, AxisEntropy),
+        },
+    },
+    "local_multioutput_sa": {
+        "regression": {
+            "squared_error": (PBCTCriterionWrapperSA, AxisMSE),
+            "friedman_mse": (PBCTCriterionWrapperSA, AxisFriedmanMSE),
+        },
+        "classification": {
+            "gini": (PBCTCriterionWrapperSA, AxisGini),
+            "entropy": (PBCTCriterionWrapperSA, AxisEntropy),
+            "log_loss": (PBCTCriterionWrapperSA, AxisEntropy),
+        },
     },
 }
 
 
 def _get_criterion_classes(
+    *,
     adapter: str,
     criterion: str,
     is_classification: bool,
-) -> tuple[Type[CriterionWrapper2D], Type[Criterion]]:
+) -> tuple[Type[BipartiteCriterion], Type[Criterion]]:
 
     adapter_options = BIPARTITE_CRITERIA.get(adapter)
     if adapter_options is None:
@@ -169,7 +180,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
     """
 
     _parameter_constraints: dict = BaseDecisionTree._parameter_constraints | {
-        "splitter": [StrOptions({"best", "random"}), Hidden(Splitter2D)],
+        "splitter": [StrOptions({"best", "random"}), Hidden(BipartiteSplitter)],
         "min_rows_split": [
             # min value is not 2 to still allow splitting on the other axis.
             Interval(Integral, 1, None, closed="left"),
@@ -207,7 +218,11 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             None,
         ],
         "bipartite_adapter": [
-            StrOptions({"global_single_output", "local_multioutput"}),
+            StrOptions({
+                "global_single_output",
+                "local_multioutput",
+                "local_multioutput_sa",
+            }),
         ],
         "prediction_weights": [
             "array-like",
@@ -277,7 +292,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             # We can't pass multi_output=True because that would allow y to be
             # csr.
             check_X_params = dict(dtype=DTYPE, accept_sparse="csc")
-            check_y_params = dict(ensure_2d=False, dtype=None)
+            check_y_params = dict(dtype=None, ensure_2d=False)
             X, y = self._validate_data(
                 X, y, validate_separately=(check_X_params, check_y_params)
             )
@@ -318,10 +333,26 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         self.n_col_features_in_ = X[1].shape[1]
         self.n_features_in_ = self.n_row_features_in_ + self.n_col_features_in_
 
+        # self.n_outputs_ = y.shape[-1]  # TODO: implement multi-output (3D y).
+        self.n_outputs_ = 1
+
+        if self.bipartite_adapter == "local_multioutput":
+            # The Criterion initially generates one output for each y row and
+            # y column, with a bunch of np.nan to indicate samples not in the
+            # node. These values are then processed by predict to yield a
+            # single output.
+            n_raw_outputs = n_rows + n_cols
+            if self.prediction_weights == "raw":
+                self.n_outputs_ = n_raw_outputs
+        else:
+            n_raw_outputs = self.n_outputs_
+
+        self._n_raw_outputs = n_raw_outputs
+        self.n_row_classes_ = self.n_col_classes_ = None
+
         is_classification = is_classifier(self)
 
         y = np.atleast_1d(y)
-        expanded_class_weight = None
         expanded_class_weight_rows = None
         expanded_class_weight_cols = None
 
@@ -343,8 +374,15 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             # Columns do not represent different outputs anymore
             # for k in range(self.n_outputs_):
             classes, y = np.unique(y, return_inverse=True)
-            self.classes_.append(classes)
-            self.n_classes_.append(classes.shape[0])
+            y = y.reshape(n_rows, n_cols)
+            self.classes_ = np.tile(classes, (self._n_raw_outputs, 1))
+            self.n_classes_ = np.repeat(classes.shape[0], self._n_raw_outputs)
+
+            if self._n_raw_outputs == 1:
+                self.n_row_classes_ = self.n_col_classes_ = self.n_classes_
+            else:
+                self.n_row_classes_ = self.n_classes_[:n_rows]
+                self.n_col_classes_ = self.n_classes_[n_rows:]
 
             if self.class_weight is not None:
                 expanded_class_weight_rows = compute_sample_weight(
@@ -353,8 +391,6 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                 expanded_class_weight_cols = compute_sample_weight(
                     self.class_weight, y_original.T
                 )
-
-            self.n_classes_ = np.array(self.n_classes_, dtype=np.intp)
 
         if getattr(y, "dtype", None) != DOUBLE or not y.flags.contiguous:
             y = np.ascontiguousarray(y, dtype=DOUBLE)
@@ -471,13 +507,13 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 
         if expanded_class_weight_rows is not None:
             if sample_weight is not None:
-                row_weight = row_weight * expanded_class_weight
+                row_weight = row_weight * expanded_class_weight_rows
             else:
                 row_weight = expanded_class_weight_rows
 
         if expanded_class_weight_cols is not None:
             if sample_weight is not None:
-                col_weight = col_weight * expanded_class_weight
+                col_weight = col_weight * expanded_class_weight_cols
             else:
                 col_weight = expanded_class_weight_cols
 
@@ -499,23 +535,30 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         min_weight_leaf = \
             self.min_weight_fraction_leaf * (row_weight_sum * col_weight_sum)
 
-        # self.n_outputs_ = y.shape[-1]  # TODO: implement multi-output (3D y).
-        self.n_outputs_ = 1
+        if self.bipartite_adapter == 'local_multioutput':
+            if _is_arraylike_not_scalar(self.prediction_weights):
+                if self.prediction_weights.ndim != 1:
+                    raise ValueError(
+                        "If an array, 'prediction_weights' must be "
+                        "one-dimensional. Received "
+                        f"{self.prediction_weights.shape = }."
+                    )
+                if self.prediction_weights.size != n_raw_outputs:
+                    raise ValueError(
+                        "If an array, prediction_weights must be of "
+                        f"length = {n_rows + n_cols = }. Received "
+                        f"{len(self.prediction_weights) = }."
+                    )
 
-        if self.bipartite_adapter == "local_multioutput":
-            # The Criterion initially generates one output for each y row and
-            # y column, with a bunch of np.nan to indicate samples not in the
-            # node. These values are then processed by predict to yield a
-            # single output.
-            n_raw_outputs = n_rows + n_cols
-            if self.prediction_weights == "raw":
-                self.n_outputs_ = n_raw_outputs
+            elif (
+                self.prediction_weights in (None, "uniform", "precomputed")
+                or callable(self.prediction_weights)
+            ):
+                for Xi in X:
+                    check_similarity_matrix(Xi, symmetry_exception=True)
+        
+        # bipartite_adapter == "global_single_output" or "local_multioutput_sa"
         else:
-            n_raw_outputs = self.n_outputs_
-
-        self._n_raw_outputs = n_raw_outputs
-
-        if self.bipartite_adapter == "global_single_output":
             if is_classifier(self):
                 raise NotImplementedError(  # TODO
                     "bipartite_adapter='global_single_output' currently only "
@@ -529,24 +572,6 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                     "bipartite_adapter='local_multioutput' and must be set to "
                     "'None' otherwise."
                 )
-
-        # if bipartite_adapter='local_multioutput'
-        elif _is_arraylike_not_scalar(self.prediction_weights):
-            if self.prediction_weights.ndim != 1:
-                raise ValueError("If an array, 'prediction_weights' must be "
-                                 "one-dimensional. Received "
-                                 f"{self.prediction_weights.shape = }.")
-            if self.prediction_weights.size != n_raw_outputs:
-                raise ValueError("If an array, prediction_weights must be of "
-                                 f"length = {n_rows + n_cols = }. Received "
-                                 f"{len(self.prediction_weights) = }.")
-
-        elif (
-            self.prediction_weights in (None, "uniform", "precomputed")
-            or callable(self.prediction_weights)
-        ):
-            for Xi in X:
-                check_similarity_matrix(Xi, symmetry_exception=True)
 
         if is_classifier(self):
             self.tree_ = Tree(
@@ -572,6 +597,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             X=X,
             n_samples=(n_rows, n_cols),
             n_outputs=ax_n_outputs,
+            n_classes=(self.n_col_classes_, self.n_row_classes_),
             min_samples_leaf=min_samples_leaf,
             min_weight_leaf=min_weight_leaf,
             ax_max_features=(max_row_features, max_col_features),
@@ -624,8 +650,9 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         self,
         *,
         X,
-        n_samples,
         n_outputs,
+        n_classes,
+        n_samples,
         min_samples_leaf,
         min_weight_leaf,
         ax_max_features,
@@ -633,7 +660,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         ax_min_weight_leaf,
         random_state,
     ):
-        if isinstance(self.splitter, Splitter2D):
+        if isinstance(self.splitter, BipartiteSplitter):
             # Make a deepcopy in case the splitter has mutable attributes that
             # might be shared and modified concurrently during parallel fitting
             return copy.deepcopy(self.splitter)
@@ -643,9 +670,9 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 
         if isinstance(criterion, str) and isinstance(bipartite_adapter, str):
             bipartite_adapter, criterion = _get_criterion_classes(
-                bipartite_adapter,
-                criterion,
-                is_classifier(self),
+                adapter=bipartite_adapter,
+                criterion=criterion,
+                is_classification=is_classifier(self),
             )
         elif isinstance(criterion, str) or isinstance(bipartite_adapter, str):
             raise ValueError(
@@ -672,8 +699,9 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         splitter = make_2d_splitter(
             splitters=splitter,
             criteria=criterion,
-            n_samples=n_samples,
             n_outputs=n_outputs,
+            n_classes=n_classes,
+            n_samples=n_samples,
             max_features=ax_max_features,
             min_samples_leaf=min_samples_leaf,
             min_weight_leaf=min_weight_leaf,
@@ -686,14 +714,12 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         return splitter
 
     def predict(self, X, check_input=True):
-        # FIXME: classification is still not working for bipartite_adapter
-        #        local_multioutput
         check_is_fitted(self)
         X = self._validate_X_predict(X, check_input)
         proba = self.tree_.predict(X)
         n_samples = X.shape[0]
 
-        # TODO: weighted outputs for global_single_output adapter
+        # TODO: weighted outputs for global_single_output adapter?
         if self.bipartite_adapter == "local_multioutput":
             proba = self._weight_raw_predictions(X, proba)
 
@@ -770,9 +796,9 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 
 
 class BipartiteDecisionTreeRegressor(
-    MultipartiteRegressorMixin,
     BaseBipartiteDecisionTree,
     DecisionTreeRegressor,
+    RegressorMixin,
 ):
     """Decision tree regressor tailored to bipartite input.
 
@@ -1009,8 +1035,8 @@ class BipartiteDecisionTreeRegressor(
     _parameter_constraints: dict = {
         **BaseBipartiteDecisionTree._parameter_constraints,
         "criterion": [
-            StrOptions({"squared_error"}),
-            Hidden(StrOptions({"friedman_mse", "absolute_error", "poisson"})),
+            StrOptions({"squared_error", "friedman_mse"}),
+            Hidden(StrOptions({"absolute_error", "poisson"})),
             Hidden(Criterion),
         ],
     }
@@ -1393,3 +1419,146 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
             bipartite_adapter=bipartite_adapter,
             prediction_weights=prediction_weights,
         )
+
+
+class BipartiteDecisionTreeClassifier(
+    BaseBipartiteDecisionTree,
+    DecisionTreeClassifier,
+    ClassifierMixin,
+):
+
+    _parameter_constraints: dict = {
+        **BaseBipartiteDecisionTree._parameter_constraints,
+        "criterion": [StrOptions({"gini", "entropy", "log_loss"}), Hidden(Criterion)],
+        "class_weight": [dict, list, StrOptions({"balanced"}), None],
+    }
+
+    def __init__(
+        self,
+        *,
+        criterion="gini",
+        splitter="best",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=None,
+        random_state=None,
+        max_leaf_nodes=None,
+        min_impurity_decrease=0.0,
+        class_weight=None,
+        ccp_alpha=0.0,
+        # Bipartite parameters:
+        min_rows_split=1,
+        min_cols_split=1,
+        min_rows_leaf=1,
+        min_cols_leaf=1,
+        min_row_weight_fraction_leaf=0.0,
+        min_col_weight_fraction_leaf=0.0,
+        max_row_features=None,
+        max_col_features=None,
+        bipartite_adapter="global_multioutput",
+        prediction_weights=None,
+    ):
+        super().__init__(
+            criterion=criterion,
+            splitter=splitter,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+            class_weight=class_weight,
+            random_state=random_state,
+            min_impurity_decrease=min_impurity_decrease,
+            ccp_alpha=ccp_alpha,
+            # Bipartite parameters:
+            min_rows_split=min_rows_split,
+            min_cols_split=min_cols_split,
+            min_rows_leaf=min_rows_leaf,
+            min_cols_leaf=min_cols_leaf,
+            min_row_weight_fraction_leaf=min_row_weight_fraction_leaf,
+            min_col_weight_fraction_leaf=min_col_weight_fraction_leaf,
+            max_row_features=max_row_features,
+            max_col_features=max_col_features,
+            bipartite_adapter=bipartite_adapter,
+            prediction_weights=prediction_weights,
+        )
+
+    def fit(self, X, y, sample_weight=None, check_input=True):
+        """Build a decision tree classifier from the training set (X, y).
+        Parameters
+        ----------
+        X : {array-like, sparse matrix} of shape (n_samples, n_features)
+            The training input samples. Internally, it will be converted to
+            ``dtype=np.float32`` and if a sparse matrix is provided
+            to a sparse ``csc_matrix``.
+        y : array-like of shape (n_samples,) or (n_samples, n_outputs)
+            The target values (class labels) as integers or strings.
+        sample_weight : array-like of shape (n_samples,), default=None
+            Sample weights. If None, then samples are equally weighted. Splits
+            that would create child nodes with net zero or negative weight are
+            ignored while searching for a split in each node. Splits are also
+            ignored if they would result in any single class carrying a
+            negative weight in either child node.
+        check_input : bool, default=True
+            Allow to bypass several input checking.
+            Don't use this parameter unless you know what you're doing.
+        Returns
+        -------
+        self : DecisionTreeClassifier
+            Fitted estimator.
+        """
+
+        super().fit(
+            X,
+            y,
+            sample_weight=sample_weight,
+            check_input=check_input,
+        )
+        return self
+
+    def predict_proba(self, X, check_input=True):
+        """Predict class probabilities of the input samples X.
+        The predicted class probability is the fraction of samples of the same
+        class in a leaf.
+        Parameters
+        ----------
+        X : {array-like, sparse matrix} of shape (n_samples, n_features)
+            The input samples. Internally, it will be converted to
+            ``dtype=np.float32`` and if a sparse matrix is provided
+            to a sparse ``csr_matrix``.
+        check_input : bool, default=True
+            Allow to bypass several input checking.
+            Don't use this parameter unless you know what you're doing.
+        Returns
+        -------
+        proba : ndarray of shape (n_samples, n_classes) or list of n_outputs \
+            such arrays if n_outputs > 1
+            The class probabilities of the input samples. The order of the
+            classes corresponds to that in the attribute :term:`classes_`.
+        """
+        check_is_fitted(self)
+        X = self._validate_X_predict(X, check_input)
+        proba = self.tree_.predict(X)
+
+        if self.n_outputs_ == 1:
+            proba = proba[:, : self.n_classes_]
+            normalizer = proba.sum(axis=1)[:, np.newaxis]
+            normalizer[normalizer == 0.0] = 1.0
+            proba /= normalizer
+
+            return proba
+
+        else:
+            all_proba = []
+
+            for k in range(self.n_outputs_):
+                proba_k = proba[:, k, : self.n_classes_[k]]
+                normalizer = proba_k.sum(axis=1)[:, np.newaxis]
+                normalizer[normalizer == 0.0] = 1.0
+                proba_k /= normalizer
+                all_proba.append(proba_k)
+
+            return all_proba

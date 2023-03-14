@@ -4,7 +4,7 @@ from libc.stdlib cimport malloc, calloc, free, realloc
 from libc.string cimport memset
 import numpy as np
 cimport numpy as cnp
-from ._axis_criterion cimport AxisCriterion
+from ._axis_criterion cimport AxisCriterion, AxisClassificationCriterion
 
 np.import_array()
 
@@ -14,21 +14,20 @@ class InvalidAxisError(ValueError):
         return "'axis' parameter can only be 0 or 1."
 
 
-cdef class CriterionWrapper2D:
+cdef class BipartiteCriterion:
     """Abstract base class."""
 
     cdef int init(
         self,
-        const DOUBLE_t[:, ::1] X_rows,
-        const DOUBLE_t[:, ::1] X_cols,
-        const DOUBLE_t[:, ::1] y,
-        const DOUBLE_t[:, ::1] y_transposed,
-        DOUBLE_t* row_sample_weight,
-        DOUBLE_t* col_sample_weight,
+        const DTYPE_t[:, ::1] X_rows,
+        const DTYPE_t[:, ::1] X_cols,
+        const DOUBLE_t[:, :] y,
+        DOUBLE_t[:] row_weights,
+        DOUBLE_t[:] col_weights,
         double weighted_n_rows,
         double weighted_n_cols,
-        SIZE_t* row_samples,
-        SIZE_t* col_samples,
+        const SIZE_t[:] row_indices,
+        const SIZE_t[:] col_indices,
         SIZE_t[2] start,
         SIZE_t[2] end,
     ) nogil except -1:
@@ -60,7 +59,7 @@ cdef class CriterionWrapper2D:
     
 
 # TODO: global in the name
-cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
+cdef class BipartiteRegressionCriterion(BipartiteCriterion):
     def __reduce__(self):
         return (
             type(self),
@@ -76,12 +75,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         RegressionCriterion criterion_rows,
         RegressionCriterion criterion_cols,
     ):
-        self.row_samples = NULL
-        self.col_samples = NULL
-
         # Default values
-        self.row_sample_weight = NULL
-        self.col_sample_weight = NULL
         self.sq_sum_total = 0.0
 
         self.start[0] = 0
@@ -124,16 +118,15 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
 
     cdef int init(
         self,
-        const DOUBLE_t[:, ::1] X_rows,
-        const DOUBLE_t[:, ::1] X_cols,
-        const DOUBLE_t[:, ::1] y,
-        const DOUBLE_t[:, ::1] y_transposed,
-        DOUBLE_t* row_sample_weight,
-        DOUBLE_t* col_sample_weight,
+        const DTYPE_t[:, ::1] X_rows,
+        const DTYPE_t[:, ::1] X_cols,
+        const DOUBLE_t[:, :] y,
+        DOUBLE_t[:] row_weights,
+        DOUBLE_t[:] col_weights,
         double weighted_n_rows,
         double weighted_n_cols,
-        SIZE_t* row_samples,
-        SIZE_t* col_samples,
+        const SIZE_t[:] row_indices,
+        const SIZE_t[:] col_indices,
         SIZE_t[2] start,
         SIZE_t[2] end,
     ) nogil except -1:
@@ -158,14 +151,13 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         self.X_rows = X_rows
         self.X_cols = X_cols
         self.y = y
-        self.y_transposed = y_transposed
-        self.row_sample_weight = row_sample_weight
-        self.col_sample_weight = col_sample_weight
+        self.row_weights = row_weights
+        self.col_weights = col_weights
         self.weighted_n_rows = weighted_n_rows
         self.weighted_n_cols = weighted_n_cols
         self.weighted_n_samples = weighted_n_rows * weighted_n_cols
-        self.row_samples = row_samples
-        self.col_samples = col_samples
+        self.row_indices = row_indices
+        self.col_indices = col_indices
 
         self.start[0] = start_row
         self.start[1] = start_col
@@ -175,12 +167,12 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         self.n_node_rows = end_row - start_row
         self.n_node_cols = end_col - start_col
 
-        if self.row_sample_weight == NULL:
+        if self.row_weights is None:
             self.weighted_n_node_rows = <double> self.n_node_rows
         else:  # Will be computed ahead
             self.weighted_n_node_rows = 0.0
 
-        if self.col_sample_weight == NULL:
+        if self.col_weights is None:
             self.weighted_n_node_cols = <double> self.n_node_cols
         else:  # Will be computed ahead
             self.weighted_n_node_cols = 0.0
@@ -194,20 +186,20 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         # Compute sums along both y axes. Row and column sums will be used as y
         # proxies, being served as y to each child criterion.
         for p in range(start_row, end_row):
-            i = row_samples[p]
+            i = row_indices[p]
             y_row_sums[i] = 0.0
 
-            if row_sample_weight != NULL:
-                wi = row_sample_weight[i]
+            if row_weights is not None:
+                wi = row_weights[i]
                 self.weighted_n_node_rows += wi
 
             for q in range(start_col, end_col):
-                j = col_samples[q]
+                j = col_indices[q]
                 if is_first_row:
                     y_col_sums[j] = 0.0
 
-                if col_sample_weight != NULL:
-                    wj = col_sample_weight[j]
+                if col_weights is not None:
+                    wj = col_weights[j]
                     if is_first_row:
                         self.weighted_n_node_cols += wj
 
@@ -226,7 +218,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         self.sq_sum_total = sq_sum_total
         self.sum_total[0] = sum_total
 
-        # Will be used by the Splitter2D to set the Tree object
+        # Will be used by the BipartiteSplitter to set the Tree object
         self.weighted_n_node_samples = (
             self.weighted_n_node_rows * self.weighted_n_node_cols
         )
@@ -234,8 +226,8 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         self._init_child_criterion(
             criterion=self.criterion_rows,
             y=self.y_row_sums,
-            sample_weight=self.row_sample_weight,
-            samples=self.row_samples,
+            sample_weight=self.row_weights,
+            sample_indices=self.row_indices,
             start=self.start[0],
             end=self.end[0],
             n_node_samples=self.n_node_rows,  # XXX
@@ -245,8 +237,8 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         self._init_child_criterion(
             criterion=self.criterion_cols,
             y=self.y_col_sums,
-            sample_weight=self.col_sample_weight,
-            samples=self.col_samples,
+            sample_weight=self.col_weights,
+            sample_indices=self.col_indices,
             start=self.start[1],
             end=self.end[1],
             n_node_samples=self.n_node_cols,  # XXX
@@ -260,8 +252,8 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
             self,
             RegressionCriterion criterion,
             const DOUBLE_t[:, ::1] y,
-            DOUBLE_t* sample_weight,
-            SIZE_t* samples,
+            DOUBLE_t[:] sample_weight,
+            const SIZE_t[:] sample_indices,
             SIZE_t start,
             SIZE_t end,
             SIZE_t n_node_samples,
@@ -272,7 +264,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         """
         criterion.y = y
         criterion.sample_weight = sample_weight
-        criterion.samples = samples
+        criterion.sample_indices = sample_indices
         criterion.start = start
         criterion.end = end
         criterion.n_node_samples = n_node_samples
@@ -287,7 +279,7 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
         return 0
 
     cdef void node_value(self, double* dest) nogil:
-        """Compute the node value of samples[start:end] into dest."""
+        """Compute the node value of sample_indices[start:end] into dest."""
         # self.n_outputs is always 1
         dest[0] = self.sum_total[0] / self.weighted_n_node_samples
 
@@ -320,14 +312,13 @@ cdef class RegressionCriterionWrapper2D(CriterionWrapper2D):
                 raise InvalidAxisError
 
 
-# TODO: rename SquaredErrorAdapter
-cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
+cdef class BipartiteSquaredError(BipartiteRegressionCriterion):
 
     cdef double node_impurity(self) nogil:
         """Evaluate the impurity of the current node.
 
         Evaluate the MSE criterion as impurity of the current node,
-        i.e. the impurity of samples[start:end]. The smaller the impurity the
+        i.e. the impurity of sample_indices[start:end]. The smaller the impurity the
         better.
         """
         # self.n_outputs == 1
@@ -344,15 +335,15 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
     ) nogil:
         """Evaluate the impurity in children nodes.
 
-        i.e. the impurity of the left child (samples[start:pos]) and the
-        impurity the right child (samples[pos:end]).
+        i.e. the impurity of the left child (sample_indices[start:pos]) and the
+        impurity the right child (sample_indices[pos:end]).
 
         It is done here because sq_sum_* of children criterion is set
         differently, as they receive axis sums as y.
         """
         cdef:
             DOUBLE_t y_ij
-            const DOUBLE_t[:, ::1] y = self.y
+            const DOUBLE_t[:, :] y = self.y
 
             double sq_sum_left = 0.0
             double sq_sum_right
@@ -360,10 +351,10 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
             SIZE_t i, j, q, p
             DOUBLE_t wi = 1.0, wj = 1.0
 
-            SIZE_t* row_samples = self.row_samples
-            SIZE_t* col_samples = self.col_samples
-            DOUBLE_t* row_sample_weight = self.row_sample_weight
-            DOUBLE_t* col_sample_weight = self.col_sample_weight
+            const SIZE_t[:] row_indices = self.row_indices
+            const SIZE_t[:] col_indices = self.col_indices
+            const DOUBLE_t[:] row_weights = self.row_weights
+            const DOUBLE_t[:] col_weights = self.col_weights
 
             double sum_left
             double sum_right
@@ -397,14 +388,14 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
         end[axis] = (<Criterion> criterion).pos
 
         for p in range(start[0], end[0]):
-            i = row_samples[p]
-            if row_sample_weight != NULL:
-                wi = row_sample_weight[i]
+            i = row_indices[p]
+            if row_weights is not None:
+                wi = row_weights[i]
 
             for q in range(start[1], end[1]):
-                j = col_samples[q]
-                if col_sample_weight != NULL:
-                    wj = col_sample_weight[j]
+                j = col_indices[q]
+                if col_weights is not None:
+                    wj = col_weights[j]
 
                 y_ij = y[i, j]
                 sq_sum_left += wi * wj * y_ij * y_ij
@@ -423,7 +414,7 @@ cdef class MSE_Wrapper2D(RegressionCriterionWrapper2D):
 
 
 # TODO: changing axis crit weight to sum of column weights would benefit
-cdef class FriedmanAdapter(MSE_Wrapper2D):
+cdef class BipartiteFriedman(BipartiteSquaredError):
     cdef double impurity_improvement(
         self,
         double impurity_parent,
@@ -444,8 +435,7 @@ cdef class FriedmanAdapter(MSE_Wrapper2D):
             return imp / self.weighted_n_node_rows
 
 
-# TODO: should work for classification as well.
-cdef class PBCTCriterionWrapper(CriterionWrapper2D):
+cdef class PBCTCriterionWrapper(BipartiteCriterion):
     """Applies Predictive Bi-Clustering Trees method.
 
     See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
@@ -465,12 +455,7 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         AxisCriterion criterion_rows,
         AxisCriterion criterion_cols,
     ):
-        self.row_samples = NULL
-        self.col_samples = NULL
-
         # Default values
-        self.row_sample_weight = NULL
-        self.col_sample_weight = NULL
         self.sq_sum_total = 0.0
 
         self.start[0] = 0
@@ -497,37 +482,49 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         self.n_cols = self.criterion_cols.n_samples
         self.n_outputs_rows = self.criterion_rows.n_outputs
         self.n_outputs_cols = self.criterion_cols.n_outputs
+
+        # FIXME: should not validate arguments here.
+        if isinstance(criterion_rows, AxisClassificationCriterion):
+            if not isinstance(criterion_cols, AxisClassificationCriterion):
+                raise TypeError(
+                    "None or both axes criteria must be "
+                    "AxisClassificationCriterion."
+                )
+            self.max_n_classes = (
+                (<AxisClassificationCriterion>criterion_cols).max_n_classes
+            )
+        else:
+            self.max_n_classes = 1
+
         self.n_outputs = self.n_outputs_rows + self.n_outputs_cols
 
     cdef int init(
-            self,
-            const DOUBLE_t[:, ::1] X_rows,
-            const DOUBLE_t[:, ::1] X_cols,
-            const DOUBLE_t[:, ::1] y,
-            const DOUBLE_t[:, ::1] y_transposed,
-            DOUBLE_t* row_sample_weight,
-            DOUBLE_t* col_sample_weight,
-            double weighted_n_rows,
-            double weighted_n_cols,
-            SIZE_t* row_samples,
-            SIZE_t* col_samples,
-            SIZE_t[2] start,
-            SIZE_t[2] end,
-        ) nogil except -1:
+        self,
+        const DTYPE_t[:, ::1] X_rows,
+        const DTYPE_t[:, ::1] X_cols,
+        const DOUBLE_t[:, :] y,
+        DOUBLE_t[:] row_weights,
+        DOUBLE_t[:] col_weights,
+        double weighted_n_rows,
+        double weighted_n_cols,
+        const SIZE_t[:] row_indices,
+        const SIZE_t[:] col_indices,
+        SIZE_t[2] start,
+        SIZE_t[2] end,
+    ) nogil except -1:
         """This function adapts RegressionCriterion.init to 2D data."""
 
         # Initialize fields
         self.X_rows = X_rows
         self.X_cols = X_cols
         self.y = y
-        self.y_transposed = y_transposed
-        self.row_sample_weight = row_sample_weight
-        self.col_sample_weight = col_sample_weight
+        self.row_weights = row_weights
+        self.col_weights = col_weights
         self.weighted_n_rows = weighted_n_rows
         self.weighted_n_cols = weighted_n_cols
         self.weighted_n_samples = weighted_n_rows * weighted_n_cols
-        self.row_samples = row_samples
-        self.col_samples = col_samples
+        self.row_indices = row_indices
+        self.col_indices = col_indices
 
         self.start[0], self.start[1] = start[0], start[1]
         self.end[0], self.end[1] = end[0], end[1]
@@ -535,43 +532,38 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         cdef SIZE_t n_node_rows = end[0] - start[0]
         cdef SIZE_t n_node_cols = end[1] - start[1]
 
-        self.criterion_rows.init_columns(
-            self.col_sample_weight,
-            self.weighted_n_cols,
-            self.col_samples,
-            self.start[1],
-            self.end[1],
-        )
-        self.criterion_rows.init(
+        self.criterion_rows.axis_init(
             y=self.y,
-            sample_weight=self.row_sample_weight,
+            sample_weight=self.row_weights,
+            col_weights=self.col_weights,
             weighted_n_samples=self.weighted_n_rows,
-            samples=self.row_samples,
+            weighted_n_cols=self.weighted_n_cols,
+            sample_indices=self.row_indices,
+            col_indices=self.col_indices,
             start=self.start[0],
             end=self.end[0],
+            start_col=self.start[1],
+            end_col=self.end[1],
         )
-
-        self.criterion_cols.init_columns(
-            self.row_sample_weight,
-            self.weighted_n_rows,
-            self.row_samples,
-            self.start[0],
-            self.end[0],
-        )
-        self.criterion_cols.init(
-            y=self.y_transposed,
-            sample_weight=self.col_sample_weight,
+        self.criterion_cols.axis_init(
+            y=self.y.T,
+            sample_weight=self.col_weights,
+            col_weights=self.row_weights,
             weighted_n_samples=self.weighted_n_cols,
-            samples=self.col_samples,
+            weighted_n_cols=self.weighted_n_rows,
+            sample_indices=self.col_indices,
+            col_indices=self.row_indices,
             start=self.start[1],
             end=self.end[1],
+            start_col=self.start[0],
+            end_col=self.end[0],
         )
 
         # Will be used by TreeBuilder as stopping criteria.
         self.weighted_n_node_rows = self.criterion_rows.weighted_n_node_samples
         self.weighted_n_node_cols = self.criterion_cols.weighted_n_node_samples
 
-        # Will further be used by the Splitter2D to set the Tree object
+        # Will further be used by the BipartiteSplitter to set the Tree object
         self.weighted_n_node_samples = (
             self.weighted_n_node_rows * self.weighted_n_node_cols
         )
@@ -579,10 +571,12 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         return 0
 
     cdef void node_value(self, double* dest) nogil:
-        """Copy the value (prototype) of node samples into dest.
+        """Copy the value (prototype) of node sample_indices into dest.
         """
         self.criterion_cols.node_value(dest)
-        self.criterion_rows.node_value(dest + self.n_outputs_cols)
+        self.criterion_rows.node_value(
+            dest + self.n_outputs_cols * self.max_n_classes
+        )
 
     cdef double node_impurity(self) nogil:
         """Return the impurity of the current node.
@@ -626,3 +620,18 @@ cdef class PBCTCriterionWrapper(CriterionWrapper2D):
         else:
             with gil:
                 raise InvalidAxisError
+
+
+cdef class PBCTCriterionWrapperSA(PBCTCriterionWrapper):
+    def __init__(
+        self,
+        AxisCriterion criterion_rows,
+        AxisCriterion criterion_cols,
+    ):
+        super().__init__(criterion_rows, criterion_cols)
+        self.n_outputs = 1
+
+    cdef void node_value(self, double* dest) nogil:
+        """Copy the value (prototype) of node sample_indices into dest.
+        """
+        self.criterion_rows.total_node_value(dest)
