@@ -14,8 +14,8 @@ from sklearn.exceptions import NotFittedError
 from sklearn.utils import check_random_state
 from .melter import melt_multipartite_dataset
 from .utils import check_multipartite_params
-from hypertrees.base import BaseMultipartiteEstimator
-from hypertrees.utils import _X_is_multipartite
+from .base import BaseMultipartiteEstimator, BaseMultipartiteSampler
+from .utils import _X_is_multipartite
 
 
 def _estimator_has(attr):
@@ -570,3 +570,72 @@ class MultipartiteTransformerWrapper(BaseMultipartiteEstimator,
         except NotFittedError:
             # Let the caller check_is_fitted() raise the error
             return False
+
+
+# TODO: sampler wrapper and transformer wrapper could share code
+class MultipartiteSamplerWrapper(BaseMultipartiteSampler):
+    """Manages a sampler for each feature space in multipartite datasets.
+    """
+    def __init__(
+        self,
+        samplers: BaseEstimator | Sequence[BaseEstimator],
+        ndim: int | None = 2,
+    ):
+        self.samplers = samplers
+        self.ndim = ndim
+
+    def _fit_resample(self, X, y):
+        # NOTE: ressampled y is discarded!
+        self._set_samplers()
+        self._validate_data(X, y)
+        return (
+            [
+                # FIXME: imblearn cannot deal with multi-column y
+                # sampler.fit_resample(Xi, yi)[0]  # skip validation
+                sampler._fit_resample(Xi, yi)[0]
+                for Xi, yi, sampler in self._roll_axes(X, y)
+            ],
+            y,
+        )
+
+    def _set_samplers(self):
+        """Sets self.samplers_ and self.ndim_ during fit.
+        """
+        if isinstance(self.samplers, Sequence):
+            if self.ndim is None:
+                self.ndim_ = len(self.samplers)
+
+            elif self.ndim != len(self.samplers):
+                raise ValueError("'self.ndim' must correspond to the number of"
+                                 " samplers in self.samplers")
+            else:
+                self.ndim_ = self.ndim
+
+            self.samplers_ = [clone(t) for t in self.samplers]
+
+        else:  # If a single sampler provided
+            if self.ndim is None:
+                raise ValueError("'ndim' must be provided if 'samplers' is"
+                                 " a single sampler.")
+            self.ndim_ = self.ndim
+            self.samplers_ = [
+                clone(self.samplers) for _ in range(self.ndim_)
+            ]
+
+    def _validate_data(self, X, y):
+        if len(X) != self.ndim_:
+            raise ValueError(f"Wrong dimension. X has {len(X)} items, was exp"
+                             "ecting {self.ndim}.")
+        # FIXME: validate
+        # super()._validate_data(X, y, validate_separately=True)
+
+    def _roll_axes(self, X, y=None):
+        if not hasattr(self, "samplers_"):
+            raise AttributeError("One must call _set_samplers() before"
+                                 "attempting to call _roll_axes()")
+
+        for ax in range(self.ndim_):
+            yield X[ax], y, self.samplers_[ax]
+
+            if y is not None:
+                y = np.moveaxis(y, 0, -1)

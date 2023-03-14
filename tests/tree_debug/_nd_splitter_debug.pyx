@@ -2,7 +2,7 @@ import copy
 import warnings
 from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport RegressionCriterion, Criterion
-from ._nd_criterion cimport RegressionCriterionWrapper2D, MSE_Wrapper2D
+from ._nd_criterion cimport BipartiteRegressionCriterion, BipartiteSquaredError
 
 import numpy as np
 cimport numpy as np
@@ -24,7 +24,7 @@ cdef inline void _init_split(
     self.axis = axis
 
 
-cdef class Splitter2D:
+cdef class BipartiteSplitter:
     """PBCT splitter implementation.
 
     Wrapper class to coordinate one Splitter for each axis in a two-dimensional
@@ -32,7 +32,7 @@ cdef class Splitter2D:
     """
     def __cinit__(
             self, Splitter splitter_rows, Splitter splitter_cols,
-            RegressionCriterionWrapper2D criterion_wrapper,
+            BipartiteRegressionCriterion criterion_wrapper,
             min_samples_leaf, min_weight_leaf,
     ):
         """Store each axis' splitter."""
@@ -254,11 +254,11 @@ def make_2d_splitter(
        ax_min_samples_leaf=1,
        ax_min_weight_leaf=0.0,
        random_state=None,
-       criterion_wrapper_class=MSE_Wrapper2D,
+       criterion_wrapper_class=BipartiteSquaredError,
     ):
-    """Factory function of Splitter2D instances.
+    """Factory function of BipartiteSplitter instances.
 
-    Since the building of a Splitter2D is somewhat counterintuitive, this func-
+    Since the building of a BipartiteSplitter is somewhat counterintuitive, this func-
     tion is provided to simplificate the process. With exception of n_samples,
     the remaining parameters may be set to a single value or a 2-valued
     tuple or list, to specify them for each axis.
@@ -320,7 +320,7 @@ def make_2d_splitter(
         criterion_wrapper_class(splitters[0], splitters[1])
 
     # Wrap splitters.
-    return Splitter2D(
+    return BipartiteSplitter(
         splitter_rows=splitters[0],
         splitter_cols=splitters[1],
         criterion_wrapper=criterion_wrapper,
