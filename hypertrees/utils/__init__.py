@@ -43,6 +43,8 @@ def _X_is_multipartite(X):
 
 def check_similarity_matrix(
     X,
+    *,
+    check_symmetry=True,
     symmetry_tol=1e-10,
     symmetry_warning=True,
     symmetry_exception=False,
@@ -54,12 +56,14 @@ def check_similarity_matrix(
         raise ValueError("Similarity values must be between 0 and 1 "
                          "(inclusive)")
 
-    return check_symmetric(
-        X,
-        tol=symmetry_tol,
-        raise_warning=symmetry_warning,
-        raise_exception=symmetry_exception,
-    )
+    if check_symmetry:
+        return check_symmetric(
+            X,
+            tol=symmetry_tol,
+            raise_warning=symmetry_warning,
+            raise_exception=symmetry_exception,
+        )
+    return X
 
 
 def check_multipartite_params(*params, k=2):

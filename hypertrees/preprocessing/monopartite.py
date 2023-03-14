@@ -5,6 +5,8 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics.pairwise import pairwise_kernels
 from sklearn.neighbors import kneighbors_graph
 from sklearn.utils.validation import check_symmetric
+from imblearn.base import BaseSampler
+from ..utils import check_similarity_matrix
 
 _GammaScaleOptions = Literal["constant", "squares", "squared_errors", "size"]
 
@@ -84,7 +86,7 @@ def _scale_gamma(X, gamma: float, gamma_scale: str) -> float:
         )
 
 
-class TargetKernelLinearCombiner(BaseEstimator, TransformerMixin):
+class TargetKernelLinearCombiner(BaseSampler):
     """Combines provided similarity matrix X with kernel calculated over y
 
     X is assumed to be a precomputed kernel matrix. The target kernel will be
@@ -159,9 +161,9 @@ class TargetKernelLinearCombiner(BaseEstimator, TransformerMixin):
         self.n_jobs = n_jobs
         self._kernel_params = kwds
 
-    def fit(self, X, y, **fit_params):
+    def _fit_resample(self, X, y, **fit_params):
         self.effective_gamma_ = _scale_gamma(y, self.gamma, self.gamma_scale)
-        self.y_kernel_ = pairwise_kernels(
+        y_kernel = pairwise_kernels(
             y,
             metric=self.metric,
             gamma=self.effective_gamma_,
@@ -169,13 +171,10 @@ class TargetKernelLinearCombiner(BaseEstimator, TransformerMixin):
             n_jobs=self.n_jobs,
             **self._kernel_params,
         )
-        return self
-
-    def transform(self, X):
-        return self.alpha*X + (1-self.alpha)*self.y_kernel_
+        return self.alpha * X + (1-self.alpha) * y_kernel, y
 
 
-class TargetKernelDiffuser(BaseEstimator, TransformerMixin):
+class TargetKernelDiffuser(BaseSampler):
     """Calculates kernel on y and performs non-linear kernel diffusion.
 
     DOI: https://doi.org/10.1016/j.aca.2016.01.014
@@ -260,21 +259,17 @@ class TargetKernelDiffuser(BaseEstimator, TransformerMixin):
         self.n_jobs = n_jobs
         self._kernel_params = kwds
 
-    def fit(self, X, y, **fit_params):
-        self.effective_gamma_ = _scale_gamma(y, self.gamma, self.gamma_scale)
-        self.y_kernel_ = pairwise_kernels(
+    def _fit_resample(self, X, y):
+        y_kernel = pairwise_kernels(
             y,
             metric=self.metric,
-            gamma=self.effective_gamma_,
+            gamma=_scale_gamma(y, self.gamma, self.gamma_scale),
             filter_params=self.filter_params,
             n_jobs=self.n_jobs,
             **self._kernel_params,
         )
-        return self
-
-    def transform(self, X):
         S = X.copy()  # Similarity matrix
-        S_net = self.y_kernel_.copy()  # Connections-based similarity
+        S_net = y_kernel.copy()  # Connections-based similarity
 
         self._normalize_rows(S)
         self._normalize_rows(S_net)
@@ -295,7 +290,10 @@ class TargetKernelDiffuser(BaseEstimator, TransformerMixin):
         self._normalize_rows(S_final)
         self._symmetrize(S_final)
 
-        return S_final
+        # NOTE: Not in the original paper.
+        S_final /= S_final.max(axis=1, keepdims=True)  # Normalize to [0, 1]
+
+        return S_final, y
 
     @staticmethod
     def _symmetrize(S):
@@ -313,27 +311,23 @@ class TargetKernelDiffuser(BaseEstimator, TransformerMixin):
     @staticmethod
     def _local_graph(S, n_neighbors):
         S_local = kneighbors_graph(
-            1/S,  # Convert similarity to distance
+            2 - S,  # Convert similarity to distance
             n_neighbors=n_neighbors,
             metric="precomputed",
             mode="distance",
-        )
+        )  # sparse matrix
         # Convert non-zero entries back to similarities
-        np.reciprocal(S_local.data, out=S_local.data)
+        S_local.data = 2 - S_local.data
         # Normalize rows
         S_local /= S_local.sum(axis=1)  # Dimension is kept by default
-        return S_local
+        return np.array(S_local)
 
 
-class SymmetryEnforcer(BaseEstimator, TransformerMixin):
+class SymmetryEnforcer(BaseSampler):
     """Make matrix symmetric by averaging it with its transpose.
     """
-    def fit(self, X, y=None, **fit_params):
-        return self
-
-    def transform(self, X):
-        return check_symmetric(X)
-
+    def _fit_resample(self, X, y):
+        return check_symmetric(X), y
 
 class PositiveSemidefiniteEnforcer(BaseEstimator, TransformerMixin):
     """Modify main diagonal to enforce positive semidefiniteness.
@@ -363,7 +357,7 @@ class SimilarityDistanceSwitcher(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X):
-        return 1 - check_symmetric(X)
+        return 1 - check_similarity_matrix(X, check_symmetry=False)
 
     def inverse_transform(self, X):
         return self.transform(X)

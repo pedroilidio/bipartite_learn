@@ -17,6 +17,10 @@ class BaseMultipartiteEstimator(BaseEstimator):
     # any k >= 2 is accepted.
     _partiteness = None
 
+    def score(self, X, y, sample_weight=None):
+        # TODO: multipartite multi-output (y.ndim = 3).
+        return super().score(X, y.reshape(-1), sample_weight)
+
     def _more_tags(self):
         # Determines that it can receive X as a list of Xs, one for each y axis,
         # that is, a list of objects of any type in self._get_tags()["X_types"]
@@ -152,15 +156,6 @@ class BaseMultipartiteEstimator(BaseEstimator):
 
 class BaseBipartiteEstimator(BaseMultipartiteEstimator):
     _partiteness = 2
-
-
-class MultipartiteRegressorMixin(RegressorMixin):
-    """Mixin for multipartite regressors.
-    """
-
-    def score(self, X, y, sample_weight=None):
-        # TODO: multi-output.
-        return super().score(X, y.reshape(-1), sample_weight)
 
 
 class MultipartiteTransformerMixin(TransformerMixin):

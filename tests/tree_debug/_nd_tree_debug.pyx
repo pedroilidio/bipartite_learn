@@ -49,10 +49,10 @@ cdef SIZE_t _TREE_UNDEFINED = TREE_UNDEFINED
 cdef SIZE_t INITIAL_STACK_SIZE = 10
 
 # =============================================================================
-# TreeBuilderND
+# BipartiteTreeBuilder
 # =============================================================================
 
-cdef class TreeBuilderND:  # (TreeBuilder):
+cdef class BipartiteTreeBuilder:  # (TreeBuilder):
     """Interface for different tree building strategies."""
 
     cpdef build(self, Tree tree, object X, np.ndarray y,
@@ -112,7 +112,7 @@ cdef struct StackRecord2D:
     SIZE_t n_constant_row_features
     SIZE_t n_constant_col_features
 
-cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
+cdef class DepthFirstTreeBuilder2D(BipartiteTreeBuilder):
     """Build a decision tree in depth-first fashion, from 2D training data.
 
     It adds minor changes to sklearn's DepthfirstTreeBuilder, essentially
@@ -130,7 +130,7 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
     # min_weight_leaf, turning them into arrays. A complication is that
     # __cinit__ does not take arrays (pointers) as arguments, only python
     # objects.
-    def __cinit__(self, Splitter2D splitter, SIZE_t min_samples_split,
+    def __cinit__(self, BipartiteSplitter splitter, SIZE_t min_samples_split,
                   SIZE_t min_samples_leaf, double min_weight_leaf,
                   SIZE_t max_depth, double min_impurity_decrease):
         self.splitter = splitter
@@ -162,7 +162,7 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
         tree._resize(init_capacity)
 
         # Parameters
-        cdef Splitter2D splitter = self.splitter
+        cdef BipartiteSplitter splitter = self.splitter
         cdef SIZE_t max_depth = self.max_depth
         cdef SIZE_t min_samples_leaf = self.min_samples_leaf
         cdef double min_weight_leaf = self.min_weight_leaf
@@ -354,5 +354,5 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
 
 # Best first builder ----------------------------------------------------------
 
-cdef class BestFirstTreeBuilderND(TreeBuilderND):
+cdef class BestFirstBipartiteTreeBuilder(BipartiteTreeBuilder):
     pass # TODO

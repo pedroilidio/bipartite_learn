@@ -16,7 +16,7 @@ import time
 from traceback import format_exc
 
 import numpy as np
-from joblib import Parallel, logger
+from joblib import logger
 
 # New imports:
 import sklearn.utils
@@ -31,7 +31,7 @@ from sklearn.utils.validation import (
 )
 from sklearn.utils._tags import _safe_tags
 from sklearn.base import is_classifier, clone
-from sklearn.utils.fixes import delayed
+from sklearn.utils.parallel import delayed, Parallel
 from sklearn.metrics import check_scoring
 from sklearn.metrics._scorer import _check_multimetric_scoring
 
