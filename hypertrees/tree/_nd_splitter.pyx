@@ -3,7 +3,7 @@ import copy
 import warnings
 from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport RegressionCriterion, Criterion
-from ._nd_criterion cimport RegressionCriterionWrapper2D, MSE_Wrapper2D
+from ._nd_criterion cimport BipartiteRegressionCriterion, BipartiteSquaredError
 
 import numpy as np
 cimport numpy as np
@@ -13,19 +13,20 @@ cdef double INFINITY = np.inf
 
 
 cdef inline void _init_split(
-        SplitRecord* self, SIZE_t start_pos,
-        SIZE_t axis
+    MultipartiteSplitRecord* self,
+    SIZE_t start_pos,
+    SIZE_t axis
 ) nogil:
-    self.impurity_left = INFINITY
-    self.impurity_right = INFINITY
-    self.pos = start_pos
-    self.feature = 0
-    self.threshold = 0.
-    self.improvement = -INFINITY
     self.axis = axis
+    self.split_record.impurity_left = INFINITY
+    self.split_record.impurity_right = INFINITY
+    self.split_record.pos = start_pos
+    self.split_record.feature = 0
+    self.split_record.threshold = 0.
+    self.split_record.improvement = -INFINITY
 
 
-cdef class Splitter2D:
+cdef class BipartiteSplitter:
     """PBCT splitter implementation.
 
     Wrapper class to coordinate one Splitter for each axis in a two-dimensional
@@ -35,7 +36,7 @@ cdef class Splitter2D:
         self,
         Splitter splitter_rows,
         Splitter splitter_cols,
-        CriterionWrapper2D criterion_wrapper,
+        BipartiteCriterion criterion_wrapper,
         min_samples_leaf,
         min_weight_leaf,
     ):
@@ -73,8 +74,8 @@ cdef class Splitter2D:
     cdef int init(
         self,
         object X,
-        const DOUBLE_t[:, ::1] y,
-        DOUBLE_t* sample_weight,  # TODO: test sample_weight
+        const DOUBLE_t[:, :] y,
+        const DOUBLE_t[:] sample_weight,  # TODO: test sample_weight
     ) except -1:
         """Initialize the axes' splitters.
         Take in the input data X, the target Y, and optional sample weights.
@@ -98,26 +99,26 @@ cdef class Splitter2D:
         self.n_rows = y.shape[0]
         self.n_cols = y.shape[1]
 
-        # FIXME: avoid storing y_transposed, X_rows and X_cols (use references)
-        self.X_rows = np.ascontiguousarray(X[0], dtype=np.float64)
-        self.X_cols = np.ascontiguousarray(X[1], dtype=np.float64)
-        self.y_transposed = y.T.copy()
+        self.X_rows = X[0]
+        self.X_cols = X[1]
 
         self.n_row_features = self.X_rows.shape[1]
 
-        if sample_weight == NULL:
-            self.row_sample_weight = NULL
-            self.col_sample_weight = NULL
+        if sample_weight is None:
+            self.row_weights = None
+            self.col_weights = None
         else:
             # First self.n_rows sample weights refer to rows, the others
             # refer to columns.
-            self.row_sample_weight = sample_weight
-            self.col_sample_weight = sample_weight + self.n_rows
+            self.row_weights = sample_weight
+            self.col_weights = sample_weight[self.n_rows:]
 
-        self.splitter_rows.init(X[0], self.y, self.row_sample_weight)
-        self.splitter_cols.init(X[1], self.y_transposed, self.col_sample_weight)
-        self.row_samples = self.splitter_rows.samples
-        self.col_samples = self.splitter_cols.samples
+        # splitters do not receive y, the Bipartite criterion is who takes
+        # charge of calling Criterion.init() passing y to the criterion.
+        self.splitter_rows.init(X[0], None, self.row_weights)
+        self.splitter_cols.init(X[1], None, self.col_weights)
+        self.row_indices = self.splitter_rows.samples
+        self.col_indices = self.splitter_cols.samples
 
         self.n_samples = self.n_rows * self.n_cols
         self.weighted_n_rows = self.splitter_rows.weighted_n_samples
@@ -173,13 +174,12 @@ cdef class Splitter2D:
             self.X_rows,
             self.X_cols,
             self.y,
-            self.y_transposed,
-            self.row_sample_weight,
-            self.col_sample_weight,
+            self.row_weights,
+            self.col_weights,
             self.weighted_n_rows,
             self.weighted_n_cols,
-            &self.row_samples[0],  # TODO: change to memoryview
-            &self.col_samples[0],
+            self.row_indices,
+            self.col_indices,
             start,
             end,
         )
@@ -199,14 +199,14 @@ cdef class Splitter2D:
     cdef int node_split(
         self,
         double impurity,
-        SplitRecord* split,
+        MultipartiteSplitRecord* split,
         SIZE_t[2] n_constant_features
     ) nogil except -1:
         """Find the best split on node samples.
         It should return -1 upon errors.
         """
         cdef SIZE_t ax  # axis, 0 == rows, 1 == columns
-        cdef SplitRecord current_split, best_split
+        cdef MultipartiteSplitRecord current_split, best_split
         cdef DOUBLE_t imp_left, imp_right
 
         # Using Cython casting trick to iterate over splitters without the GIL
@@ -226,12 +226,14 @@ cdef class Splitter2D:
                 continue  # min_samples_leaf not satisfied.
 
             (<Splitter>splitters[ax]).node_split(
-                impurity, &current_split, &n_constant_features[ax],
+                impurity,
+                <SplitRecord*> &current_split,
+                &n_constant_features[ax],
             )
 
             # When no valid split has been found, the child splitter sets
             # the split position at the end of the current node.
-            if current_split.pos == self.end[ax]:
+            if current_split.split_record.pos == self.end[ax]:
                 continue
 
             self.criterion_wrapper.children_impurity(
@@ -241,14 +243,15 @@ cdef class Splitter2D:
                 impurity, imp_left, imp_right, axis=ax,
             )
 
-            if imp_improve > best_split.improvement:
+            if imp_improve > best_split.split_record.improvement:
                 best_split = current_split
-                best_split.improvement = imp_improve
-                best_split.impurity_left = imp_left
-                best_split.impurity_right = imp_right
+                best_split.split_record.improvement = imp_improve
+                best_split.split_record.impurity_left = imp_left
+                best_split.split_record.impurity_right = imp_right
+
                 best_split.axis = ax
                 if ax == 1:
-                    best_split.feature += self.n_row_features
+                    best_split.split_record.feature += self.n_row_features
 
         split[0] = best_split
 

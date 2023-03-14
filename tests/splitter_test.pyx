@@ -1,14 +1,14 @@
 from sklearn.tree._criterion cimport Criterion
 from sklearn.tree._splitter cimport Splitter, SplitRecord
-from sklearn.tree._tree cimport SIZE_t, DOUBLE_t
+from sklearn.tree._tree cimport SIZE_t, DOUBLE_t, DTYPE_t
 
-from hypertrees.tree._nd_criterion cimport CriterionWrapper2D
+from hypertrees.tree._nd_criterion cimport BipartiteCriterion
 from hypertrees.tree._semisupervised_criterion cimport (
     SSCompositeCriterion, BipartiteSemisupervisedCriterion,
 )
 from hypertrees.tree._nd_splitter cimport (
-    SplitRecord as SplitRecordND,
-    Splitter2D
+    MultipartiteSplitRecord,
+    BipartiteSplitter
 )
 from libc.stdlib cimport malloc, free
 
@@ -40,11 +40,11 @@ cpdef test_splitter(
     end = end if end > 0 else y.shape[0] + end
     start = start if start >= 0 else y.shape[0] + start
 
-    _init_split(&split, 0)
+    _init_split(<SplitRecord*>&split, 0)
 
     if verbose:
-        print('[SPLITTER_TEST] calling splitter.init(X, y, NULL)')
-    splitter.init(X, y, NULL)
+        print('[SPLITTER_TEST] calling splitter.init(X, y, None)')
+    splitter.init(X, y, None)
     if verbose:
         print(f'[SPLITTER_TEST] calling splitter.node_reset(start={start}, end={end}, &wnns)')
     splitter.node_reset(start, end, &wnns)
@@ -59,7 +59,7 @@ cpdef test_splitter(
         print('[SPLITTER_TEST] splitter.criterion.pos:', splitter.criterion.pos)
         print('[SPLITTER_TEST] calling splitter.node_split(impurity, &split, &ncf)')
 
-    splitter.node_split(impurity, &split, &ncf)
+    splitter.node_split(impurity,<SplitRecord*>&split, &ncf)
 
     if verbose:
         print('[SPLITTER_TEST] splitter.criterion.pos:', splitter.criterion.pos)
@@ -79,7 +79,7 @@ cpdef test_splitter(
     )
 
 cpdef test_splitter_nd(
-    Splitter2D splitter,
+    BipartiteSplitter splitter,
     X, y,
     start=[0, 0],
     end=[0, 0],
@@ -92,7 +92,7 @@ cpdef test_splitter_nd(
     cdef SIZE_t* end_ = <SIZE_t*> malloc(ndim * sizeof(SIZE_t))
     cdef SIZE_t* start_ = <SIZE_t*> malloc(ndim * sizeof(SIZE_t))
     cdef SIZE_t* ncf = <SIZE_t*> malloc(ndim * sizeof(SIZE_t))
-    cdef SplitRecordND split
+    cdef MultipartiteSplitRecord split
     cdef double wnns  # weighted_n_node_samples
     cdef SIZE_t i
 
@@ -101,11 +101,11 @@ cpdef test_splitter_nd(
         end_[i] = end[i] if end[i] > 0 else y.shape[i] + end[i]
         ncf[i] = 0
 
-    _init_split(&split, 0)
+    _init_split(<SplitRecord*>&split, 0)
 
     if verbose:
-        print('[SPLITTER_TEST] calling splitter.init(X, y, NULL)')
-    splitter.init(X, y, NULL)
+        print('[SPLITTER_TEST] calling splitter.init(X, y, None)')
+    splitter.init(X, y, None)
 
     if verbose:
         print('[SPLITTER_TEST] calling splitter.node_reset(start, end, &wnns)')
@@ -138,13 +138,13 @@ cpdef test_splitter_nd(
 
     return dict(
         impurity_parent=impurity,
-        impurity_left=split.impurity_left,
-        impurity_right=split.impurity_right,
-        pos=split.pos,
-        feature=split.feature,
+        impurity_left=split.split_record.impurity_left,
+        impurity_right=split.split_record.impurity_right,
+        pos=split.split_record.pos,
+        feature=split.split_record.feature,
         axis=split.axis,
-        threshold=split.threshold,
-        improvement=split.improvement,
+        threshold=split.split_record.threshold,
+        improvement=split.split_record.improvement,
     )
 
 
@@ -160,7 +160,6 @@ cpdef apply_criterion(
     cdef SIZE_t pos, i, n_splits
     cdef SIZE_t[::1] sample_indices = np.arange(y.shape[0])
     cdef DOUBLE_t[::1] sample_weight_
-    cdef DOUBLE_t* sample_weight_ptr
 
     # Note, however, that the criterion is able to get to end=y.shape[0], such
     # that n_left=n_samples and n_right=0.
@@ -168,18 +167,16 @@ cpdef apply_criterion(
     start = start if start >= 0 else y.shape[0] + start
 
     if sample_weight is None:
-        sample_weight_ptr = NULL
         weighted_n_samples = y.shape[0]
     else:
         sample_weight_ = sample_weight.astype('float64', order='C')
-        sample_weight_ptr = &sample_weight_[0]
         weighted_n_samples = sample_weight.sum()
     
     criterion.init(
         y,
-        sample_weight_ptr,
+        sample_weight,
         weighted_n_samples,
-        &sample_indices[0],
+        sample_indices,
         start,
         end,
     )
@@ -237,12 +234,10 @@ cpdef apply_bipartite_ss_criterion(
         double impurity_left, impurity_right
         double sup_impurity_left, sup_impurity_right
         double unsup_impurity_left, unsup_impurity_right
-        DOUBLE_t[::1] row_weight_
-        DOUBLE_t[::1] col_weight_
-        DOUBLE_t* row_weight_ptr
-        DOUBLE_t* col_weight_ptr
-        DOUBLE_t[:, ::1] X_rows_
-        DOUBLE_t[:, ::1] X_cols_
+        DOUBLE_t[:] row_weights = None
+        DOUBLE_t[:] col_weights = None
+        DTYPE_t[:, ::1] X_rows_
+        DTYPE_t[:, ::1] X_cols_
         DOUBLE_t[:, ::1] y_
         DOUBLE_t[:, ::1] y_transposed
         Criterion sup_criterion, unsup_criterion, ss_criterion
@@ -252,8 +247,8 @@ cpdef apply_bipartite_ss_criterion(
 
         double weighted_n_rows
         double weighted_n_cols
-        SIZE_t[::1] row_samples = np.arange(y.shape[0])
-        SIZE_t[::1] col_samples = np.arange(y.shape[1])
+        SIZE_t[::1] row_indices = np.arange(y.shape[0])
+        SIZE_t[::1] col_indices = np.arange(y.shape[1])
         SIZE_t n_rows = y.shape[0]
         SIZE_t[2] start_
         SIZE_t[2] end_
@@ -262,38 +257,32 @@ cpdef apply_bipartite_ss_criterion(
         start_[ax] = start[ax] if start[ax] >= 0 else y.shape[ax] + start[ax]
         end_[ax] = end[ax] if end[ax] > 0 else y.shape[ax] + end[ax]
 
-    X_rows_ = X_rows.astype('float64', order='C')
-    X_cols_ = X_cols.astype('float64', order='C')
-    y_ = y.astype('float64', order='C')
-    y_transposed = y.T.astype('float64', order='C')
+    X_rows_ = X_rows.astype('float32', order='C')
+    X_cols_ = X_cols.astype('float32', order='C')
+    y_ = y.astype('float64')
     
     n_splits_rows = end_[0] - start_[0]
     n_splits_cols = end_[1] - start_[1]
 
     if sample_weight is None:
-        row_weight_ptr = NULL
-        col_weight_ptr = NULL
         weighted_n_rows = y.shape[0]
         weighted_n_cols = y.shape[1]
     else:
-        row_weight_ = sample_weight[:n_rows].astype('float64', order='C')
-        col_weight_ = sample_weight[n_rows:].astype('float64', order='C')
-        row_weight_ptr = &row_weight_[0]
-        col_weight_ptr = &col_weight_[0]
-        weighted_n_rows = row_weight_.sum()
-        weighted_n_cols = col_weight_.sum()
+        row_weights = sample_weight[:n_rows].astype('float64', order='C')
+        col_weights = sample_weight[n_rows:].astype('float64', order='C')
+        weighted_n_rows = row_weights.sum()
+        weighted_n_cols = col_weights.sum()
 
     bipartite_ss_criterion.init(
         X_rows=X_rows_,
         X_cols=X_cols_,
         y=y_,
-        y_transposed=y_transposed,
-        row_sample_weight=row_weight_ptr,
-        col_sample_weight=col_weight_ptr,
+        row_weights=row_weights,
+        col_weights=col_weights,
         weighted_n_rows=weighted_n_rows,
         weighted_n_cols=weighted_n_cols,
-        row_samples=&row_samples[0],
-        col_samples=&col_samples[0],
+        row_indices=row_indices,
+        col_indices=col_indices,
         start=start_,
         end=end_,
     )

@@ -1,5 +1,6 @@
 # TODO: test with different axis supervisions. sscrit2d.impurity_improvement()
 #       may fail.
+import logging
 from pprint import pprint
 from time import time
 from pathlib import Path
@@ -24,11 +25,11 @@ from hypertrees.tree._splitter_factory import (
 )
 from hypertrees.tree._nd_criterion import (
     PBCTCriterionWrapper,
-    MSE_Wrapper2D,
-    FriedmanAdapter,
-    RegressionCriterionWrapper2D,
+    BipartiteSquaredError,
+    BipartiteFriedman,
+    BipartiteRegressionCriterion,
 )
-from hypertrees.tree._axis_criterion import AxisMSE
+from hypertrees.tree._axis_criterion import AxisMSE, AxisGini
 from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
     # SingleFeatureSSCompositeCriterion,
@@ -326,10 +327,10 @@ def test_1d2d_ideal(**params):
 @pytest.mark.parametrize(
     'criterion,bipartite_criterion_adapter',
     [
-        (MSE, MSE_Wrapper2D),
-        # (MAE, RegressionCriterionWrapper2D),
-        (FriedmanMSE, FriedmanAdapter),
-        # (Poisson, RegressionCriterionWrapper2D),
+        (MSE, BipartiteSquaredError),
+        # (MAE, BipartiteRegressionCriterion),
+        (FriedmanMSE, BipartiteFriedman),
+        # (Poisson, BipartiteRegressionCriterion),
     ]
 )
 def test_1d2d(
@@ -348,7 +349,6 @@ def test_1d2d(
         random_state=check_random_state(random_state),
     )
     y = y.reshape((-1, 1))
-    x = x.astype(np.float32)
 
     splitter1 = BestSplitter(
         criterion=criterion(n_outputs=y.shape[1], n_samples=x.shape[0]),
@@ -939,7 +939,7 @@ def test_sfssmse_1d2d(**params):
 
 def test_splitter_gmo(**params):
     params = DEF_PARAMS | params
-    splitter2d = make_2d_splitter(
+    BipartiteSplitter = make_2d_splitter(
         criterion_wrapper_class=PBCTCriterionWrapper,
         splitters=BestSplitter,
         criteria=AxisMSE,
@@ -950,12 +950,37 @@ def test_splitter_gmo(**params):
         min_weight_leaf=0.0,
     )
 
-    compare_splitters_1d2d(
+    compare_splitters_1d2d_ideal(
         splitter1=BestSplitter,
-        splitter2=splitter2d,
+        splitter2=BipartiteSplitter,
         multioutput_1d=True,
         **params,
     )
+
+
+# TODO: compare results
+def test_splitter_gmo_classification(**params):
+    params = DEF_PARAMS | params
+    BipartiteSplitter = make_2d_splitter(
+        criterion_wrapper_class=PBCTCriterionWrapper,
+        is_classification=True,
+        splitters=BestSplitter,
+        criteria=[AxisGini, AxisGini],
+        max_features=params['nattrs'],
+        n_samples=params['shape'],
+        n_outputs=params['shape'][::-1],
+        n_classes=[np.repeat(2, i) for i in params['shape'][::-1]],
+        min_samples_leaf=params['min_samples_leaf'],
+        min_weight_leaf=0.0,
+    )
+
+    with pytest.raises(AssertionError):
+        compare_splitters_1d2d(
+            splitter1=BestSplitter,
+            splitter2=BipartiteSplitter,
+            multioutput_1d=True,
+            **params,
+        )
 
 
 def test_ss_axis_decision_only(supervision, random_state, **params):
@@ -983,7 +1008,6 @@ def test_ss_axis_decision_only(supervision, random_state, **params):
         noise=0.1,
     )
     y = y.reshape((-1, 1))
-    x = x.astype('float32')
 
     splitter2 = make_2dss_splitter(
         splitters=BestSplitter,
@@ -1132,3 +1156,58 @@ def test_criterion_identity_in_wrappers(axis_decision_only):
             splitter.splitter_cols.criterion.unsupervised_criterion
             is splitter.criterion_wrapper.unsupervised_criterion_cols
         )
+
+
+def test_gini_mse_identity(random_state, **params):
+    params = DEF_PARAMS | params
+    XX, Y = make_interaction_regression(
+        n_samples=(40, 50),
+        n_features=(9, 10),
+        random_state=random_state,
+    )
+
+    # XX = [check_symmetric(X, raise_warning=False) for X in XX]
+    Y = (Y > Y.mean()).astype('float64')  # Turn into binary.
+
+    splitter_gini = make_2d_splitter(
+        criterion_wrapper_class=PBCTCriterionWrapper,
+        splitters=BestSplitter,
+        criteria=AxisGini,
+        max_features=params['nattrs'],
+        n_classes=[np.repeat(2, n) for n in params['shape'][::-1]],
+        n_outputs=params['shape'][::-1],
+        min_samples_leaf=params['min_samples_leaf'],
+        min_weight_leaf=0.0,
+    )
+    splitter_mse = make_2d_splitter(
+        criterion_wrapper_class=PBCTCriterionWrapper,
+        splitters=BestSplitter,
+        criteria=AxisMSE,
+        max_features=params['nattrs'],
+        n_samples=params['shape'],
+        n_outputs=params['shape'][::-1],
+        min_samples_leaf=params['min_samples_leaf'],
+        min_weight_leaf=0.0,
+    )
+    result_mse = test_splitter_nd(
+        splitter_mse, XX, Y,
+        verbose=params['verbose'],
+    )
+    result_gini = test_splitter_nd(
+        splitter_gini, XX, Y,
+        verbose=params['verbose'],
+    )
+
+    result_gini['original_improvement'] = result_gini['improvement']
+    result_gini['improvement'] /= 2
+
+    assert_equal_dicts(
+        result_gini,
+        result_mse,
+        ignore={
+            'impurity_parent',
+            'impurity_left',
+            'impurity_right',
+            'original_improvement',
+        },
+    )

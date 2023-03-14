@@ -49,7 +49,7 @@ from sklearn.tree import (
 from itertools import product
 from typing import Iterable
 from ._nd_tree import DepthFirstTreeBuilder2D
-from ._nd_splitter import Splitter2D
+from ._nd_splitter import BipartiteSplitter
 from ._splitter_factory import (
     make_2dss_splitter,
     make_semisupervised_criterion
@@ -1860,13 +1860,13 @@ class BaseBipartiteDecisionTreeSS(
         ax_min_weight_leaf,
         random_state,
     ):
-        if isinstance(self.splitter, Splitter2D):
+        if isinstance(self.splitter, BipartiteSplitter):
             # Make a deepcopy in case the splitter has mutable attributes that
             # might be shared and modified concurrently during parallel fitting
             return deepcopy(self.splitter)
 
         # NOTE: It is possible to use diferent ss_adaptor for rows and columns,
-        #       but the user needs to pass an already built Splitter2D instance
+        #       but the user needs to pass an already built BipartiteSplitter instance
         #       if they want to do so.
         if isinstance(self.ss_adapter, SemisupervisedCriterion):
             ss_adapter = deepcopy(self.ss_adapter)

@@ -188,7 +188,7 @@ def make_interaction_regression(
         for s, f in zip(n_samples, n_features)
     ]
     X_molten = row_cartesian_product(X)
-    Y_molten = tree.predict(X_molten)
+    Y_molten = tree.predict(X_molten).astype(np.float64)
     if noise > 0.0:
         Y_molten += random_state.normal(scale=noise, size=Y_molten.size)
     Y = Y_molten.reshape(n_samples)

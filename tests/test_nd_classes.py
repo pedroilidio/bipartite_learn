@@ -14,6 +14,7 @@ from sklearn.utils.validation import check_symmetric, check_random_state
 
 from hypertrees.tree._nd_classes import (
     BipartiteDecisionTreeRegressor,
+    BipartiteDecisionTreeClassifier,
     _normalize_weights,
 )
 from hypertrees.melter import row_cartesian_product
@@ -216,6 +217,8 @@ def test_simple_tree_1d2d(msl, random_state, max_depth, **params):
 @pytest.mark.parametrize(
     "pred_weight", [None, "uniform", "precomputed", lambda x: x**2])
 class TestGMOSymmetry:
+    """Test X symmetry constraints of GMO trees.
+    """
     params = DEF_PARAMS
     XX, Y = make_interaction_regression(**params)
     XX_sim, Y_sim, = make_interaction_regression(
@@ -257,31 +260,38 @@ class TestGMOSymmetry:
 
 
 @pytest.mark.parametrize("splitter", ["random", "best"])
-def test_identity_gso(splitter, **params):
+@pytest.mark.parametrize("adapter", ["global_single_output", "local_multioutput_sa"])
+def test_identity_gso(splitter, adapter, **params):
     params = DEF_PARAMS | params
     XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
     tree = BipartiteDecisionTreeRegressor(
-        min_samples_leaf=1, splitter=splitter)
+        min_samples_leaf=1,
+        splitter=splitter,
+        bipartite_adapter=adapter,
+    )
     assert_allclose(tree.fit(XX, Y).predict(XX).reshape(Y.shape), Y)
 
 
 @pytest.mark.parametrize(
     "pred_weights", ["leaf_uniform", None, "uniform", lambda x: x**2])
 @pytest.mark.parametrize("splitter", ["random", "best"])
-def test_identity_gmo(pred_weights, splitter, **params):
+@pytest.mark.parametrize("criterion", ["squared_error", "friedman_mse"])
+def test_identity_gmo(pred_weights, splitter, criterion, **params):
+    """Tests wether regression trees can grow util isolating every instance.
+    """
     params = DEF_PARAMS | params
-    params['n_features'] = params['n_samples']
+    params['n_features'] = params['n_samples'] #= (10, 10)
 
-    XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
+    XX, Y = make_interaction_regression(**params)
     tree = BipartiteDecisionTreeRegressor(
         min_samples_leaf=1,
         bipartite_adapter="local_multioutput",
         prediction_weights=pred_weights,
         splitter=splitter,
+        criterion=criterion,
     )
     XX = [check_symmetric(X, raise_warning=False) for X in XX]
-    # Y /= Y.max()
-    Y *= 10
+    Y *= 1000
 
     tree.fit(XX, Y)
 
@@ -294,9 +304,53 @@ def test_identity_gmo(pred_weights, splitter, **params):
     assert_allclose(tree.predict(XX).reshape(Y.shape), Y)
 
 
+@pytest.mark.parametrize(
+    "pred_weights", ["leaf_uniform", None, "uniform", lambda x: x**2])
+@pytest.mark.parametrize("splitter", ["random", "best"])
+def test_gini_mse_identity(pred_weights, splitter, random_state, **params):
+    # FIXME: must fix AxisGini impurity axes_impurities methods to consider
+    # other axis impurity.
+    params = DEF_PARAMS | params
+    params['n_features'] = params['n_samples'] #= (10, 10)
+    XX, Y = make_interaction_regression(return_molten=False, **params)
+    XX = [check_symmetric(X, raise_warning=False) for X in XX]
+    Y = (Y > Y.mean()).astype(int)  # Turn into binary.
+
+    tree_reg = BipartiteDecisionTreeRegressor(
+        min_samples_leaf=1,
+        bipartite_adapter="local_multioutput",
+        prediction_weights=pred_weights,
+        splitter=splitter,
+        criterion="squared_error",
+        random_state=random_state,
+    ).fit(XX, Y)
+
+    tree_clf = BipartiteDecisionTreeClassifier(
+        min_samples_leaf=1,
+        bipartite_adapter="local_multioutput",
+        prediction_weights=pred_weights,
+        splitter=splitter,
+        criterion="gini",
+        random_state=random_state,
+    ).fit(XX, Y)
+
+    assert_equal_leaves(tree_reg.tree_, tree_clf.tree_)
+    assert_allclose(
+        tree_reg.predict(XX),
+        tree_clf.predict_proba(XX),
+    )
+
+
 @pytest.mark.parametrize("min_samples_leaf", [1, 20, 100])
 @pytest.mark.parametrize("splitter", ["random", "best"])
-def test_leaf_mean_symmetry(min_samples_leaf, splitter):
+@pytest.mark.parametrize("criterion", ["squared_error", "friedman_mse"])
+def test_leaf_mean_symmetry(min_samples_leaf, splitter, criterion):
+    """Tests if Y_leaf.mean(0).mean() == Y_leaf.mean(1).mean()
+    
+    Y_leaf.mean(0) and Y_leaf.mean(1) are stored by regression GMO trees as
+    output values. This function tests if these values are correct by checking
+    the aforementioned equality.
+    """
     params = DEF_PARAMS
 
     XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
@@ -305,6 +359,7 @@ def test_leaf_mean_symmetry(min_samples_leaf, splitter):
         bipartite_adapter="local_multioutput",
         prediction_weights="raw",
         splitter=splitter,
+        criterion=criterion,
     )
     tree.fit(XX, Y)
     pred = tree.predict(XX)
@@ -342,7 +397,8 @@ def test_weight_normalization():
 
 
 @pytest.mark.parametrize("mrl,mcl", [(1, 5), (2, 1), (11, 19)])
-def test_leaf_shape_gmo(mrl, mcl, random_state, **params):
+@pytest.mark.parametrize("criterion", ["squared_error", "friedman_mse"])
+def test_leaf_shape_gmo(random_state, mrl, mcl, criterion, **params):
     params = DEF_PARAMS | params
     # XX, Y, x, y = gen_mock_data(melt=True, **params)
     rng = check_random_state(random_state)
@@ -352,7 +408,10 @@ def test_leaf_shape_gmo(mrl, mcl, random_state, **params):
     shape = mrl * n_clusters[0], mcl * n_clusters[1]
 
     n_features = 50, 50
-    XX = [rng.random((s, f)) for s, f in zip(shape, n_features)]
+    XX = [
+        rng.random((s, f)).astype(np.float32)
+        for s, f in zip(shape, n_features)
+    ]
     XX[0][:, 0] = np.sort(XX[0][:, 0])
     XX[1][:, 0] = np.sort(XX[1][:, 0])
 
@@ -368,6 +427,7 @@ def test_leaf_shape_gmo(mrl, mcl, random_state, **params):
         min_cols_leaf=mcl,
         bipartite_adapter="local_multioutput",
         prediction_weights="raw",
+        criterion=criterion,
     )
     tree.fit(XX, Y)
     pred = tree.predict(XX)
@@ -391,7 +451,10 @@ def test_leaf_shape_gso(mrl, mcl, random_state, **params):
 
     shape = mrl * n_clusters[0], mcl * n_clusters[1]
     n_features = 50, 50
-    XX = [rng.random((s, f)) for s, f in zip(shape, n_features)]
+    XX = [
+        rng.random((s, f)).astype(np.float32)
+        for s, f in zip(shape, n_features)
+    ]
     XX[0][:, 0] = np.sort(XX[0][:, 0])
     XX[1][:, 0] = np.sort(XX[1][:, 0])
 

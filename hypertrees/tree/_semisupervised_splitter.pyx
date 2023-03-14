@@ -44,7 +44,7 @@ cdef class BaseDenseSplitter(Splitter):
     cdef int init(self,
                   object X,
                   const DOUBLE_t[:, ::1] y,
-                  DOUBLE_t* sample_weight) except -1:
+                  DOUBLE_t[:] sample_weight) except -1:
         """Initialize the splitter
         Returns -1 in case of failure to allocate memory (and raise MemoryError)
         or 0 otherwise.

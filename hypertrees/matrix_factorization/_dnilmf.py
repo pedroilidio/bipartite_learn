@@ -1,15 +1,48 @@
 import numpy as np
+from sklearn.base import RegressorMixin
 from sklearn.utils import check_random_state
 from sklearn.neighbors import KNeighborsRegressor
-from ..base import BaseMultipartiteSampler, MultipartiteRegressorMixin
+from ..base import BaseMultipartiteSampler
 from ..utils import check_similarity_matrix
 
 __all__ = ["DNILMF"]
 
 
+def _check_coefficients(alpha, beta, gamma):
+    """Fill in unspecified coefficient values, so that they sum to 1.
+
+    The coefficients previously set to None will be set to
+    (1 - sum_of_non_missing) / n_missing
+
+    Parameters
+    ----------
+    alpha : float or None
+    beta : float or None
+    gamma : float or None
+
+    Returns
+    -------
+    list of filled in coefficients
+
+    Raises
+    ------
+    ValueError
+        If the sum of non-missing values excedes 1.
+    """
+    total = sum(i for i in (alpha, beta, gamma) if i is not None)
+    if total > 1.0:
+        raise ValueError("alpha, beta and gamma must sum to 1.")
+    n_missing = sum(i is None for i in (alpha, beta, gamma))
+
+    return [
+        (1.0-total) / n_missing if i is None else i
+        for i in (alpha, beta, gamma)
+    ]
+
+
 class DNILMF(
     BaseMultipartiteSampler,
-    MultipartiteRegressorMixin,
+    RegressorMixin,
 ):
     """Dual-Network Integrated Logistic Matrix Factorization
 
@@ -42,22 +75,22 @@ class DNILMF(
     learning_rate : float or sequence of floats, default=1.0
         Multiplicative factor for each gradient step.
 
-    alpha : float, default=0.4
+    alpha : float or None, default=None
         Constant that multiplies the y matrix when computing the loss function.
-        The greater it is, the more supervised is the algorithm. Must satisfy
-        `alpha + beta + gamma == 1`.
+        The greater it is, the more supervised is the algorithm. If None will
+        be substituted by `1 - beta - gamma`.
 
-    beta : float, default=0.3
+    beta : float or None, default=None
         Constant that multiplies the row similarity matrix when computing the
         loss function. Thus, it controls the importance given by the
-        algorithm to the rows's unsupervised information. Must satisfy
-        `alpha + beta + gamma == 1`.
+        algorithm to the rows's unsupervised information. If None will
+        be substituted by `1 - alpha - gamma`.
 
-    gamma : float, default=0.3
+    gamma : float or None, default=None
         Constant that multiplies the column similarity matrix when computing
         the loss function. Thus, it controls the importance given by the
-        algorithm to the column's unsupervised information. Must satisfy
-        `alpha + beta + gamma == 1`.
+        algorithm to the column's unsupervised information. If None will
+        be substituted by `1 - alpha - beta`.
 
     lambda_rows : float, default=0.625
         Corresponds to the inverse of the assumed prior variance of U. It
@@ -116,9 +149,9 @@ class DNILMF(
         n_components_rows=90,
         n_components_cols="same",
         learning_rate=1.0,
-        alpha=0.4,
-        beta=0.3,
-        gamma=0.3,
+        alpha=None,
+        beta=None,
+        gamma=None,
         lambda_rows=2,
         lambda_cols="same",
         n_neighbors=5,
@@ -151,9 +184,9 @@ class DNILMF(
 
     def _merge_similarities(self, M, L_rows, L_cols):
         return (
-            self.alpha * M
-            + self.beta * L_rows @ M
-            + self.gamma * M @ L_cols
+            self.alpha_ * M
+            + self.beta_ * L_rows @ M
+            + self.gamma_ * M @ L_cols
         )
 
     def _logistic_output(self, U, V, L_rows, L_cols):
@@ -169,6 +202,8 @@ class DNILMF(
         P = np.exp(self._merge_similarities(UV, L_rows, L_cols))
         return P / (P + 1)
 
+    # TODO: remove. Use a wrapper metaestimator class if you want to use an
+    # estimator as sampler. return U and V? transform method?
     def _fit_resample(self, X, y):
         self.fit(X, y)
         yt = self._logistic_output(self.U, self.V, *X)
@@ -191,8 +226,10 @@ class DNILMF(
     def predict(self, X):
         U = self.knn_rows_.predict(1-X[0])  # Similarity to distance conversion
         V = self.knn_cols_.predict(1-X[1])
-        yt = self._logistic_output(U, V, *X)
-        return yt.reshape(-1)
+        P = np.exp(U @ V.T)
+        # FIXME: similarity information is not used, since the matrices are not
+        # squares. (no self._logistic_output)
+        return (P / (1 + P)).reshape(-1)
 
     def fit(self, X, y):
         X, y = self._validate_data(X, y)
@@ -201,8 +238,9 @@ class DNILMF(
         for ax in range(len(X)):
             X[ax] = check_similarity_matrix(X[ax])
 
-        if (self.alpha + self.beta + self.gamma) != 1:
-            raise ValueError("alpha, beta and gamma must sum to 1.")
+        self.alpha_, self.beta_, self.gamma_ = _check_coefficients(
+            self.alpha, self.beta, self.gamma
+        )
 
         n_components_rows = self.n_components_rows
 
@@ -276,7 +314,7 @@ class DNILMF(
             # In the paper [1] notation, yP is now cY - Q
             yP = y*self.positive_importance - y_scaled*P
             yP = self._merge_similarities(yP, L_rows.T, L_cols.T)
-            # TODO: Check if it transposing is correct
+            # FIXME: Check if it transposing is correct
 
             # Update U (derived from Eq. 7 of [1], see the class's docstring).
             step_rows = yP @ V - lambda_rows * U
@@ -292,6 +330,7 @@ class DNILMF(
             step_sq_sum_cols += step_cols ** 2
             V += self.learning_rate * step_cols / np.sqrt(step_sq_sum_cols)
 
+            # FIXME: is not transposing L correct?
             curr_loss = self._loss_function(
                 y, y_scaled, U, V, L_rows, L_cols, lambda_rows, lambda_cols,
             )

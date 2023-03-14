@@ -1,22 +1,21 @@
 # distutils: language = c++
 # cython: boundscheck=False
 from cpython cimport Py_INCREF, PyObject, PyTypeObject
-from libc.stdint cimport SIZE_MAX
-
+from libc.stdint cimport INTPTR_MAX
 import struct
-
+import warnings
 import numpy as np
-cimport numpy as np
-np.import_array()
+cimport numpy as cnp
+cnp.import_array()
 
 from scipy.sparse import issparse
 
 cdef extern from "numpy/arrayobject.h":
-    object PyArray_NewFromDescr(PyTypeObject* subtype, np.dtype descr,
-                                int nd, np.npy_intp* dims,
-                                np.npy_intp* strides,
+    object PyArray_NewFromDescr(PyTypeObject* subtype, cnp.dtype descr,
+                                int nd, cnp.npy_intp* dims,
+                                cnp.npy_intp* strides,
                                 void* data, int flags, object obj)
-    int PyArray_SetBaseObject(np.ndarray arr, PyObject* obj)
+    int PyArray_SetBaseObject(cnp.ndarray arr, PyObject* obj)
 
 cdef extern from "<stack>" namespace "std" nogil:
     cdef cppclass stack[T]:
@@ -49,51 +48,54 @@ cdef SIZE_t _TREE_LEAF = TREE_LEAF
 cdef SIZE_t _TREE_UNDEFINED = TREE_UNDEFINED
 cdef SIZE_t INITIAL_STACK_SIZE = 10
 
-# =============================================================================
-# TreeBuilderND
-# =============================================================================
 
-cdef class TreeBuilderND:  # (TreeBuilder):
+cdef class BipartiteTreeBuilder:
     """Interface for different tree building strategies."""
 
-    cpdef build(self, Tree tree, object X, np.ndarray y,
-                np.ndarray sample_weight=None):
+    cpdef build(
+        self,
+        Tree tree,
+        object X,
+        const DOUBLE_t[:, :] y,
+        const DOUBLE_t[:] sample_weight=None,
+    ):
         """Build a decision tree from the training set (X, y)."""
-        # TODO: should be inherited.
 
-    cdef inline _check_input(self, object X, np.ndarray y,
-                             np.ndarray sample_weight):
+    cdef inline _check_input(
+        self,
+        object X,
+        const DOUBLE_t[:, :] y,
+        const DOUBLE_t[:] sample_weight,
+    ):
         """Check input dtype, layout and format.
 
         Applies the same processing as sklearn's TreeBuilder for each X[ax]
         feature matrix in X.
         """
-        for ax in range(len(X)):
-            if issparse(X[ax]):
-                X[ax] = X[ax].tocsc()
-                X[ax].sort_indices()
+        for Xi in X:
+            if issparse(Xi):
+                raise NotImplementedError("No support for sparse matrices.")
 
-                if X[ax].data.dtype != DTYPE:
-                    X[ax].data = np.ascontiguousarray(X[ax].data, dtype=DTYPE)
+            elif (
+                Xi.dtype != DTYPE
+                # or not Xi.flags.contiguous
+            ):
+                # FIXME: fortran contiguous
+                raise TypeError("X matrices must be float32.")
 
-                if X[ax].indices.dtype != np.int32 or \
-                   X[ax].indptr.dtype != np.int32:
-                    raise ValueError("No support for np.int64 index based "
-                                     "sparse matrices")
-
-            elif X[ax].dtype != DTYPE:
-                # since we have to copy we will make it fortran for efficiency
-                X[ax] = np.asfortranarray(X[ax], dtype=DTYPE)
-
-        if (sample_weight is not None and
-           (sample_weight.dtype != DOUBLE or
-           not sample_weight.flags.contiguous)):
-                sample_weight = np.asarray(sample_weight,
-                                           dtype=DOUBLE,
-                                           order="C")
-
-        if y.dtype != DOUBLE or not y.flags.contiguous:
-            y = np.ascontiguousarray(y, dtype=DOUBLE)
+        if (
+            sample_weight is not None
+            and (
+                sample_weight.base.dtype != DOUBLE
+                or not sample_weight.base.flags.contiguous
+            )
+        ):
+            sample_weight = np.asarray(sample_weight, dtype=DOUBLE, order="C")
+            warnings.warn(
+                "A contiguous version of sample_weight was created. Unecessary"
+                " memory load is expected if the tree composes an ensemble."
+                " Passing an already contiguous sample_weight is recommended."
+            )
 
         return X, y, sample_weight
 
@@ -112,7 +114,8 @@ cdef struct StackRecord2D:
     SIZE_t n_constant_row_features
     SIZE_t n_constant_col_features
 
-cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
+
+cdef class DepthFirstTreeBuilder2D(BipartiteTreeBuilder):
     """Build a decision tree in depth-first fashion, from 2D training data.
 
     It adds minor changes to sklearn's DepthfirstTreeBuilder, essentially
@@ -128,7 +131,7 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
     # evaluating stopping criteria.
     def __cinit__(
         self,
-        Splitter2D splitter,
+        BipartiteSplitter splitter,
         SIZE_t min_samples_split,
         SIZE_t min_samples_leaf,
         double min_weight_leaf,
@@ -156,29 +159,29 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
         self.min_row_weight_leaf = min_weight_leaf
         self.min_col_weight_leaf = min_weight_leaf
 
-    cpdef build(self, Tree tree, object X, np.ndarray y,
-                np.ndarray sample_weight=None,
+    cpdef build(
+        self,
+        Tree tree,
+        object X,
+        const DOUBLE_t[:, :] y,
+        const DOUBLE_t[:] sample_weight=None,
     ):
         """Build a decision tree from the training set (X, y)."""
         # check input
         X, y, sample_weight = self._check_input(X, y, sample_weight)
 
-        cdef DOUBLE_t* sample_weight_ptr = NULL
-        if sample_weight is not None:
-             sample_weight_ptr = <DOUBLE_t*> sample_weight.data
-
         # Initial capacity
         cdef int init_capacity
 
         if tree.max_depth <= 10:
-            init_capacity = (2 ** (tree.max_depth + 1)) - 1
+            init_capacity = <int> (2 ** (tree.max_depth + 1)) - 1
         else:
             init_capacity = 2047
 
         tree._resize(init_capacity)
 
         # Parameters
-        cdef Splitter2D splitter = self.splitter
+        cdef BipartiteSplitter splitter = self.splitter
         cdef SIZE_t max_depth = self.max_depth
         cdef SIZE_t min_samples_leaf = self.min_samples_leaf
         cdef SIZE_t min_samples_split = self.min_samples_split
@@ -193,7 +196,7 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
         cdef double min_row_weight_leaf = self.min_row_weight_leaf
         cdef double min_col_weight_leaf = self.min_col_weight_leaf
 
-        splitter.init(X, y, sample_weight_ptr)
+        splitter.init(X, y, sample_weight)
 
         cdef SIZE_t[2] start, start_left, start_right
         cdef SIZE_t[2] end, end_left, end_right
@@ -204,7 +207,7 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
         cdef SIZE_t n_node_rows = splitter.n_rows
         cdef SIZE_t n_node_cols = splitter.n_cols
         cdef double weighted_n_node_samples[3]  # total samples, rows, columns
-        cdef SplitRecord split
+        cdef MultipartiteSplitRecord split
         cdef SIZE_t node_id
 
         cdef double impurity = INFINITY
@@ -217,7 +220,6 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
         cdef stack[StackRecord2D] builder_stack
         cdef StackRecord2D stack_record
 
-        # TODO: test sample_weight
         # Recursive partition (without actual recursion)
         with nogil:
             # push root node onto stack
@@ -281,17 +283,22 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                     # If EPSILON=0 in the below comparison, float precision
                     # issues stop splitting, producing trees that are
                     # dissimilar to v0.18
-                    is_leaf = (split.pos >= end[split.axis] or
-                               (split.improvement + EPSILON <
-                                min_impurity_decrease))
+                    is_leaf = (
+                        split.split_record.pos >= end[split.axis]
+                        or (
+                            split.split_record.improvement + EPSILON
+                            < min_impurity_decrease
+                        )
+                    )
 
                 node_id = tree._add_node(parent, is_left, is_leaf,
-                                         split.feature,
-                                         split.threshold, impurity,
+                                         split.split_record.feature,
+                                         split.split_record.threshold,
+                                         impurity,
                                          n_node_samples,
                                          weighted_n_node_samples[0])
 
-                if node_id == SIZE_MAX:
+                if node_id == INTPTR_MAX:
                     rc = -1
                     break
 
@@ -318,8 +325,8 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                     # Setting new nodes coordinates.
                     # These lines are why we had to rewrite this whole method
                     # to develop the 2-dimensional version.
-                    start_right[split.axis] = split.pos
-                    end_left[split.axis] = split.pos
+                    start_right[split.axis] = split.split_record.pos
+                    end_left[split.axis] = split.split_record.pos
 
                     # Push right child on stack
                     builder_stack.push({
@@ -330,7 +337,7 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                         "depth": depth + 1,
                         "parent": node_id,
                         "is_left": 0,
-                        "impurity": split.impurity_right,
+                        "impurity": split.split_record.impurity_right,
                         "n_constant_row_features": n_constant_features[0],
                         "n_constant_col_features": n_constant_features[1],
                     })
@@ -344,7 +351,7 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
                         "depth": depth + 1,
                         "parent": node_id,
                         "is_left": 1,
-                        "impurity": split.impurity_left,
+                        "impurity": split.split_record.impurity_left,
                         "n_constant_row_features": n_constant_features[0],
                         "n_constant_col_features": n_constant_features[1],
                     })
@@ -361,7 +368,5 @@ cdef class DepthFirstTreeBuilder2D(TreeBuilderND):
             raise MemoryError()
 
 
-# Best first builder ----------------------------------------------------------
-
-cdef class BestFirstTreeBuilderND(TreeBuilderND):
-    pass # TODO
+cdef class BipartiteBestFirstTreeBuilder(BipartiteTreeBuilder):
+    ...  # TODO
