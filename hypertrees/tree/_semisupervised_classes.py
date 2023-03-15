@@ -1794,7 +1794,7 @@ class BaseBipartiteDecisionTreeSS(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
         prediction_weights=None,
         # Semi-supervised parameters:
         supervision=0.5,
@@ -1981,7 +1981,7 @@ class BipartiteDecisionTreeRegressorSS(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
         prediction_weights=None,
         # Semi-supervised parameters:
         supervision=0.5,
@@ -2059,7 +2059,7 @@ class BipartiteExtraTreeRegressorSS(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
         prediction_weights=None,
         # Semi-supervised parameters:
         supervision=0.5,

@@ -24,10 +24,10 @@ from hypertrees.tree._splitter_factory import (
     make_semisupervised_criterion,
 )
 from hypertrees.tree._nd_criterion import (
-    PBCTCriterionWrapper,
-    BipartiteSquaredError,
-    BipartiteFriedman,
-    BipartiteRegressionCriterion,
+    GMO,
+    SquaredErrorGSO,
+    FriedmanGSO,
+    RegressionCriterionGSO,
 )
 from hypertrees.tree._axis_criterion import AxisMSE, AxisGini
 from hypertrees.tree._semisupervised_criterion import (
@@ -327,10 +327,10 @@ def test_1d2d_ideal(**params):
 @pytest.mark.parametrize(
     'criterion,bipartite_criterion_adapter',
     [
-        (MSE, BipartiteSquaredError),
-        # (MAE, BipartiteRegressionCriterion),
-        (FriedmanMSE, BipartiteFriedman),
-        # (Poisson, BipartiteRegressionCriterion),
+        (MSE, SquaredErrorGSO),
+        # (MAE, RegressionCriterionGSO),
+        (FriedmanMSE, FriedmanGSO),
+        # (Poisson, RegressionCriterionGSO),
     ]
 )
 def test_1d2d(
@@ -940,7 +940,7 @@ def test_sfssmse_1d2d(**params):
 def test_splitter_gmo(**params):
     params = DEF_PARAMS | params
     BipartiteSplitter = make_2d_splitter(
-        criterion_wrapper_class=PBCTCriterionWrapper,
+        criterion_wrapper_class=GMO,
         splitters=BestSplitter,
         criteria=AxisMSE,
         max_features=params['nattrs'],
@@ -962,7 +962,7 @@ def test_splitter_gmo(**params):
 def test_splitter_gmo_classification(**params):
     params = DEF_PARAMS | params
     BipartiteSplitter = make_2d_splitter(
-        criterion_wrapper_class=PBCTCriterionWrapper,
+        criterion_wrapper_class=GMO,
         is_classification=True,
         splitters=BestSplitter,
         criteria=[AxisGini, AxisGini],
@@ -1170,7 +1170,7 @@ def test_gini_mse_identity(random_state, **params):
     Y = (Y > Y.mean()).astype('float64')  # Turn into binary.
 
     splitter_gini = make_2d_splitter(
-        criterion_wrapper_class=PBCTCriterionWrapper,
+        criterion_wrapper_class=GMO,
         splitters=BestSplitter,
         criteria=AxisGini,
         max_features=params['nattrs'],
@@ -1180,7 +1180,7 @@ def test_gini_mse_identity(random_state, **params):
         min_weight_leaf=0.0,
     )
     splitter_mse = make_2d_splitter(
-        criterion_wrapper_class=PBCTCriterionWrapper,
+        criterion_wrapper_class=GMO,
         splitters=BestSplitter,
         criteria=AxisMSE,
         max_features=params['nattrs'],

@@ -10,7 +10,7 @@ from sklearn.utils._param_validation import (
     validate_params, Interval, HasMethods
 )
 from ._nd_splitter import BipartiteSplitter
-from ._nd_criterion import BipartiteSquaredError
+from ._nd_criterion import SquaredErrorGSO
 from ._semisupervised_criterion import (
     SemisupervisedCriterion,
     SSCompositeCriterion,
@@ -131,7 +131,7 @@ def check_criterion(
 #     ax_min_samples_leaf=1,
 #     ax_min_weight_leaf=0.0,
 #     random_state=None,
-#     criterion_wrapper_class=BipartiteSquaredError,
+#     criterion_wrapper_class=SquaredErrorGSO,
 # ))
 def make_2d_splitter(
     splitters,
@@ -147,7 +147,7 @@ def make_2d_splitter(
     ax_min_samples_leaf=1,
     ax_min_weight_leaf=0.0,
     random_state=None,
-    criterion_wrapper_class=BipartiteSquaredError,
+    criterion_wrapper_class=SquaredErrorGSO,
 ):
     """Factory function of BipartiteSplitter instances.
 
@@ -225,7 +225,7 @@ def make_2d_splitter(
 #     The split search takes into consideration only the labels, as usual, but
 #     after the rows splitter and the columns splitter defines each one's split,
 #     unsupervised information is used to decide between them, i.e. the final
-#     impurity is semisupervised as in BipartiteSquaredErrorSS, but the proxy improvement
+#     impurity is semisupervised as in SquaredErrorGSOSS, but the proxy improvement
 #     only uses supervised data.
 #     """
 def make_2dss_splitter(
@@ -248,7 +248,7 @@ def make_2dss_splitter(
     random_state=None,
     pairwise=False,
     axis_decision_only=False,
-    criterion_wrapper_class=BipartiteSquaredError,
+    criterion_wrapper_class=SquaredErrorGSO,
     ss_criterion_wrapper_class=BipartiteSemisupervisedCriterion,
 ):
     """Factory function of BipartiteSplitter instances with semisupervised criteria.

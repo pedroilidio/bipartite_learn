@@ -225,7 +225,7 @@ class TestGMOSymmetry:
         **(params | dict(n_features=params['n_samples'])))
 
     pbct = BipartiteDecisionTreeRegressor(
-        bipartite_adapter="local_multioutput",
+        bipartite_adapter="gmo",
     )
 
     def test_square_array_error(self, pred_weight, **params):
@@ -260,7 +260,7 @@ class TestGMOSymmetry:
 
 
 @pytest.mark.parametrize("splitter", ["random", "best"])
-@pytest.mark.parametrize("adapter", ["global_single_output", "local_multioutput_sa"])
+@pytest.mark.parametrize("adapter", ["gso", "gmosa"])
 def test_identity_gso(splitter, adapter, **params):
     params = DEF_PARAMS | params
     XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
@@ -273,7 +273,7 @@ def test_identity_gso(splitter, adapter, **params):
 
 
 @pytest.mark.parametrize(
-    "pred_weights", ["leaf_uniform", None, "uniform", lambda x: x**2])
+    "pred_weights", ["gmosa", None, "uniform", lambda x: x**2])
 @pytest.mark.parametrize("splitter", ["random", "best"])
 @pytest.mark.parametrize("criterion", ["squared_error", "friedman_mse"])
 def test_identity_gmo(pred_weights, splitter, criterion, **params):
@@ -285,7 +285,7 @@ def test_identity_gmo(pred_weights, splitter, criterion, **params):
     XX, Y = make_interaction_regression(**params)
     tree = BipartiteDecisionTreeRegressor(
         min_samples_leaf=1,
-        bipartite_adapter="local_multioutput",
+        bipartite_adapter="gmo",
         prediction_weights=pred_weights,
         splitter=splitter,
         criterion=criterion,
@@ -305,7 +305,7 @@ def test_identity_gmo(pred_weights, splitter, criterion, **params):
 
 
 @pytest.mark.parametrize(
-    "pred_weights", ["leaf_uniform", None, "uniform", lambda x: x**2])
+    "pred_weights", ["gmosa", None, "uniform", lambda x: x**2])
 @pytest.mark.parametrize("splitter", ["random", "best"])
 def test_gini_mse_identity(pred_weights, splitter, random_state, **params):
     # FIXME: must fix AxisGini impurity axes_impurities methods to consider
@@ -314,11 +314,11 @@ def test_gini_mse_identity(pred_weights, splitter, random_state, **params):
     params['n_features'] = params['n_samples'] #= (10, 10)
     XX, Y = make_interaction_regression(return_molten=False, **params)
     XX = [check_symmetric(X, raise_warning=False) for X in XX]
-    Y = (Y > Y.mean()).astype(int)  # Turn into binary.
+    Y = (Y > Y.mean()).astype(np.float64)  # Turn into binary.
 
     tree_reg = BipartiteDecisionTreeRegressor(
         min_samples_leaf=1,
-        bipartite_adapter="local_multioutput",
+        bipartite_adapter="gmo",
         prediction_weights=pred_weights,
         splitter=splitter,
         criterion="squared_error",
@@ -327,7 +327,7 @@ def test_gini_mse_identity(pred_weights, splitter, random_state, **params):
 
     tree_clf = BipartiteDecisionTreeClassifier(
         min_samples_leaf=1,
-        bipartite_adapter="local_multioutput",
+        bipartite_adapter="gmo",
         prediction_weights=pred_weights,
         splitter=splitter,
         criterion="gini",
@@ -356,7 +356,7 @@ def test_leaf_mean_symmetry(min_samples_leaf, splitter, criterion):
     XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
     tree = BipartiteDecisionTreeRegressor(
         min_samples_leaf=min_samples_leaf,
-        bipartite_adapter="local_multioutput",
+        bipartite_adapter="gmo",
         prediction_weights="raw",
         splitter=splitter,
         criterion=criterion,
@@ -425,7 +425,7 @@ def test_leaf_shape_gmo(random_state, mrl, mcl, criterion, **params):
     tree = BipartiteDecisionTreeRegressor(
         min_rows_leaf=mrl,
         min_cols_leaf=mcl,
-        bipartite_adapter="local_multioutput",
+        bipartite_adapter="gmo",
         prediction_weights="raw",
         criterion=criterion,
     )
@@ -473,7 +473,7 @@ def test_leaf_shape_gso(mrl, mcl, random_state, **params):
     tree = BipartiteDecisionTreeRegressor(
         min_rows_leaf=mrl,
         min_cols_leaf=mcl,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
     )
     tree.fit(XX, Y)
 

@@ -9,24 +9,17 @@ randomized trees, adapted from sklearn for bipartite training data.
 # License: BSD 3 clause
 
 from numbers import Integral, Real
-import warnings
 import copy
 from abc import ABCMeta
 from abc import abstractmethod
-from itertools import product
 from math import ceil
-from typing import Iterable, Callable, Type
+from typing import Type
 
 import numpy as np
 from scipy.sparse import issparse
 
-from sklearn.base import BaseEstimator
-from sklearn.base import ClassifierMixin
-from sklearn.base import RegressorMixin
 from sklearn.base import is_classifier
-from sklearn.base import MultiOutputMixin
 from sklearn.utils import check_random_state
-from sklearn.utils import check_scalar
 from sklearn.utils.validation import (
     _check_sample_weight,
     _is_arraylike_not_scalar,
@@ -38,7 +31,6 @@ from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils._param_validation import Interval, StrOptions, Hidden
 
 from sklearn.tree._criterion import Criterion
-from sklearn.tree._splitter import Splitter
 from sklearn.tree._tree import Tree
 from sklearn.tree._classes import (
     DENSE_SPLITTERS, CRITERIA_CLF, CRITERIA_REG, DecisionTreeRegressor,
@@ -51,10 +43,10 @@ from ..base import BaseMultipartiteEstimator
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import (
     BipartiteCriterion,
-    BipartiteSquaredError,
-    BipartiteFriedman,
-    PBCTCriterionWrapper,
-    PBCTCriterionWrapperSA,
+    SquaredErrorGSO,
+    FriedmanGSO,
+    GMO,
+    GMOSA,
 )
 from ._nd_splitter import BipartiteSplitter
 from ..melter import row_cartesian_product
@@ -66,6 +58,8 @@ from ._splitter_factory import make_2d_splitter
 __all__ = [
     "BipartiteDecisionTreeRegressor",
     "BipartiteExtraTreeRegressor",
+    "BipartiteDecisionTreeClassifier",
+    "BipartiteExtraTreeClassifier",
 ]
 
 
@@ -78,33 +72,33 @@ SPARSE_SPLITTERS = {}
 
 # Stablish adequate pairs of criteria and bipartite adapters.
 BIPARTITE_CRITERIA = {
-    "global_single_output": {
+    "gso": {
         "regression": {
-            "squared_error": (BipartiteSquaredError, CRITERIA_REG['squared_error']),
-            "friedman_mse": (BipartiteFriedman, CRITERIA_REG['friedman_mse']),
+            "squared_error": (SquaredErrorGSO, CRITERIA_REG['squared_error']),
+            "friedman_mse": (FriedmanGSO, CRITERIA_REG['friedman_mse']),
         },
         "classification": {},
     },
-    "local_multioutput": {
+    "gmo": {
         "regression": {
-            "squared_error": (PBCTCriterionWrapper, AxisMSE),
-            "friedman_mse": (PBCTCriterionWrapper, AxisFriedmanMSE),
+            "squared_error": (GMO, AxisMSE),
+            "friedman_mse": (GMO, AxisFriedmanMSE),
         },
         "classification": {
-            "gini": (PBCTCriterionWrapper, AxisGini),
-            "entropy": (PBCTCriterionWrapper, AxisEntropy),
-            "log_loss": (PBCTCriterionWrapper, AxisEntropy),
+            "gini": (GMO, AxisGini),
+            "entropy": (GMO, AxisEntropy),
+            "log_loss": (GMO, AxisEntropy),
         },
     },
-    "local_multioutput_sa": {
+    "gmosa": {
         "regression": {
-            "squared_error": (PBCTCriterionWrapperSA, AxisMSE),
-            "friedman_mse": (PBCTCriterionWrapperSA, AxisFriedmanMSE),
+            "squared_error": (GMOSA, AxisMSE),
+            "friedman_mse": (GMOSA, AxisFriedmanMSE),
         },
         "classification": {
-            "gini": (PBCTCriterionWrapperSA, AxisGini),
-            "entropy": (PBCTCriterionWrapperSA, AxisEntropy),
-            "log_loss": (PBCTCriterionWrapperSA, AxisEntropy),
+            "gini": (GMOSA, AxisGini),
+            "entropy": (GMOSA, AxisEntropy),
+            "log_loss": (GMOSA, AxisEntropy),
         },
     },
 }
@@ -218,15 +212,19 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             None,
         ],
         "bipartite_adapter": [
-            StrOptions({
-                "global_single_output",
-                "local_multioutput",
-                "local_multioutput_sa",
-            }),
+            StrOptions({"gso", "gmo", "gmosa"}),
         ],
         "prediction_weights": [
             "array-like",
-            StrOptions({"precomputed", "leaf_uniform", "uniform", "raw"}),
+            StrOptions({
+                "precomputed",
+                "leaf_uniform",
+                "uniform",
+                "raw",
+                "square",
+                "softmax",
+            }),
+            Hidden(StrOptions({"gmosa"})),
             callable,
             None,
         ],
@@ -257,7 +255,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
         prediction_weights=None,
     ):
         self.criterion = criterion
@@ -336,7 +334,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         # self.n_outputs_ = y.shape[-1]  # TODO: implement multi-output (3D y).
         self.n_outputs_ = 1
 
-        if self.bipartite_adapter == "local_multioutput":
+        if self.bipartite_adapter == "gmo":
             # The Criterion initially generates one output for each y row and
             # y column, with a bunch of np.nan to indicate samples not in the
             # node. These values are then processed by predict to yield a
@@ -535,7 +533,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         min_weight_leaf = \
             self.min_weight_fraction_leaf * (row_weight_sum * col_weight_sum)
 
-        if self.bipartite_adapter == 'local_multioutput':
+        if self.bipartite_adapter == 'gmo':
             if _is_arraylike_not_scalar(self.prediction_weights):
                 if self.prediction_weights.ndim != 1:
                     raise ValueError(
@@ -551,17 +549,19 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                     )
 
             elif (
-                self.prediction_weights in (None, "uniform", "precomputed")
+                self.prediction_weights in (
+                    None, "uniform", "precomputed", "square", "softmax",
+                )
                 or callable(self.prediction_weights)
             ):
                 for Xi in X:
                     check_similarity_matrix(Xi, symmetry_exception=True)
         
-        # bipartite_adapter == "global_single_output" or "local_multioutput_sa"
+        # bipartite_adapter == "gso" or "gmosa"
         else:
             if is_classifier(self):
                 raise NotImplementedError(  # TODO
-                    "bipartite_adapter='global_single_output' currently only "
+                    "bipartite_adapter='gso' currently only "
                     f"supports regression. Received {self.criterion=!r}. "
                     "Notice, however, that the 'squared_error' criterion "
                     "corresponds to the Gini impurity when targets are binary."
@@ -569,7 +569,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             if self.prediction_weights is not None:
                 raise NotImplementedError(  # TODO
                     "prediction_weights are only implemented for "
-                    "bipartite_adapter='local_multioutput' and must be set to "
+                    "bipartite_adapter='gmo' and must be set to "
                     "'None' otherwise."
                 )
 
@@ -587,8 +587,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                 n_raw_outputs,
             )
 
-        # FIXME: organize. substitute n_raw_outputs?
-        if self.bipartite_adapter == "global_single_output":
+        if self.bipartite_adapter == "gso":
             ax_n_outputs = 1
         else:
             ax_n_outputs = (n_cols, n_rows)
@@ -719,8 +718,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         proba = self.tree_.predict(X)
         n_samples = X.shape[0]
 
-        # TODO: weighted outputs for global_single_output adapter?
-        if self.bipartite_adapter == "local_multioutput":
+        if self.bipartite_adapter == "gmo":
             proba = self._weight_raw_predictions(X, proba)
 
         # Classification
@@ -757,19 +755,21 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         # Check prediction weights
         if self.prediction_weights == "raw":
             return pred
-        if self.prediction_weights == "leaf_uniform":
+        if self.prediction_weights == "gmosa":
             return np.nanmean(pred[:, :self._n_rows_fit], axis=1)
         if self.prediction_weights in (None, "uniform"):
             # Lines with known instances will only use the output corresponding
             # to its index in the training set.
             weights = (X == 1.).astype(DTYPE)
         elif self.prediction_weights == "precomputed":
-            # TODO: check_precomputed
             weights = X
+        elif self.prediction_weights == "square":
+            weights = np.square(X)
+        elif self.prediction_weights == "softmax":
+            weights = np.exp(X)
         elif _is_arraylike_not_scalar(self.prediction_weights):
             weights = self.prediction_weights.reshape(1, -1)
-
-        else:  # callable
+        elif callable(self.prediction_weights):
             weights = self.prediction_weights(X)
             if weights.shape != X.shape:
                 raise ValueError(
@@ -777,6 +777,11 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                     " same shape as its input. Received "
                     f"{weights.shape=} from {X.shape=}."
                 )
+        else:
+            raise ValueError(
+                "Invalid prediction_weights option: "
+                f"{self.prediction_weights!r}."
+            )
 
         weights = weights.reshape(pred.shape)
         row_weights, col_weights = np.hsplit(weights, [self._n_rows_fit])
@@ -798,35 +803,31 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 class BipartiteDecisionTreeRegressor(
     BaseBipartiteDecisionTree,
     DecisionTreeRegressor,
-    RegressorMixin,
 ):
     """Decision tree regressor tailored to bipartite input.
 
     Implements optimized global single output (GSO) and multi-output (GMO)
     trees for interaction prediction. The latter is proposed by [1] under the
-    name of Predictive Bi-Clustering  Trees. The former implements an optimzied
+    name of Predictive Bi-Clustering Trees. The former implements an optimzied
     algorithm for growing GSO trees, which consider concatenated pairs of row
     and column instances in a bipartite dataset as the actual intances.
 
-    GSO trees (bipartite_adapter="global_single_output") will yield the exactly
+    GSO trees (bipartite_adapter="gso") will yield the exactly
     same tree structure as if all possible combinations of row and column
     instances were provided to a usual sklearn.DecisionTreeRegressor, but
-    in much sorter time, by a whole factor of the number of instances.
+    in much sorter time.
 
-    TODO: improve.
+    See [1] and [2] and also the User Guide. (TODO)
 
     Parameters
     ----------
-    criterion : {"squared_error", "friedman_mse", "absolute_error", \
-            "poisson"}, default="squared_error"
+    criterion : {"squared_error", "friedman_mse"}, default="squared_error"
         The function to measure the quality of a split. Supported criteria
         are "squared_error" for the mean squared error, which is equal to
         variance reduction as feature selection criterion and minimizes the L2
-        loss using the mean of each terminal node, "friedman_mse", which uses
+        loss using the mean of each terminal node and "friedman_mse", which uses
         mean squared error with Friedman's improvement score for potential
-        splits, "absolute_error" for the mean absolute error, which minimizes
-        the L1 loss using the median of each terminal node, and "poisson" which
-        uses reduction in Poisson deviance to find splits.
+        splits.
 
     splitter : {"best", "random"}, default="best"
         The strategy used to choose the split at each node. Supported
@@ -846,8 +847,13 @@ class BipartiteDecisionTreeRegressor(
           `ceil(min_samples_split * n_samples)` are the minimum
           number of samples for each split.
 
-        .. versionchanged:: 0.18
-           Added float values for fractions.
+    min_rows_split : int or float, default=1
+        The minimum number of row samples required to split an internal node.
+        Analogous to ``min_samples_leaf``.
+
+    min_cols_split : int or float, default=1
+        The minimum number of column samples required to split an internal node.
+        Analogous to ``min_samples_leaf``.
 
     min_samples_leaf : int or float, default=1
         The minimum number of samples required to be at a leaf node.
@@ -861,41 +867,60 @@ class BipartiteDecisionTreeRegressor(
           `ceil(min_samples_leaf * n_samples)` are the minimum
           number of samples for each node.
 
-        .. versionchanged:: 0.18
-           Added float values for fractions.
+    min_rows_leaf : int or float, default=1
+        The minimum number of row samples required to be at a leaf node.
+        Analogous to ``min_samples_leaf``.
+
+    min_cols_leaf : int or float, default=1
+        The minimum number of column samples required to be at a leaf node.
+        Analogous to ``min_samples_leaf``.
 
     min_weight_fraction_leaf : float, default=0.0
         The minimum weighted fraction of the sum total of weights (of all
         the input samples) required to be at a leaf node. Samples have
         equal weight when sample_weight is not provided.
 
-    max_features : int, float or {"auto", "sqrt", "log2"}, default=None
+    min_row_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of row weights (of all
+        the input rows) required to be at a leaf node. Rows have
+        equal weight when sample_weight is not provided.
+
+    min_col_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of column weights (of
+        all the input columns) required to be at a leaf node. Columns have
+        equal weight when sample_weight is not provided.
+
+    max_row_features : int, float or {"auto", "sqrt", "log2"}, default=None
         The number of features to consider when looking for the best split:
 
-        - If int, then consider `max_features` features at each split.
-        - If float, then `max_features` is a fraction and
-          `int(max_features * n_features)` features are considered at each
-          split.
-        - If "auto", then `max_features=n_features`.
-        - If "sqrt", then `max_features=sqrt(n_features)`.
-        - If "log2", then `max_features=log2(n_features)`.
-        - If None or 1.0, then `max_features=n_features`.
+        - If int, then consider `max_row_features` features at each row split.
+        - If float, then `max_row_features` is a fraction and
+          `int(max_row_features * n_row_features)` features are considered at
+          each split.
+        - If "auto", then `max_row_features=n_row_features`.
+        - If "sqrt", then `max_row_features=sqrt(n_row_features)`.
+        - If "log2", then `max_row_features=log2(n_row_features)`.
+        - If None or 1.0, then `max_row_features=n_row_features`.
 
         Note: the search for a split does not stop until at least one
         valid partition of the node samples is found, even if it requires to
-        effectively inspect more than ``max_features`` features.
+        effectively inspect more than ``max_row_features`` row features.
+
+    max_col_features : int, float or {"auto", "sqrt", "log2"}, default=None
+        Analogous to `max_row_features`, but for column features.
 
     random_state : int, RandomState instance or None, default=None
         Controls the randomness of the estimator. The features are always
         randomly permuted at each split, even if ``splitter`` is set to
-        ``"best"``. When ``max_features < n_features``, the algorithm will
-        select ``max_features`` at random at each split before finding the best
-        split among them. But the best found split may vary across different
-        runs, even if ``max_features=n_features``. That is the case, if the
-        improvement of the criterion is identical for several splits and one
-        split has to be selected at random. To obtain a deterministic behaviour
-        during fitting, ``random_state`` has to be fixed to an integer.
-        See :term:`Glossary <random_state>` for details.
+        ``"best"``. When ``max_(row/col)_features < n_(row/col)_features``,
+        the algorithm will select ``max_(row/col)_features`` at random at each
+        split before finding the best split among them. But the best found
+        split may vary across different runs, even if
+        ``max_(row/col)_features=n_(row/col)_features``. That is the case, if
+        the improvement of the criterion is identical for several splits and
+        one split has to be selected at random. To obtain a deterministic
+        behaviour during fitting, ``random_state`` has to be fixed to an
+        integer.  See :term:`Glossary <random_state>` for details.
 
     max_leaf_nodes : int, default=None
         Grow a tree with ``max_leaf_nodes`` in best-first fashion.
@@ -923,9 +948,39 @@ class BipartiteDecisionTreeRegressor(
         subtree with the largest cost complexity that is smaller than
         ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
         :ref:`minimal_cost_complexity_pruning` for details.
+    
+    bipartite_adapter : {"gso", "gmo", "gmosa"}, default="gso"
+        Which strategy to employ when searching for the best split. The global
+        single-output strategy ("gso") is equivalent to grow a tree on all
+        combinations of row samples with column samples and their corresponding
+        label: x = [*X[0][i], *X[1][j]], y = Y[i, j] for all i and j. However,
+        an optimized algorithm allows for these trees to exploit the bipartite
+        dataset directly and grow much faster than a naive implementation of
+        this idea. 
 
-    prediction_weights : {"uniform", "leaf_uniform", "uniform", "raw",\
-                          "precomputed"}, 1D-array or callable, default="uniform"
+        The splitting procedure of the global multi-output strategy ("gmo"),
+        differently than the GSO adaptation, treats each sample on the other
+        axis as a different output: hen splitting on y rows, each column is an
+        output, when splitting on columns, each row is a different output.
+
+        In other words, while GMO calculates impurity as a deviance metric
+        (call it d) relative to each output's mean ((d(y[i, j], y.mean(0)).mean(0)),
+        the GSO adaptation uses deviance relative to the total average label:
+        (d(y[i, j], y.mean()).mean().
+
+        The GMO strategy with single label average ("gmosa") works exactly the
+        same as explained for GMO, but assumes the tree's output value will be
+        y_leaf.mean(). Using "gmo" allows for combining each column or row of
+        the leaf's partition in multiple ways (see the `prediction_weights`
+        parameter), but results in much larger memory usage, since all outputs
+        must be stored. Using "gmosa" solves this memory issue by storing only
+        the leaf total average in each node, at the cost of loosing the ability
+        to specify prediction weights.
+
+        See [1] for more information.
+        
+    prediction_weights : {"uniform", "raw", "precomputed", "square", "softmax"\
+            }, 1D-array or callable, default="uniform"
         Determines how to compute the final predicted value. Initially, all
         predictions for each row and column instance from the training set that
         share the leaf node with the predicting sample are obtained.
@@ -933,8 +988,6 @@ class BipartiteDecisionTreeRegressor(
         - "raw" instructs to return this vector, with a value for each training
           row and training column, and `np.nan` for instances not in the same
           leaf.
-        - "leaf_uniform" returns the mean value of the leaf. Corresponds to
-          the :math:`GMO_{SA}` approach described in [1].
         - "uniform" returns the mean value of the leaf for new instances but,
           for instances present in the training set, it uses the leaf's row or
           column mean corresponding to it. Known instances are recognized by a
@@ -948,11 +1001,13 @@ class BipartiteDecisionTreeRegressor(
           for training column samples (length==`sum(y_train.shape)`).
         - "precomputed" instructs the estimator to consider x values as
           similarities to each row and column sample in the training set (row
-          similarities followed by column similarities), and thus use it as
+          similarities followed by column similarities), using them as
           weights to average the leaf outputs.
         - A callable, if provided, takes all the X being predicted and must
           return an array of weights for each predicting sample with the same
           shape as the X array given to predict().
+        - "square" is equivalent to `prediction_weights=np.square`.
+        - "softmax" is equivalent to `prediction_weights=np.exp`.
 
     Attributes
     ----------
@@ -997,7 +1052,19 @@ class BipartiteDecisionTreeRegressor(
 
     See Also
     --------
-    DecisionTreeClassifier : A decision tree classifier.
+    BipartiteExtraTreeRegressor : An extremely randomized bipartite tree
+        regressor.
+    BipartiteDecisionTreeClassifier : A bipartite decision tree classifier.
+    BipartiteExtraTreeClassifier : An extremely randomized bipartite tree
+        classifier.
+    hypertrees.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
+        classifier.
+    hypertrees.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
+        regressor.
+    hypertrees.ensemble.BipartiteRandomForestClassifier : A bipartite random
+        forest classifier.
+    hypertrees.ensemble.BipartiteRandomForestRegressor : A bipartite random
+        forest regressor.
 
     Notes
     -----
@@ -1017,21 +1084,8 @@ class BipartiteDecisionTreeRegressor(
            learning and output space reconstruction \
            <doi.org/10.1186/s12859-020-3379-z>`
            Pliakos and Vens, 2020
-
-    Examples
-    --------
-    >>> from sklearn.datasets import load_diabetes
-    >>> from sklearn.model_selection import cross_val_score
-    >>> from sklearn.tree import DecisionTreeRegressor
-    >>> X, y = load_diabetes(return_X_y=True)
-
-
-        cross_val_score(regressor, X, y, cv=10)
-    ...                    # doctest: +SKIP
-    ...
-    array([-0.39..., -0.46...,  0.02...,  0.06..., -0.50...,
-           0.16...,  0.11..., -0.73..., -0.30..., -0.00...])
     """
+
     _parameter_constraints: dict = {
         **BaseBipartiteDecisionTree._parameter_constraints,
         "criterion": [
@@ -1064,7 +1118,7 @@ class BipartiteDecisionTreeRegressor(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
         prediction_weights=None,
     ):
         super().__init__(
@@ -1135,33 +1189,30 @@ class BipartiteDecisionTreeRegressor(
 
 
 class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
-    """Extremetly randomizes tree regressor tailored to bipartite input.
+    """Extremely randomized trees tailored to bipartite input.
 
     Implements optimized global single output (GSO) and multi-output (GMO)
     trees for interaction prediction. The latter is proposed by [1] under the
-    name of Predictive Bi-Clustering  Trees. The former implements an optimzied
+    name of Predictive Bi-Clustering Trees. The former implements an optimzied
     algorithm for growing GSO trees, which consider concatenated pairs of row
     and column instances in a bipartite dataset as the actual intances.
 
-    GSO trees (bipartite_adapter="global_single_output") will yield the exactly
+    GSO trees (bipartite_adapter="gso") will yield the exactly
     same tree structure as if all possible combinations of row and column
     instances were provided to a usual sklearn.DecisionTreeRegressor, but
-    in much sorter time, by a whole factor of the number of instances.
+    in much sorter time.
 
-    TODO: improve.
+    See [1] and [2] and also the User Guide. (TODO)
 
     Parameters
     ----------
-    criterion : {"squared_error", "friedman_mse", "absolute_error", \
-            "poisson"}, default="squared_error"
+    criterion : {"squared_error", "friedman_mse"}, default="squared_error"
         The function to measure the quality of a split. Supported criteria
         are "squared_error" for the mean squared error, which is equal to
         variance reduction as feature selection criterion and minimizes the L2
-        loss using the mean of each terminal node, "friedman_mse", which uses
+        loss using the mean of each terminal node and "friedman_mse", which uses
         mean squared error with Friedman's improvement score for potential
-        splits, "absolute_error" for the mean absolute error, which minimizes
-        the L1 loss using the median of each terminal node, and "poisson" which
-        uses reduction in Poisson deviance to find splits.
+        splits.
 
     splitter : {"best", "random"}, default="random"
         The strategy used to choose the split at each node. Supported
@@ -1181,8 +1232,13 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
           `ceil(min_samples_split * n_samples)` are the minimum
           number of samples for each split.
 
-        .. versionchanged:: 0.18
-           Added float values for fractions.
+    min_rows_split : int or float, default=1
+        The minimum number of row samples required to split an internal node.
+        Analogous to ``min_samples_leaf``.
+
+    min_cols_split : int or float, default=1
+        The minimum number of column samples required to split an internal node.
+        Analogous to ``min_samples_leaf``.
 
     min_samples_leaf : int or float, default=1
         The minimum number of samples required to be at a leaf node.
@@ -1196,41 +1252,51 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
           `ceil(min_samples_leaf * n_samples)` are the minimum
           number of samples for each node.
 
-        .. versionchanged:: 0.18
-           Added float values for fractions.
+    min_rows_leaf : int or float, default=1
+        The minimum number of row samples required to be at a leaf node.
+        Analogous to ``min_samples_leaf``.
+
+    min_cols_leaf : int or float, default=1
+        The minimum number of column samples required to be at a leaf node.
+        Analogous to ``min_samples_leaf``.
 
     min_weight_fraction_leaf : float, default=0.0
         The minimum weighted fraction of the sum total of weights (of all
         the input samples) required to be at a leaf node. Samples have
         equal weight when sample_weight is not provided.
 
-    max_features : int, float or {"auto", "sqrt", "log2"}, default=1.0
+    min_row_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of row weights (of all
+        the input rows) required to be at a leaf node. Rows have
+        equal weight when sample_weight is not provided.
+
+    min_col_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of column weights (of
+        all the input columns) required to be at a leaf node. Columns have
+        equal weight when sample_weight is not provided.
+
+    max_row_features : int, float or {"auto", "sqrt", "log2"}, default=None
         The number of features to consider when looking for the best split:
 
-        - If int, then consider `max_features` features at each split.
-        - If float, then `max_features` is a fraction and
-          `int(max_features * n_features)` features are considered at each
-          split.
-        - If "auto", then `max_features=n_features`.
-        - If "sqrt", then `max_features=sqrt(n_features)`.
-        - If "log2", then `max_features=log2(n_features)`.
-        - If None or 1.0, then `max_features=n_features`.
+        - If int, then consider `max_row_features` features at each row split.
+        - If float, then `max_row_features` is a fraction and
+          `int(max_row_features * n_row_features)` features are considered at
+          each split.
+        - If "auto", then `max_row_features=n_row_features`.
+        - If "sqrt", then `max_row_features=sqrt(n_row_features)`.
+        - If "log2", then `max_row_features=log2(n_row_features)`.
+        - If None or 1.0, then `max_row_features=n_row_features`.
 
         Note: the search for a split does not stop until at least one
         valid partition of the node samples is found, even if it requires to
-        effectively inspect more than ``max_features`` features.
+        effectively inspect more than ``max_row_features`` row features.
+
+    max_col_features : int, float or {"auto", "sqrt", "log2"}, default=None
+        Analogous to `max_row_features`, but for column features.
 
     random_state : int, RandomState instance or None, default=None
-        Controls the randomness of the estimator. The features are always
-        randomly permuted at each split, even if ``splitter`` is set to
-        ``"best"``. When ``max_features < n_features``, the algorithm will
-        select ``max_features`` at random at each split before finding the best
-        split among them. But the best found split may vary across different
-        runs, even if ``max_features=n_features``. That is the case, if the
-        improvement of the criterion is identical for several splits and one
-        split has to be selected at random. To obtain a deterministic behaviour
-        during fitting, ``random_state`` has to be fixed to an integer.
-        See :term:`Glossary <random_state>` for details.
+        Used to pick randomly the max_row_features and max_col_features used at
+        each split. See :term:`Glossary <random_state>` for details.
 
     max_leaf_nodes : int, default=None
         Grow a tree with ``max_leaf_nodes`` in best-first fashion.
@@ -1258,9 +1324,39 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         subtree with the largest cost complexity that is smaller than
         ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
         :ref:`minimal_cost_complexity_pruning` for details.
+    
+    bipartite_adapter : {"gso", "gmo", "gmosa"}, default="gso"
+        Which strategy to employ when searching for the best split. The global
+        single-output strategy ("gso") is equivalent to grow a tree on all
+        combinations of row samples with column samples and their corresponding
+        label: x = [*X[0][i], *X[1][j]], y = Y[i, j] for all i and j. However,
+        an optimized algorithm allows for these trees to exploit the bipartite
+        dataset directly and grow much faster than a naive implementation of
+        this idea. 
 
-    prediction_weights : {"uniform", "x", "raw"}, float, 1D-array or callable,
-                         default="uniform"
+        The splitting procedure of the global multi-output strategy ("gmo"),
+        differently than the GSO adaptation, treats each sample on the other
+        axis as a different output: hen splitting on y rows, each column is an
+        output, when splitting on columns, each row is a different output.
+
+        In other words, while GMO calculates impurity as a deviance metric
+        (call it d) relative to each output's mean ((d(y[i, j], y.mean(0)).mean(0)),
+        the GSO adaptation uses deviance relative to the total average label:
+        (d(y[i, j], y.mean()).mean().
+
+        The GMO strategy with single label average ("gmosa") works exactly the
+        same as explained for GMO, but assumes the tree's output value will be
+        y_leaf.mean(). Using "gmo" allows for combining each column or row of
+        the leaf's partition in multiple ways (see the `prediction_weights`
+        parameter), but results in much larger memory usage, since all outputs
+        must be stored. Using "gmosa" solves this memory issue by storing only
+        the leaf total average in each node, at the cost of loosing the ability
+        to specify prediction weights.
+
+        See [1] for more information.
+        
+    prediction_weights : {"uniform", "raw", "precomputed", "square", "softmax"\
+            }, 1D-array or callable, default="uniform"
         Determines how to compute the final predicted value. Initially, all
         predictions for each row and column instance from the training set that
         share the leaf node with the predicting sample are obtained.
@@ -1268,13 +1364,11 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         - "raw" instructs to return this vector, with a value for each training
           row and training column, and `np.nan` for instances not in the same
           leaf.
-        - "leaf_uniform" returns the mean value of the leaf. Corresponds to
-          the :math:`GMO_{SA}` approach described in [1].
         - "uniform" returns the mean value of the leaf for new instances but,
           for instances present in the training set, it uses the leaf's row or
           column mean corresponding to it. Known instances are recognized by a
           a similarity value of 1. This is the main approach presented by [1],
-          named simply global multi-output (GMO).
+          named global multi-output (GMO).
 
         Other options return the weighted average of the leaf values:
 
@@ -1283,11 +1377,13 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
           for training column samples (length==`sum(y_train.shape)`).
         - "precomputed" instructs the estimator to consider x values as
           similarities to each row and column sample in the training set (row
-          similarities followed by column similarities), and thus use it as
+          similarities followed by column similarities), using them as
           weights to average the leaf outputs.
         - A callable, if provided, takes all the X being predicted and must
           return an array of weights for each predicting sample with the same
           shape as the X array given to predict().
+        - "square" is equivalent to `prediction_weights=np.square`.
+        - "softmax" is equivalent to `prediction_weights=np.exp`.
 
     Attributes
     ----------
@@ -1332,8 +1428,18 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
 
     See Also
     --------
-    DecisionTreeClassifier : A decision tree classifier.
-
+    BipartiteExtraTreeClassifier : An extremely randomized bipartite tree
+        classifier.
+    BipartiteDecisionTreeRegressor : A bipartite decision tree regressor.
+    BipartiteDecisionTreeClassifier : A bipartite decision tree classifier.
+    hypertrees.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
+        classifier.
+    hypertrees.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
+        regressor.
+    hypertrees.ensemble.BipartiteRandomForestClassifier : A bipartite random
+        forest classifier.
+    hypertrees.ensemble.BipartiteRandomForestRegressor : A bipartite random
+        forest regressor.
     Notes
     -----
     The default values for the parameters controlling the size of the trees
@@ -1352,20 +1458,6 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
            learning and output space reconstruction \
            <doi.org/10.1186/s12859-020-3379-z>`
            Pliakos and Vens, 2020
-
-    Examples
-    --------
-    >>> from sklearn.datasets import load_diabetes
-    >>> from sklearn.model_selection import cross_val_score
-    >>> from sklearn.tree import DecisionTreeRegressor
-    >>> X, y = load_diabetes(return_X_y=True)
-
-
-        cross_val_score(regressor, X, y, cv=10)
-    ...                    # doctest: +SKIP
-    ...
-    array([-0.39..., -0.46...,  0.02...,  0.06..., -0.50...,
-           0.16...,  0.11..., -0.73..., -0.30..., -0.00...])
     """
 
     def __init__(
@@ -1392,7 +1484,7 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
         prediction_weights=None,
     ):
         super().__init__(
@@ -1424,8 +1516,285 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
 class BipartiteDecisionTreeClassifier(
     BaseBipartiteDecisionTree,
     DecisionTreeClassifier,
-    ClassifierMixin,
 ):
+    """Decision tree classifier tailored to bipartite input.
+
+    Implements optimized global single output (GSO) and multi-output (GMO)
+    trees for interaction prediction. The latter is proposed by [1] under the
+    name of Predictive Bi-Clustering Trees. The former implements an optimzied
+    algorithm for growing GSO trees, which consider concatenated pairs of row
+    and column instances in a bipartite dataset as the actual intances.
+
+    GSO trees (bipartite_adapter="gso") will yield the exactly
+    same tree structure as if all possible combinations of row and column
+    instances were provided to a usual sklearn.DecisionTreeRegressor, but
+    in much sorter time.
+
+    See [1] and [2] and also the User Guide. (TODO)
+
+    Parameters
+    ----------
+    criterion : {"gini", "entropy", "log_loss"}, default="gini"
+        The function to measure the quality of a split. Supported criteria are
+        "gini" for the Gini impurity and "log_loss" and "entropy" both for the
+        Shannon information gain, see :ref:`tree_mathematical_formulation`.
+
+    splitter : {"best", "random"}, default="best"
+        The strategy used to choose the split at each node. Supported
+        strategies are "best" to choose the best split and "random" to choose
+        the best random split.
+
+    max_depth : int, default=None
+        The maximum depth of the tree. If None, then nodes are expanded until
+        all leaves are pure or until all leaves contain less than
+        min_samples_split samples.
+
+    min_samples_split : int or float, default=2
+        The minimum number of samples required to split an internal node:
+
+        - If int, then consider `min_samples_split` as the minimum number.
+        - If float, then `min_samples_split` is a fraction and
+          `ceil(min_samples_split * n_samples)` are the minimum
+          number of samples for each split.
+
+    min_rows_split : int or float, default=1
+        The minimum number of row samples required to split an internal node.
+        Analogous to ``min_samples_leaf``.
+
+    min_cols_split : int or float, default=1
+        The minimum number of column samples required to split an internal node.
+        Analogous to ``min_samples_leaf``.
+
+    min_samples_leaf : int or float, default=1
+        The minimum number of samples required to be at a leaf node.
+        A split point at any depth will only be considered if it leaves at
+        least ``min_samples_leaf`` training samples in each of the left and
+        right branches.  This may have the effect of smoothing the model,
+        especially in regression.
+
+        - If int, then consider `min_samples_leaf` as the minimum number.
+        - If float, then `min_samples_leaf` is a fraction and
+          `ceil(min_samples_leaf * n_samples)` are the minimum
+          number of samples for each node.
+
+    min_rows_leaf : int or float, default=1
+        The minimum number of row samples required to be at a leaf node.
+        Analogous to ``min_samples_leaf``.
+
+    min_cols_leaf : int or float, default=1
+        The minimum number of column samples required to be at a leaf node.
+        Analogous to ``min_samples_leaf``.
+
+    min_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of weights (of all
+        the input samples) required to be at a leaf node. Samples have
+        equal weight when sample_weight is not provided.
+
+    min_row_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of row weights (of all
+        the input rows) required to be at a leaf node. Rows have
+        equal weight when sample_weight is not provided.
+
+    min_col_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of column weights (of
+        all the input columns) required to be at a leaf node. Columns have
+        equal weight when sample_weight is not provided.
+
+    max_row_features : int, float or {"auto", "sqrt", "log2"}, default=None
+        The number of features to consider when looking for the best split:
+
+        - If int, then consider `max_row_features` features at each row split.
+        - If float, then `max_row_features` is a fraction and
+          `int(max_row_features * n_row_features)` features are considered at
+          each split.
+        - If "auto", then `max_row_features=n_row_features`.
+        - If "sqrt", then `max_row_features=sqrt(n_row_features)`.
+        - If "log2", then `max_row_features=log2(n_row_features)`.
+        - If None or 1.0, then `max_row_features=n_row_features`.
+
+        Note: the search for a split does not stop until at least one
+        valid partition of the node samples is found, even if it requires to
+        effectively inspect more than ``max_row_features`` row features.
+
+    max_col_features : int, float or {"auto", "sqrt", "log2"}, default=None
+        Analogous to `max_row_features`, but for column features.
+
+    random_state : int, RandomState instance or None, default=None
+        Controls the randomness of the estimator. The features are always
+        randomly permuted at each split, even if ``splitter`` is set to
+        ``"best"``. When ``max_(row/col)_features < n_(row/col)_features``,
+        the algorithm will select ``max_(row/col)_features`` at random at each
+        split before finding the best split among them. But the best found
+        split may vary across different runs, even if
+        ``max_(row/col)_features=n_(row/col)_features``. That is the case, if
+        the improvement of the criterion is identical for several splits and
+        one split has to be selected at random. To obtain a deterministic
+        behaviour during fitting, ``random_state`` has to be fixed to an
+        integer.  See :term:`Glossary <random_state>` for details.
+
+    max_leaf_nodes : int, default=None
+        Grow a tree with ``max_leaf_nodes`` in best-first fashion.
+        Best nodes are defined as relative reduction in impurity.
+        If None then unlimited number of leaf nodes.
+
+    min_impurity_decrease : float, default=0.0
+        A node will be split if this split induces a decrease of the impurity
+        greater than or equal to this value.
+
+        The weighted impurity decrease equation is the following::
+
+            N_t / N * (impurity - N_t_R / N_t * right_impurity
+                                - N_t_L / N_t * left_impurity)
+
+        where ``N`` is the total number of samples, ``N_t`` is the number of
+        samples at the current node, ``N_t_L`` is the number of samples in the
+        left child, and ``N_t_R`` is the number of samples in the right child.
+
+        ``N``, ``N_t``, ``N_t_R`` and ``N_t_L`` all refer to the weighted sum,
+        if ``sample_weight`` is passed.
+
+    ccp_alpha : non-negative float, default=0.0
+        Complexity parameter used for Minimal Cost-Complexity Pruning. The
+        subtree with the largest cost complexity that is smaller than
+        ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
+        :ref:`minimal_cost_complexity_pruning` for details.
+    
+    bipartite_adapter : {"gso", "gmo", "gmosa"}, default="gmosa"
+        Which strategy to employ when searching for the best split. The global
+        single-output strategy ("gso") is equivalent to grow a tree on all
+        combinations of row samples with column samples and their corresponding
+        label: x = [*X[0][i], *X[1][j]], y = Y[i, j] for all i and j. However,
+        an optimized algorithm allows for these trees to exploit the bipartite
+        dataset directly and grow much faster than a naive implementation of
+        this idea. 
+
+        The splitting procedure of the global multi-output strategy ("gmo"),
+        differently than the GSO adaptation, treats each sample on the other
+        axis as a different output: hen splitting on y rows, each column is an
+        output, when splitting on columns, each row is a different output.
+
+        In other words, while GMO calculates impurity as a deviance metric
+        (call it d) relative to each output's mean ((d(y[i, j], y.mean(0)).mean(0)),
+        the GSO adaptation uses deviance relative to the total average label:
+        (d(y[i, j], y.mean()).mean().
+
+        The GMO strategy with single label average ("gmosa") works exactly the
+        same as explained for GMO, but assumes the tree's output value will be
+        y_leaf.mean(). Using "gmo" allows for combining each column or row of
+        the leaf's partition in multiple ways (see the `prediction_weights`
+        parameter), but results in much larger memory usage, since all outputs
+        must be stored. Using "gmosa" solves this memory issue by storing only
+        the leaf total average in each node, at the cost of loosing the ability
+        to specify prediction weights.
+
+        See [1] for more information.
+        
+    prediction_weights : {"uniform", "raw", "precomputed", "square", "softmax"\
+            }, 1D-array or callable, default="uniform"
+        Determines how to compute the final predicted value. Initially, all
+        predictions for each row and column instance from the training set that
+        share the leaf node with the predicting sample are obtained.
+
+        - "raw" instructs to return this vector, with a value for each training
+          row and training column, and `np.nan` for instances not in the same
+          leaf.
+        - "uniform" returns the mean value of the leaf for new instances but,
+          for instances present in the training set, it uses the leaf's row or
+          column mean corresponding to it. Known instances are recognized by a
+          a similarity value of 1. This is the main approach presented by [1],
+          named global multi-output (GMO).
+
+        Other options return the weighted average of the leaf values:
+
+        - A 1D-array may be provided to specify training sample weights
+          explicitly, with weights for training row samples followed by weights
+          for training column samples (length==`sum(y_train.shape)`).
+        - "precomputed" instructs the estimator to consider x values as
+          similarities to each row and column sample in the training set (row
+          similarities followed by column similarities), using them as
+          weights to average the leaf outputs.
+        - A callable, if provided, takes all the X being predicted and must
+          return an array of weights for each predicting sample with the same
+          shape as the X array given to predict().
+        - "square" is equivalent to `prediction_weights=np.square`.
+        - "softmax" is equivalent to `prediction_weights=np.exp`.
+
+    Attributes
+    ----------
+    feature_importances_ : ndarray of shape (n_features,)
+        The feature importances.
+        The higher, the more important the feature.
+        The importance of a feature is computed as the
+        (normalized) total reduction of the criterion brought
+        by that feature. It is also known as the Gini importance [4]_.
+
+        Warning: impurity-based feature importances can be misleading for
+        high cardinality features (many unique values). See
+        :func:`sklearn.inspection.permutation_importance` as an alternative.
+
+    max_row_features_ : int
+        The inferred value of max_row_features.
+
+    max_col_features_ : int
+        The inferred value of max_col_features.
+
+    n_features_in_ : int
+        Number of features seen during :term:`fit`.
+
+    n_row_features_in_ : int
+        Number of row features seen during :term:`fit`.
+
+    n_col_features_in_ : int
+        Number of column features seen during :term:`fit`.
+
+    feature_names_in_ : ndarray of shape (`n_features_in_`,)
+        Names of features seen during :term:`fit`. Defined only when `X`
+        has feature names that are all strings.
+
+    n_outputs_ : int
+        The number of outputs when ``fit`` is performed.
+
+    tree_ : Tree instance
+        The underlying Tree object. Please refer to
+        ``help(sklearn.tree._tree.Tree)`` for attributes of Tree object and
+        :ref:`sphx_glr_auto_examples_tree_plot_unveil_tree_structure.py`
+        for basic usage of these attributes.
+
+    See Also
+    --------
+    BipartiteDecisionTreeRegressor : A bipartite decision tree regressor.
+    BipartiteExtraTreeRegressor : An extremely randomized bipartite tree
+        regressor.
+    BipartiteExtraTreeClassifier : An extremely randomized bipartite tree
+        classifier.
+    hypertrees.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
+        classifier.
+    hypertrees.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
+        regressor.
+    hypertrees.ensemble.BipartiteRandomForestClassifier : A bipartite random
+        forest classifier.
+    hypertrees.ensemble.BipartiteRandomForestRegressor : A bipartite random
+        forest regressor.
+
+    Notes
+    -----
+    The default values for the parameters controlling the size of the trees
+    (e.g. ``max_depth``, ``min_samples_leaf``, etc.) lead to fully grown and
+    unpruned trees which can potentially be very large on some data sets. To
+    reduce memory consumption, the complexity and size of the trees should be
+    controlled by setting those parameter values.
+
+    References
+    ----------
+    .. [1] :doi:`Global Multi-Output Decision Trees for interaction prediction \
+       <doi.org/10.1007/s10994-018-5700-x>`
+       Pliakos, Geurts and Vens, 2018
+
+    .. [2] :doi:`Drug-target interaction prediction with tree-ensemble \
+           learning and output space reconstruction \
+           <doi.org/10.1186/s12859-020-3379-z>`
+           Pliakos and Vens, 2020
+    """
 
     _parameter_constraints: dict = {
         **BaseBipartiteDecisionTree._parameter_constraints,
@@ -1457,7 +1826,7 @@ class BipartiteDecisionTreeClassifier(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_multioutput",
+        bipartite_adapter="gmosa",
         prediction_weights=None,
     ):
         super().__init__(
@@ -1562,3 +1931,335 @@ class BipartiteDecisionTreeClassifier(
                 all_proba.append(proba_k)
 
             return all_proba
+
+
+class BipartiteExtraTreeClassifier(BipartiteDecisionTreeClassifier):
+    """Extremely randomized tree classifier tailored to bipartite input.
+
+    Implements optimized global single output (GSO) and multi-output (GMO)
+    trees for interaction prediction. The latter is proposed by [1] under the
+    name of Predictive Bi-Clustering Trees. The former implements an optimzied
+    algorithm for growing GSO trees, which consider concatenated pairs of row
+    and column instances in a bipartite dataset as the actual intances.
+
+    GSO trees (bipartite_adapter="gso") will yield the exactly
+    same tree structure as if all possible combinations of row and column
+    instances were provided to a usual sklearn.DecisionTreeRegressor, but
+    in much sorter time.
+
+    See [1] and [2] and also the User Guide. (TODO)
+
+    Parameters
+    ----------
+    criterion : {"gini", "entropy", "log_loss"}, default="gini"
+        The function to measure the quality of a split. Supported criteria are
+        "gini" for the Gini impurity and "log_loss" and "entropy" both for the
+        Shannon information gain, see :ref:`tree_mathematical_formulation`.
+
+    splitter : {"best", "random"}, default="random"
+        The strategy used to choose the split at each node. Supported
+        strategies are "best" to choose the best split and "random" to choose
+        the best random split.
+
+    max_depth : int, default=None
+        The maximum depth of the tree. If None, then nodes are expanded until
+        all leaves are pure or until all leaves contain less than
+        min_samples_split samples.
+
+    min_samples_split : int or float, default=2
+        The minimum number of samples required to split an internal node:
+
+        - If int, then consider `min_samples_split` as the minimum number.
+        - If float, then `min_samples_split` is a fraction and
+          `ceil(min_samples_split * n_samples)` are the minimum
+          number of samples for each split.
+
+    min_rows_split : int or float, default=1
+        The minimum number of row samples required to split an internal node.
+        Analogous to ``min_samples_leaf``.
+
+    min_cols_split : int or float, default=1
+        The minimum number of column samples required to split an internal node.
+        Analogous to ``min_samples_leaf``.
+
+    min_samples_leaf : int or float, default=1
+        The minimum number of samples required to be at a leaf node.
+        A split point at any depth will only be considered if it leaves at
+        least ``min_samples_leaf`` training samples in each of the left and
+        right branches.  This may have the effect of smoothing the model,
+        especially in regression.
+
+        - If int, then consider `min_samples_leaf` as the minimum number.
+        - If float, then `min_samples_leaf` is a fraction and
+          `ceil(min_samples_leaf * n_samples)` are the minimum
+          number of samples for each node.
+
+    min_rows_leaf : int or float, default=1
+        The minimum number of row samples required to be at a leaf node.
+        Analogous to ``min_samples_leaf``.
+
+    min_cols_leaf : int or float, default=1
+        The minimum number of column samples required to be at a leaf node.
+        Analogous to ``min_samples_leaf``.
+
+    min_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of weights (of all
+        the input samples) required to be at a leaf node. Samples have
+        equal weight when sample_weight is not provided.
+
+    min_row_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of row weights (of all
+        the input rows) required to be at a leaf node. Rows have
+        equal weight when sample_weight is not provided.
+
+    min_col_weight_fraction_leaf : float, default=0.0
+        The minimum weighted fraction of the sum total of column weights (of
+        all the input columns) required to be at a leaf node. Columns have
+        equal weight when sample_weight is not provided.
+
+    max_row_features : int, float or {"auto", "sqrt", "log2"}, default=None
+        The number of features to consider when looking for the best split:
+
+        - If int, then consider `max_row_features` features at each row split.
+        - If float, then `max_row_features` is a fraction and
+          `int(max_row_features * n_row_features)` features are considered at
+          each split.
+        - If "auto", then `max_row_features=n_row_features`.
+        - If "sqrt", then `max_row_features=sqrt(n_row_features)`.
+        - If "log2", then `max_row_features=log2(n_row_features)`.
+        - If None or 1.0, then `max_row_features=n_row_features`.
+
+        Note: the search for a split does not stop until at least one
+        valid partition of the node samples is found, even if it requires to
+        effectively inspect more than ``max_row_features`` row features.
+
+    max_col_features : int, float or {"auto", "sqrt", "log2"}, default=None
+        Analogous to `max_row_features`, but for column features.
+
+    random_state : int, RandomState instance or None, default=None
+        Controls the randomness of the estimator. The features are always
+        randomly permuted at each split, even if ``splitter`` is set to
+        ``"best"``. When ``max_(row/col)_features < n_(row/col)_features``,
+        the algorithm will select ``max_(row/col)_features`` at random at each
+        split before finding the best split among them. But the best found
+        split may vary across different runs, even if
+        ``max_(row/col)_features=n_(row/col)_features``. That is the case, if
+        the improvement of the criterion is identical for several splits and
+        one split has to be selected at random. To obtain a deterministic
+        behaviour during fitting, ``random_state`` has to be fixed to an
+        integer.  See :term:`Glossary <random_state>` for details.
+
+    max_leaf_nodes : int, default=None
+        Grow a tree with ``max_leaf_nodes`` in best-first fashion.
+        Best nodes are defined as relative reduction in impurity.
+        If None then unlimited number of leaf nodes.
+
+    min_impurity_decrease : float, default=0.0
+        A node will be split if this split induces a decrease of the impurity
+        greater than or equal to this value.
+
+        The weighted impurity decrease equation is the following::
+
+            N_t / N * (impurity - N_t_R / N_t * right_impurity
+                                - N_t_L / N_t * left_impurity)
+
+        where ``N`` is the total number of samples, ``N_t`` is the number of
+        samples at the current node, ``N_t_L`` is the number of samples in the
+        left child, and ``N_t_R`` is the number of samples in the right child.
+
+        ``N``, ``N_t``, ``N_t_R`` and ``N_t_L`` all refer to the weighted sum,
+        if ``sample_weight`` is passed.
+
+    ccp_alpha : non-negative float, default=0.0
+        Complexity parameter used for Minimal Cost-Complexity Pruning. The
+        subtree with the largest cost complexity that is smaller than
+        ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
+        :ref:`minimal_cost_complexity_pruning` for details.
+    
+    bipartite_adapter : {"gso", "gmo", "gmosa"}, default="gmosa"
+        Which strategy to employ when searching for the best split. The global
+        single-output strategy ("gso") is equivalent to grow a tree on all
+        combinations of row samples with column samples and their corresponding
+        label: x = [*X[0][i], *X[1][j]], y = Y[i, j] for all i and j. However,
+        an optimized algorithm allows for these trees to exploit the bipartite
+        dataset directly and grow much faster than a naive implementation of
+        this idea. 
+
+        The splitting procedure of the global multi-output strategy ("gmo"),
+        differently than the GSO adaptation, treats each sample on the other
+        axis as a different output: hen splitting on y rows, each column is an
+        output, when splitting on columns, each row is a different output.
+
+        In other words, while GMO calculates impurity as a deviance metric
+        (call it d) relative to each output's mean ((d(y[i, j], y.mean(0)).mean(0)),
+        the GSO adaptation uses deviance relative to the total average label:
+        (d(y[i, j], y.mean()).mean().
+
+        The GMO strategy with single label average ("gmosa") works exactly the
+        same as explained for GMO, but assumes the tree's output value will be
+        y_leaf.mean(). Using "gmo" allows for combining each column or row of
+        the leaf's partition in multiple ways (see the `prediction_weights`
+        parameter), but results in much larger memory usage, since all outputs
+        must be stored. Using "gmosa" solves this memory issue by storing only
+        the leaf total average in each node, at the cost of loosing the ability
+        to specify prediction weights.
+
+        See [1] for more information.
+        
+    prediction_weights : {"uniform", "raw", "precomputed", "square", "softmax"\
+            }, 1D-array or callable, default="uniform"
+        Determines how to compute the final predicted value. Initially, all
+        predictions for each row and column instance from the training set that
+        share the leaf node with the predicting sample are obtained.
+
+        - "raw" instructs to return this vector, with a value for each training
+          row and training column, and `np.nan` for instances not in the same
+          leaf.
+        - "uniform" returns the mean value of the leaf for new instances but,
+          for instances present in the training set, it uses the leaf's row or
+          column mean corresponding to it. Known instances are recognized by a
+          a similarity value of 1. This is the main approach presented by [1],
+          named global multi-output (GMO).
+
+        Other options return the weighted average of the leaf values:
+
+        - A 1D-array may be provided to specify training sample weights
+          explicitly, with weights for training row samples followed by weights
+          for training column samples (length==`sum(y_train.shape)`).
+        - "precomputed" instructs the estimator to consider x values as
+          similarities to each row and column sample in the training set (row
+          similarities followed by column similarities), using them as
+          weights to average the leaf outputs.
+        - A callable, if provided, takes all the X being predicted and must
+          return an array of weights for each predicting sample with the same
+          shape as the X array given to predict().
+        - "square" is equivalent to `prediction_weights=np.square`.
+        - "softmax" is equivalent to `prediction_weights=np.exp`.
+
+    Attributes
+    ----------
+    feature_importances_ : ndarray of shape (n_features,)
+        The feature importances.
+        The higher, the more important the feature.
+        The importance of a feature is computed as the
+        (normalized) total reduction of the criterion brought
+        by that feature. It is also known as the Gini importance [4]_.
+
+        Warning: impurity-based feature importances can be misleading for
+        high cardinality features (many unique values). See
+        :func:`sklearn.inspection.permutation_importance` as an alternative.
+
+    max_row_features_ : int
+        The inferred value of max_row_features.
+
+    max_col_features_ : int
+        The inferred value of max_col_features.
+
+    n_features_in_ : int
+        Number of features seen during :term:`fit`.
+
+    n_row_features_in_ : int
+        Number of row features seen during :term:`fit`.
+
+    n_col_features_in_ : int
+        Number of column features seen during :term:`fit`.
+
+    feature_names_in_ : ndarray of shape (`n_features_in_`,)
+        Names of features seen during :term:`fit`. Defined only when `X`
+        has feature names that are all strings.
+
+    n_outputs_ : int
+        The number of outputs when ``fit`` is performed.
+
+    tree_ : Tree instance
+        The underlying Tree object. Please refer to
+        ``help(sklearn.tree._tree.Tree)`` for attributes of Tree object and
+        :ref:`sphx_glr_auto_examples_tree_plot_unveil_tree_structure.py`
+        for basic usage of these attributes.
+
+    See Also
+    --------
+    BipartiteDecisionTreeClassifier : A bipartite decision tree classifier.
+    BipartiteExtraTreeRegressor : An extremely randomized bipartite tree
+        regressor.
+    BipartiteDecisionTreeRegressor : A bipartite decision tree regressor.
+    hypertrees.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
+        classifier.
+    hypertrees.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
+        regressor.
+    hypertrees.ensemble.BipartiteRandomForestClassifier : A bipartite random
+        forest classifier.
+    hypertrees.ensemble.BipartiteRandomForestRegressor : A bipartite random
+        forest regressor.
+
+    Notes
+    -----
+    The default values for the parameters controlling the size of the trees
+    (e.g. ``max_depth``, ``min_samples_leaf``, etc.) lead to fully grown and
+    unpruned trees which can potentially be very large on some data sets. To
+    reduce memory consumption, the complexity and size of the trees should be
+    controlled by setting those parameter values.
+
+    References
+    ----------
+    .. [1] :doi:`Global Multi-Output Decision Trees for interaction prediction \
+       <doi.org/10.1007/s10994-018-5700-x>`
+       Pliakos, Geurts and Vens, 2018
+
+    .. [2] :doi:`Drug-target interaction prediction with tree-ensemble \
+           learning and output space reconstruction \
+           <doi.org/10.1186/s12859-020-3379-z>`
+           Pliakos and Vens, 2020
+    """
+    def __init__(
+        self,
+        *,
+        criterion="gini",
+        splitter="random",  # Only diff from BipartiteDecisionTreeClassifier
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=None,
+        random_state=None,
+        max_leaf_nodes=None,
+        min_impurity_decrease=0.0,
+        class_weight=None,
+        ccp_alpha=0.0,
+        # Bipartite parameters:
+        min_rows_split=1,
+        min_cols_split=1,
+        min_rows_leaf=1,
+        min_cols_leaf=1,
+        min_row_weight_fraction_leaf=0.0,
+        min_col_weight_fraction_leaf=0.0,
+        max_row_features=None,
+        max_col_features=None,
+        bipartite_adapter="gmosa",
+        prediction_weights=None,
+    ):
+        super().__init__(
+            criterion=criterion,
+            splitter=splitter,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+            class_weight=class_weight,
+            random_state=random_state,
+            min_impurity_decrease=min_impurity_decrease,
+            ccp_alpha=ccp_alpha,
+            # Bipartite parameters:
+            min_rows_split=min_rows_split,
+            min_cols_split=min_cols_split,
+            min_rows_leaf=min_rows_leaf,
+            min_cols_leaf=min_cols_leaf,
+            min_row_weight_fraction_leaf=min_row_weight_fraction_leaf,
+            min_col_weight_fraction_leaf=min_col_weight_fraction_leaf,
+            max_row_features=max_row_features,
+            max_col_features=max_col_features,
+            bipartite_adapter=bipartite_adapter,
+            prediction_weights=prediction_weights,
+        )

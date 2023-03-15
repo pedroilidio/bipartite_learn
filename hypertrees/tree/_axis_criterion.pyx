@@ -950,7 +950,7 @@ cdef class AxisClassificationCriterion(AxisCriterion):
                 self.weighted_n_left += wi
 
                 for k in range(self.n_node_cols):
-                    self.sum_left[k, <SIZE_t> self.y_[i, _node_col_indices[k]]] += wi
+                    self.sum_left[k, <SIZE_t>self.y_[i, _node_col_indices[k]]] += wi
 
         else:
             self.reverse_reset()
@@ -963,7 +963,7 @@ cdef class AxisClassificationCriterion(AxisCriterion):
                 self.weighted_n_left -= wi
 
                 for k in range(self.n_node_cols):
-                    self.sum_left[k, <SIZE_t> self.y_[i, _node_col_indices[k]]] -= wi
+                    self.sum_left[k, <SIZE_t>self.y_[i, _node_col_indices[k]]] -= wi
 
         # Update right part statistics
         self.weighted_n_right = self.weighted_n_node_samples - self.weighted_n_left
@@ -1015,6 +1015,7 @@ cdef class AxisClassificationCriterion(AxisCriterion):
 
             for class_index in range(n_classes_k):
                 dest[class_index] += self.sum_total[k, class_index]
+
 
 cdef class AxisEntropy(AxisClassificationCriterion):
     r"""Cross Entropy impurity criterion.
@@ -1101,6 +1102,7 @@ cdef class AxisEntropy(AxisClassificationCriterion):
 
         rows_impurity_left[0] = entropy_left / self.weighted_n_node_cols
         rows_impurity_right[0] = entropy_right / self.weighted_n_node_cols
+
         cols_impurity_left[0] = self.weighted_n_node_cols / self.weighted_n_cols  # FIXME
         cols_impurity_right[0] = self.weighted_n_node_cols / self.weighted_n_cols  # FIXME
 

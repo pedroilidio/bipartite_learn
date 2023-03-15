@@ -3,7 +3,7 @@ import copy
 import warnings
 from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport RegressionCriterion, Criterion
-from ._nd_criterion cimport BipartiteRegressionCriterion, BipartiteSquaredError
+from ._nd_criterion cimport RegressionCriterionGSO, SquaredErrorGSO
 
 import numpy as np
 cimport numpy as np

@@ -3,7 +3,7 @@ from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 from sklearn.tree._tree cimport DTYPE_t         # Type of X
 from sklearn.tree._tree cimport DOUBLE_t        # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t          # Type for indices and counters
-from ._nd_criterion cimport BipartiteCriterion, BipartiteRegressionCriterion
+from ._nd_criterion cimport BipartiteCriterion, RegressionCriterionGSO
 
 
 cdef class BaseDenseSplitter(Splitter):

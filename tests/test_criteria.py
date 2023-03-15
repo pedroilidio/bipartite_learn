@@ -11,7 +11,7 @@ from hypertrees.tree._splitter_factory import (
     make_semisupervised_criterion,
     make_2dss_criterion,
 )
-from hypertrees.tree._nd_criterion import BipartiteSquaredError
+from hypertrees.tree._nd_criterion import SquaredErrorGSO
 from hypertrees.melter import row_cartesian_product
 from test_utils import assert_equal_dicts, comparison_text
 from make_examples import make_interaction_blobs
@@ -272,7 +272,7 @@ def test_bipartite_ss_criterion(data, n_features, n_samples, supervision, random
     criterion = make_2dss_criterion(
         supervised_criteria=MSE,
         unsupervised_criteria=MSE,
-        criterion_wrapper_class=BipartiteSquaredError,
+        criterion_wrapper_class=SquaredErrorGSO,
         supervision=supervision,
         n_features=n_features,
         n_samples=n_samples,
@@ -349,7 +349,7 @@ def test_bipartite_ss_criterion_proxy_improvement(
     criterion = make_2dss_criterion(
         supervised_criteria=MSE,
         unsupervised_criteria=MSE,
-        criterion_wrapper_class=BipartiteSquaredError,
+        criterion_wrapper_class=SquaredErrorGSO,
         supervision=supervision,
         n_features=n_features,
         n_samples=n_samples,

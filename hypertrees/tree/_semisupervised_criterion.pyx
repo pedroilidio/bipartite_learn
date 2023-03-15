@@ -16,8 +16,8 @@ from sklearn.utils._param_validation import (
     Interval,
 )
 from ._nd_criterion cimport (
-    BipartiteRegressionCriterion,
-    BipartiteSquaredError,
+    RegressionCriterionGSO,
+    SquaredErrorGSO,
 )
 from ._nd_criterion import InvalidAxisError
 

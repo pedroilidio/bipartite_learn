@@ -82,7 +82,7 @@ cdef class BipartiteCriterion:
     ) nogil
 
 
-cdef class BipartiteRegressionCriterion(BipartiteCriterion):
+cdef class RegressionCriterionGSO(BipartiteCriterion):
     cdef public RegressionCriterion criterion_rows
     cdef public RegressionCriterion criterion_cols
 
@@ -105,7 +105,7 @@ cdef class BipartiteRegressionCriterion(BipartiteCriterion):
     ) nogil except -1
 
 
-cdef class PBCTCriterionWrapper(BipartiteCriterion):
+cdef class GMO(BipartiteCriterion):
     """Applies Predictive Bi-Clustering Trees method.
 
     See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
@@ -117,9 +117,9 @@ cdef class PBCTCriterionWrapper(BipartiteCriterion):
     cdef void* _get_criterion(self, SIZE_t axis) nogil except NULL
 
 
-cdef class BipartiteSquaredError(BipartiteRegressionCriterion):
+cdef class SquaredErrorGSO(RegressionCriterionGSO):
     pass
 
 
-cdef class BipartiteFriedman(BipartiteSquaredError):
+cdef class FriedmanGSO(SquaredErrorGSO):
     pass

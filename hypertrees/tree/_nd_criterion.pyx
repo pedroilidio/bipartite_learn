@@ -59,7 +59,7 @@ cdef class BipartiteCriterion:
     
 
 # TODO: global in the name
-cdef class BipartiteRegressionCriterion(BipartiteCriterion):
+cdef class RegressionCriterionGSO(BipartiteCriterion):
     def __reduce__(self):
         return (
             type(self),
@@ -312,7 +312,7 @@ cdef class BipartiteRegressionCriterion(BipartiteCriterion):
                 raise InvalidAxisError
 
 
-cdef class BipartiteSquaredError(BipartiteRegressionCriterion):
+cdef class SquaredErrorGSO(RegressionCriterionGSO):
 
     cdef double node_impurity(self) nogil:
         """Evaluate the impurity of the current node.
@@ -414,7 +414,7 @@ cdef class BipartiteSquaredError(BipartiteRegressionCriterion):
 
 
 # TODO: changing axis crit weight to sum of column weights would benefit
-cdef class BipartiteFriedman(BipartiteSquaredError):
+cdef class FriedmanGSO(SquaredErrorGSO):
     cdef double impurity_improvement(
         self,
         double impurity_parent,
@@ -435,7 +435,7 @@ cdef class BipartiteFriedman(BipartiteSquaredError):
             return imp / self.weighted_n_node_rows
 
 
-cdef class PBCTCriterionWrapper(BipartiteCriterion):
+cdef class GMO(BipartiteCriterion):
     """Applies Predictive Bi-Clustering Trees method.
 
     See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
@@ -622,7 +622,7 @@ cdef class PBCTCriterionWrapper(BipartiteCriterion):
                 raise InvalidAxisError
 
 
-cdef class PBCTCriterionWrapperSA(PBCTCriterionWrapper):
+cdef class GMOSA(GMO):
     def __init__(
         self,
         AxisCriterion criterion_rows,

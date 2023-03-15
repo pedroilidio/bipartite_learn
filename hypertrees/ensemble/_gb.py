@@ -125,7 +125,7 @@ class BaseBipartiteGradientBoosting(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
         prediction_weights=None,
     ):
         # FIXME: skipping BaseGradientBoosting.__init__ to keep using estimator
@@ -1137,7 +1137,7 @@ class BipartiteGradientBoostingClassifier(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
         prediction_weights=None,
     ):
 
@@ -1719,7 +1719,7 @@ class BipartiteGradientBoostingRegressor(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
         prediction_weights=None,
     ):
 

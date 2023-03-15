@@ -503,7 +503,7 @@ class BipartiteRandomForestRegressorSS(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
         prediction_weights=None,
     ):
         super().__init__(
@@ -630,7 +630,7 @@ class BipartiteExtraTreesRegressorSS(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="global_single_output",
+        bipartite_adapter="gso",
         prediction_weights=None,
     ):
         super().__init__(
