@@ -4,6 +4,7 @@
 # Modified from scikit-learn.
 #
 # License: BSD 3 clause
+# TODO: replace x ** 2 by x * x
 
 from libc.string cimport memset, memcpy
 from libc.stdint cimport SIZE_MAX
@@ -12,6 +13,19 @@ import numpy as np
 from sklearn.tree._utils cimport log
 
 cdef double NAN = np.nan
+
+
+cdef inline SIZE_t search(
+    SIZE_t[:] arr,
+    SIZE_t element,
+    SIZE_t start,
+    SIZE_t end,
+) except -1 nogil:
+    cdef SIZE_t i
+    for i in range(start, end):
+        if element == arr[i]:
+            return i
+    return i
 
 
 cdef class AxisCriterion(Criterion):
@@ -45,13 +59,10 @@ cdef class AxisCriterion(Criterion):
         self.y = None
         self._columns_are_set = False
         self._cached_pos = SIZE_MAX
-        self._cached_rows_impurity_left = 0.0
-        self._cached_rows_impurity_right = 0.0
-        self._cached_cols_impurity_left = 0.0
-        self._cached_cols_impurity_right = 0.0
+        self._cached_impurity_left = 0.0
+        self._cached_impurity_right = 0.0
         # TODO: use cached node impurity
-        self._cached_rows_node_impurity = 0.0
-        self._cached_cols_node_impurity = 0.0
+        self._cached_node_impurity = 0.0
         # TODO: Possibly remove if Splitter can find split without reordering
         # sample_indices. The upside is that we reduce memory usage, the downside is
         # that we lose C contiguity, which seems important here.
@@ -69,14 +80,14 @@ cdef class AxisCriterion(Criterion):
         with gil:
             raise RuntimeError("Please use axis_init() instead of init()")
     
-    cdef void init_columns(
+    cdef int init_columns(
         self,
         const DOUBLE_t[:] col_weights,
         double weighted_n_cols,
         SIZE_t[:] col_indices,
         SIZE_t start_col,
         SIZE_t end_col,
-    ) nogil:
+    ) except -1 nogil:
         """Initialize the column sample indices and column weights.
         Parameters
         ----------
@@ -113,6 +124,7 @@ cdef class AxisCriterion(Criterion):
             self.weighted_n_node_cols += w
 
         self._columns_are_set = True
+        return 0
  
     cdef int axis_init(
         self,
@@ -148,116 +160,28 @@ cdef class AxisCriterion(Criterion):
         end : SIZE_t
             The last sample used on this node
         """
+    cdef void col_split_children_impurity(
+        self,
+        SIZE_t col_split_pos,
+        double* impurity_left,
+        double* impurity_right,
+    ) noexcept nogil:
+        # TODO: docs
         pass
    
-    cdef double node_impurity(self) nogil:
-        """Evaluate the impurity of the current node.
-        Evaluate the MSE criterion as impurity of the current node,
-        i.e. the impurity of sample_indices[start:end]. The smaller the impurity the
-        better.
-        """
-        cdef:
-            SIZE_t k
-            double rows_impurity
-            double cols_impurity
-
-        self.node_axes_impurities(&rows_impurity, &cols_impurity)
-
-        return 0.5 * (rows_impurity + cols_impurity)
-
-    cdef void children_impurity(
-        self,
-        double* impurity_left,
-        double* impurity_right
-    ) nogil:
-        """Evaluate the impurity in children nodes.
-        i.e. the impurity of the left child (sample_indices[start:pos]) and the
-        impurity the right child (sample_indices[pos:end]).
-        """
-        cdef:
-            double rows_impurity_left
-            double rows_impurity_right
-            double cols_impurity_left
-            double cols_impurity_right
-
-        self.children_axes_impurities(
-            &rows_impurity_left,
-            &rows_impurity_right,
-            &cols_impurity_left,
-            &cols_impurity_right,
-        )
-
-        impurity_left[0] = 0.5 * (rows_impurity_left + cols_impurity_left)
-        impurity_right[0] = 0.5 * (rows_impurity_right + cols_impurity_right)
- 
-    cdef void node_axes_impurities(
-        self,
-        double* rows_impurity,
-        double* cols_impurity,
-    ) nogil:
-        """Evaluate the impurity of the current node in both directions.
-        Evaluate the MSE criterion as impurity of the current node,
-        i.e. the impurity of sample_indices[start:end]. The smaller the impurity the
-        better.
-        """
-
-    cdef void children_axes_impurities(
-        self,
-        double* rows_impurity_left,
-        double* rows_impurity_right,
-        double* cols_impurity_left,
-        double* cols_impurity_right,
-    ) nogil:
-        """Evaluate the impurity in children nodes, in both directions.
-        i.e. the impurity of the left child (sample_indices[start:pos]) and the
-        impurity the right child (sample_indices[pos:end]).
-        Should employ self._cached_* attributes to minimize computation.
-        """
-
-    cdef double proxy_impurity_improvement(self) noexcept nogil:
-        """Compute a proxy of the impurity reduction.
-        This method is used to speed up the search for the best split.
-        It is a proxy quantity such that the split that maximizes this value
-        also maximizes the impurity improvement. It neglects all constant terms
-        of the impurity decrease for a given split.
-        The absolute impurity improvement is only computed by the
-        impurity_improvement method once the best split has been found.
-        """
-        cdef:
-            double rows_impurity_left
-            double rows_impurity_right
-            double cols_impurity_left   # Discarded
-            double cols_impurity_right  # Discarded
-
-        self.children_axes_impurities(
-            &rows_impurity_left,
-            &rows_impurity_right,
-            &cols_impurity_left,
-            &cols_impurity_right,
-        )
-
-        return (- self.weighted_n_right * rows_impurity_right
-                - self.weighted_n_left * rows_impurity_left)
-
     cdef double impurity_improvement(
         self,
         double impurity_parent,
         double impurity_left,
         double impurity_right,
-    ) nogil:
+    ) noexcept nogil:
         """Compute the improvement in impurity.
 
-        Differently from the usual sklearn objects, the impurity improvement
-        is NOT:
-            (imp_parent - imp_children) / imp_parent
-        but instead:
-            0.5 * (
-                (rows_imp_parent - rows_imp_children) / rows_imp_parent
-                +
-                (cols_imp_parent - cols_imp_children) / cols_imp_parent
-            )
+        NOTE: To be stored in the Tree object, the input values to this method 
+        are actually average impurities among both axes:
+            impurity = 0.5 * (impurity_rows + impurity_cols)
         In many cases, however, columns impurity improvement is zero, and we
-        return only the impurity over rows.
+        return only the impurity over the current axis (here called rows).
         """
         # FIXME: Since we cannot access rows_impurity and cols_impurity
         # separately, we have to discard this method's input and calculate
@@ -266,48 +190,36 @@ cdef class AxisCriterion(Criterion):
         # self.pos == self._cached_pos.
         # NOTE: self._cached_pos must be reset at AxisCriterion.init() to
         # ensure it always corresponds to the current tree node.
-        cdef:
-            double rows_impurity_parent
-            double rows_impurity_left
-            double rows_impurity_right
-
-            # To be discarded:
-            double cols_impurity_parent
-            double cols_impurity_left
-            double cols_impurity_right
-
-        self.node_axes_impurities(
-            &rows_impurity_parent,
-            &cols_impurity_parent,
-        )
-        self.children_axes_impurities(
-            &rows_impurity_left,
-            &rows_impurity_right,
-            &cols_impurity_left,
-            &cols_impurity_right,
-        )
 
         # NOTE: Columns impurity improvement should be zero.
+        # return (
+        #     (self.weighted_n_node_samples / self.weighted_n_samples)
+        #     * (self.weighted_n_node_cols / self.weighted_n_cols)
+        #     * (
+        #         rows_impurity_parent
+        #         - rows_impurity_right
+        #             * (self.weighted_n_right / self.weighted_n_node_samples)
+        #         - rows_impurity_left
+        #             * (self.weighted_n_left / self.weighted_n_node_samples)
+        #     )
+        # )
         return (
-            (self.weighted_n_node_samples / self.weighted_n_samples)
-            * (self.weighted_n_node_cols / self.weighted_n_cols)
-            * (
-                rows_impurity_parent
-                - rows_impurity_right
-                    * (self.weighted_n_right / self.weighted_n_node_samples)
-                - rows_impurity_left
-                    * (self.weighted_n_left / self.weighted_n_node_samples)
+            self.weighted_n_node_cols / self.weighted_n_cols
+            * Criterion.impurity_improvement(
+                self,
+                impurity_parent,
+                impurity_left,
+                impurity_right,
             )
         )
 
-    cdef void node_value(self, double* dest) nogil:
+    cdef void node_value(self, double* dest) noexcept nogil:
         pass
 
-    cdef void total_node_value(self, double* dest) nogil:
+    cdef void total_node_value(self, double* dest) noexcept nogil:
         pass
 
 
-# FIXME: do not multiply by column wights on update, only in impurities
 cdef class AxisRegressionCriterion(AxisCriterion):
     r"""Abstract regression criterion.
     This handles cases where the target is a continuous value, and is
@@ -389,10 +301,8 @@ cdef class AxisRegressionCriterion(AxisCriterion):
             SIZE_t i, j, p, k
             DOUBLE_t y_ij
             DOUBLE_t wi = 1.0, wj = 1.0
-            DOUBLE_t row_sum
 
         self.sq_sum_total = 0.0
-        self.sum_sq_row_sums = 0.0
         self.weighted_n_node_samples = 0.0
         memset(&self.sum_total[0], 0, self.n_node_cols * sizeof(double))
 
@@ -402,7 +312,6 @@ cdef class AxisRegressionCriterion(AxisCriterion):
                 wi = sample_weight[i]
 
             self.weighted_n_node_samples += wi
-            row_sum = 0.0
 
             for k in range(n_node_cols):
                 j = _node_col_indices[k]
@@ -410,12 +319,8 @@ cdef class AxisRegressionCriterion(AxisCriterion):
                     wj = col_weights[j]
 
                 y_ij = y[i, j]
-
-                row_sum += wj * y_ij
                 self.sum_total[k] += wi * y_ij
                 self.sq_sum_total += wi * wj * y_ij * y_ij
-
-            self.sum_sq_row_sums += wi * row_sum * row_sum
 
         # Reset to pos=start
         self.reset()
@@ -547,62 +452,49 @@ cdef class AxisMSE(AxisRegressionCriterion):
         for k in range(self.n_node_cols):
             if self.col_weights is not None:
                 wj = self.col_weights[self._node_col_indices[k]]
-
             proxy_impurity_left += wj * self.sum_left[k] * self.sum_left[k]
             proxy_impurity_right += wj * self.sum_right[k] * self.sum_right[k]
 
-        return (proxy_impurity_left / self.weighted_n_left +
-                proxy_impurity_right / self.weighted_n_right)
+        return (
+            proxy_impurity_left / self.weighted_n_left
+            + proxy_impurity_right / self.weighted_n_right
+        )
 
-    cdef void node_axes_impurities(
-        self,
-        double* rows_impurity,
-        double* cols_impurity,
-    ) nogil:
+    cdef double node_impurity(self) noexcept nogil:
         """Evaluate the impurity of the current node in both directions.
         Evaluate the MSE criterion as impurity of the current node,
         i.e. the impurity of sample_indices[start:end]. The smaller the impurity the
         better.
         """
-        # TODO: cache output as we do with self.axes_children_impurities()?
+        # TODO: cache output
         cdef:
             SIZE_t k
             double wj = 1.0
-
-        rows_impurity[0] = self.sq_sum_total / self.weighted_n_node_samples
-        cols_impurity[0] = self.sq_sum_total / self.weighted_n_node_cols
+            double sum_sq_col_sums = 0.0
 
         for k in range(self.n_node_cols):
             if self.col_weights is not None:
                 wj = self.col_weights[self._node_col_indices[k]]
+            sum_sq_col_sums += wj * self.sum_total[k] ** 2
 
-            rows_impurity[0] -= (
-                wj * (self.sum_total[k] / self.weighted_n_node_samples) ** 2.0
-            )
+        return (
+            self.sq_sum_total / self.weighted_n_node_samples
+            - sum_sq_col_sums / self.weighted_n_node_samples ** 2
+        ) / self.weighted_n_node_cols
+        
 
-        cols_impurity[0] -= (
-            self.sum_sq_row_sums / self.weighted_n_node_cols ** 2.0
-        )
-
-        rows_impurity[0] /= self.weighted_n_node_cols
-        cols_impurity[0] /= self.weighted_n_node_samples
-
-    cdef void children_axes_impurities(
+    cdef void children_impurity(
         self,
-        double* rows_impurity_left,
-        double* rows_impurity_right,
-        double* cols_impurity_left,
-        double* cols_impurity_right,
-    ) nogil:
+        double* impurity_left,
+        double* impurity_right,
+    ) noexcept nogil:
         """Evaluate the impurity in children nodes, in both directions.
         i.e. the impurity of the left child (sample_indices[start:pos]) and the
         impurity the right child (sample_indices[pos:end]).
         """
         if self.pos == self._cached_pos:
-            rows_impurity_left[0] = self._cached_rows_impurity_left
-            rows_impurity_right[0] = self._cached_rows_impurity_right
-            cols_impurity_left[0] = self._cached_cols_impurity_left
-            cols_impurity_right[0] = self._cached_cols_impurity_right
+            impurity_left[0] = self._cached_impurity_left
+            impurity_right[0] = self._cached_impurity_right
             return
 
         cdef:
@@ -613,77 +505,101 @@ cdef class AxisMSE(AxisRegressionCriterion):
 
             const DOUBLE_t[:] col_weights = self.col_weights
             SIZE_t[::1] _node_col_indices = self._node_col_indices
-            SIZE_t start_col = self.start_col
-            SIZE_t end_col = self.end_col
-            SIZE_t n_node_cols = self.n_node_cols
-
-            DOUBLE_t y_ij
 
             double sq_sum_left = 0.0
             double sq_sum_right
-            double sum_sq_row_sums_left = 0.0
-            double row_sum
             double sum_sq_col_sums_left = 0.0
             double sum_sq_col_sums_right = 0.0
 
             SIZE_t i, j, p, k
+            DOUBLE_t y_ij
             DOUBLE_t wi = 1.0, wj = 1.0
 
-        for p in range(start, pos):
-            i = sample_indices[p]
-            if sample_weight is not None:
-                wi = sample_weight[i]
+        for k in range(self.n_node_cols):
+            j = _node_col_indices[k]
+            if col_weights is not None:
+                wj = col_weights[j]
 
-            row_sum = 0.0
+            sum_sq_col_sums_left += wj * self.sum_left[k] ** 2
+            sum_sq_col_sums_right += wj * self.sum_right[k] ** 2
 
-            for k in range(n_node_cols):
-                j = _node_col_indices[k]
-                if col_weights is not None:
-                    wj = col_weights[j]
+            for p in range(start, pos):
+                i = sample_indices[p]
+                if sample_weight is not None:
+                    wi = sample_weight[i]
 
                 y_ij = self.y_[i, j]
                 sq_sum_left += wi * wj * y_ij * y_ij
-                row_sum += wj * y_ij
-            
-            sum_sq_row_sums_left += wi * row_sum * row_sum
 
         sq_sum_right = self.sq_sum_total - sq_sum_left
-        sum_sq_row_sums_right = self.sum_sq_row_sums - sum_sq_row_sums_left
 
-        rows_impurity_left[0] = sq_sum_left / self.weighted_n_left
-        rows_impurity_right[0] = sq_sum_right / self.weighted_n_right
-        cols_impurity_left[0] = sq_sum_left / self.weighted_n_node_cols
-        cols_impurity_right[0] = sq_sum_right / self.weighted_n_node_cols
+        impurity_left[0] = (
+            sq_sum_left / self.weighted_n_left
+            - sum_sq_col_sums_left / self.weighted_n_left ** 2.0
+        ) / self.weighted_n_node_cols
 
-        for k in range(self.n_node_cols):
-            if col_weights is not None:
-                wj = col_weights[_node_col_indices[k]]
-            sum_sq_col_sums_left += wj * self.sum_left[k] * self.sum_left[k]
-            sum_sq_col_sums_right += wj * self.sum_right[k] * self.sum_right[k]
-        
-        rows_impurity_left[0] -= (
-            sum_sq_col_sums_left / self.weighted_n_left ** 2.0
-        )
-        rows_impurity_right[0] -= (
-            sum_sq_col_sums_right / self.weighted_n_right ** 2.0
-        )
-        cols_impurity_left[0] -= (
-            sum_sq_row_sums_left / self.weighted_n_node_cols ** 2.0
-        )
-        cols_impurity_right[0] -= (
-            sum_sq_row_sums_right / self.weighted_n_node_cols ** 2.0
-        )
-
-        rows_impurity_left[0] /= self.weighted_n_node_cols
-        rows_impurity_right[0] /= self.weighted_n_node_cols
-        cols_impurity_left[0] /= self.weighted_n_left
-        cols_impurity_right[0] /= self.weighted_n_right
+        impurity_right[0] = (
+            sq_sum_right / self.weighted_n_right
+            - sum_sq_col_sums_right / self.weighted_n_right ** 2.0
+        ) / self.weighted_n_node_cols
 
         self._cached_pos = self.pos
-        self._cached_rows_impurity_left = rows_impurity_left[0]
-        self._cached_rows_impurity_right = rows_impurity_right[0]
-        self._cached_cols_impurity_left = cols_impurity_left[0]
-        self._cached_cols_impurity_right = cols_impurity_right[0]
+        self._cached_impurity_left = impurity_left[0]
+        self._cached_impurity_right = impurity_right[0]
+
+    cdef void col_split_children_impurity(
+        self,
+        SIZE_t col_split_pos,
+        double* impurity_left,
+        double* impurity_right,
+    ) noexcept nogil:
+        cdef:
+            const DOUBLE_t[:] sample_weight = self.sample_weight
+            const SIZE_t[:] sample_indices = self.sample_indices
+            SIZE_t start = self.start
+            SIZE_t end = self.end
+
+            const DOUBLE_t[:] col_weights = self.col_weights
+            SIZE_t[::1] _node_col_indices = self._node_col_indices
+
+            DOUBLE_t y_ij
+
+            double sq_sum_left = 0.0
+            double weighted_n_cols_left = 0.0
+            double sum_sq_col_sums_left = 0.0
+
+            SIZE_t i, j, p, q, k
+            DOUBLE_t wi = 1.0, wj = 1.0
+
+        for q in range(self.start_col, self.start_col + col_split_pos):
+            j = self.col_indices[q]
+            # FIXME: order of col_indices is no more the order used to
+            # determine col_split_pos.
+            k = search(_node_col_indices, j, 0, self.n_node_cols)
+            if col_weights is not None:
+                wj = col_weights[j]
+
+            weighted_n_cols_left += wj
+            sum_sq_col_sums_left += wj * self.sum_total[k] ** 2
+
+            for p in range(start, end):
+                i = sample_indices[p]
+                if sample_weight is not None:
+                    wi = sample_weight[i]
+
+                y_ij = self.y_[i, j]
+                sq_sum_left += wi * wj * y_ij * y_ij
+
+        impurity_left[0] = (
+            sq_sum_left / self.weighted_n_node_samples
+            - sum_sq_col_sums_left / self.weighted_n_node_samples ** 2
+        ) / weighted_n_cols_left
+
+        # FIXME: redundant calculation
+        impurity_right[0] = (
+            self.weighted_n_cols * self.node_impurity()
+            - weighted_n_cols_left * impurity_left[0]
+        ) / (self.weighted_n_cols - weighted_n_cols_left)
 
 
 cdef class AxisFriedmanMSE(AxisMSE):
@@ -705,10 +621,9 @@ cdef class AxisFriedmanMSE(AxisMSE):
         cdef:
             double total_sum_left = 0.0
             double total_sum_right = 0.0
-
-            SIZE_t k
             double diff = 0.0
             double wj = 1.0
+            SIZE_t k
 
         for k in range(self.n_node_cols):
             if self.col_weights is not None:
@@ -717,9 +632,10 @@ cdef class AxisFriedmanMSE(AxisMSE):
             total_sum_left += wj * self.sum_left[k]
             total_sum_right += wj * self.sum_right[k]
 
-        diff = (self.weighted_n_right * total_sum_left -
-                self.weighted_n_left * total_sum_right)
-
+        diff = (
+            self.weighted_n_right * total_sum_left
+            - self.weighted_n_left * total_sum_right
+        )
         return diff * diff / (self.weighted_n_left * self.weighted_n_right)
 
     cdef double impurity_improvement(
@@ -743,11 +659,16 @@ cdef class AxisFriedmanMSE(AxisMSE):
             total_sum_left += wj * self.sum_left[k]
             total_sum_right += wj * self.sum_right[k]
 
-        diff = (self.weighted_n_right * total_sum_left -
-                self.weighted_n_left * total_sum_right) / self.weighted_n_node_cols
+        diff = (
+            self.weighted_n_right * total_sum_left
+            - self.weighted_n_left * total_sum_right
+        ) / self.weighted_n_node_cols
 
-        return (diff * diff / (self.weighted_n_left * self.weighted_n_right *
-                               self.weighted_n_node_samples))
+        return diff * diff / (
+            self.weighted_n_left
+            * self.weighted_n_right
+            * self.weighted_n_node_samples
+        )
 
 
 cdef class AxisClassificationCriterion(AxisCriterion):
@@ -798,8 +719,11 @@ cdef class AxisClassificationCriterion(AxisCriterion):
         self.sum_right = np.zeros((n_outputs, max_n_classes), dtype=np.float64)
 
     def __reduce__(self):
-        return (type(self),
-                (self.n_outputs, np.asarray(self.n_classes)), self.__getstate__())
+        return (
+            type(self),
+            (self.n_outputs, np.asarray(self.n_classes)),
+            self.__getstate__(),
+        )
 
     cdef int axis_init(
         self,
@@ -1028,11 +952,7 @@ cdef class AxisEntropy(AxisClassificationCriterion):
         cross-entropy = -\sum_{k=0}^{K-1} count_k log(count_k)
     """
 
-    cdef void node_axes_impurities(
-        self,
-        double* rows_impurity,
-        double* cols_impurity,
-    ) nogil:
+    cdef double node_impurity(self) noexcept nogil:
         """Evaluate the impurity of the current node.
         Evaluate the cross-entropy criterion as impurity of the current node,
         i.e. the impurity of sample_indices[start:end]. The smaller the impurity the
@@ -1056,15 +976,12 @@ cdef class AxisEntropy(AxisClassificationCriterion):
                     count_k /= self.weighted_n_node_samples
                     entropy -= count_k * log(count_k) * wj
 
-        rows_impurity[0] = entropy / self.weighted_n_node_cols
-        cols_impurity[0] = self.weighted_n_node_cols / self.weighted_n_cols  # FIXME
+        return entropy / self.weighted_n_node_cols
 
-    cdef void children_axes_impurities(
+    cdef void children_impurity(
         self,
-        double* rows_impurity_left,
-        double* rows_impurity_right,
-        double* cols_impurity_left,
-        double* cols_impurity_right,
+        double* impurity_left,
+        double* impurity_right,
     ) noexcept nogil:
         """Evaluate the impurity in children nodes.
         i.e. the impurity of the left child (sample_indices[start:pos]) and the
@@ -1100,11 +1017,55 @@ cdef class AxisEntropy(AxisClassificationCriterion):
                     count_k /= self.weighted_n_right
                     entropy_right -= wj * count_k * log(count_k)
 
+<<<<<<< HEAD
         rows_impurity_left[0] = entropy_left / self.weighted_n_node_cols
         rows_impurity_right[0] = entropy_right / self.weighted_n_node_cols
 
         cols_impurity_left[0] = self.weighted_n_node_cols / self.weighted_n_cols  # FIXME
         cols_impurity_right[0] = self.weighted_n_node_cols / self.weighted_n_cols  # FIXME
+=======
+        impurity_left[0] = entropy_left / self.weighted_n_node_cols
+        impurity_right[0] = entropy_right / self.weighted_n_node_cols
+
+    cdef void col_split_children_impurity(
+        self,
+        SIZE_t col_split_pos,
+        double* impurity_left,
+        double* impurity_right,
+    ) noexcept nogil:
+        """Evaluate the impurity in children nodes.
+        i.e. the impurity of the left child (sample_indices[start:pos]) and the
+        impurity the right child (sample_indices[pos:end]).
+        Parameters
+        ----------
+        impurity_left : double pointer
+            The memory address to save the impurity of the left node
+        impurity_right : double pointer
+            The memory address to save the impurity of the right node
+        """
+        cdef:
+            double entropy_left = 0.0
+            double weighted_n_cols_left = 0.0
+            double wj = 1.0
+            double count_k
+            SIZE_t k, c, j
+
+        for k in range(col_split_pos):
+            j = self._node_col_indices[k]
+            if self.col_weights is not None:
+                wj = self.col_weights[j]
+
+            weighted_n_cols_left += wj
+
+            for c in range(self.n_classes[j]):
+                count_k = self.sum_total[k, c]  # not sum_left
+                if count_k > 0.0:
+                    count_k /= self.weighted_n_node_samples
+                    entropy_left -= wj * count_k * log(count_k)
+
+        impurity_left[0] = entropy_left / weighted_n_cols_left
+        impurity_right[0] = self.node_impurity() - impurity_left[0]
+>>>>>>> d2a145e (WIP new idea for axiscrit imp other axis)
 
 
 cdef class AxisGini(AxisClassificationCriterion):
@@ -1119,18 +1080,14 @@ cdef class AxisGini(AxisClassificationCriterion):
               = 1 - \sum_{k=0}^{K-1} count_k ** 2
     """
 
-    cdef void node_axes_impurities(
-        self,
-        double* rows_impurity, 
-        double* cols_impurity, 
-    ) nogil:
+    cdef double node_impurity(self) noexcept nogil:
         """Evaluate the impurity of the current node.
         Evaluate the Gini criterion as impurity of the current node,
         i.e. the impurity of sample_indices[start:end]. The smaller the impurity the
         better.
         """
         cdef:
-            double gini = 0.0
+            double total_sq_count = 0.0
             double wj = 1.0
             double sq_count
             double count_k
@@ -1147,20 +1104,18 @@ cdef class AxisGini(AxisClassificationCriterion):
                 count_k = self.sum_total[k, c]
                 sq_count += count_k * count_k
 
-            gini += wj * sq_count / (self.weighted_n_node_samples *
-                                      self.weighted_n_node_samples)
+            total_sq_count += wj * sq_count
 
-        rows_impurity[0] = 1.0 - gini / self.weighted_n_node_cols
-        cols_impurity[0] = self.weighted_n_node_cols / self.weighted_n_cols  # FIXME
+        return 1.0 - total_sq_count / (
+            self.weighted_n_node_cols * self.weighted_n_node_samples ** 2
+        )
 
     # TODO: cache?
-    cdef void children_axes_impurities(
-            self,
-            double* rows_impurity_left,
-            double* rows_impurity_right,
-            double* cols_impurity_left,
-            double* cols_impurity_right,
-        ) noexcept nogil:
+    cdef void children_impurity(
+        self,
+        double* impurity_left,
+        double* impurity_right,
+    ) noexcept nogil:
         """Evaluate the impurity in children nodes.
         i.e. the impurity of the left child (sample_indices[start:pos]) and the
         impurity the right child (sample_indices[pos:end]) using the Gini index.
@@ -1172,8 +1127,8 @@ cdef class AxisGini(AxisClassificationCriterion):
             The memory address to save the impurity of the right node to
         """
         cdef:
-            double gini_left = 0.0
-            double gini_right = 0.0
+            double total_sq_count_left = 0.0
+            double total_sq_count_right = 0.0
             double sq_count_left
             double sq_count_right
             double count_k
@@ -1195,18 +1150,46 @@ cdef class AxisGini(AxisClassificationCriterion):
                 count_k = self.sum_right[k, c]
                 sq_count_right += count_k * count_k
 
-            gini_left += wj * sq_count_left / (self.weighted_n_left *
-                                                self.weighted_n_left)
+            total_sq_count_left += wj * sq_count_left
+            total_sq_count_right += wj * sq_count_right
 
-            gini_right += wj * sq_count_right / (self.weighted_n_right *
-                                                  self.weighted_n_right)
+        impurity_left[0] = 1.0 - total_sq_count_left / (
+            self.weighted_n_node_cols * self.weighted_n_left ** 2
+        )
+        impurity_right[0] = 1.0 - total_sq_count_right / (
+            self.weighted_n_node_cols * self.weighted_n_right ** 2
+        )
 
-        rows_impurity_left[0] = 1.0 - gini_left / self.weighted_n_node_cols
-        rows_impurity_right[0] = 1.0 - gini_right / self.weighted_n_node_cols
-        # FIXME: it grows till the end when it should not
-        cols_impurity_left[0] = self.weighted_n_node_cols / self.weighted_n_cols  # FIXME
-        cols_impurity_right[0] = self.weighted_n_node_cols / self.weighted_n_cols  # FIXME
+    cdef void col_split_children_impurity(
+        self,
+        SIZE_t col_split_pos,
+        double* impurity_left,
+        double* impurity_right,
+    ) noexcept nogil:
+        cdef:
+            double total_sq_count_left = 0.0
+            double sq_count_left
+            double count_k
+            double weighted_n_cols_left = 0.0
+            double wj = 1.0
+            SIZE_t k, c, j
 
-# TODO:
-#    cdef other_axis_children_impurity(SIZE_t other_axis_pos) nogil:
-#        self.sum_total[k]
+        for k in range(col_split_pos):
+            j = self._node_col_indices[k]
+            sq_count_left = 0.0
+
+            if self.col_weights is not None:
+                wj = self.col_weights[j]
+
+            weighted_n_cols_left += wj
+
+            for c in range(self.n_classes[j]):
+                count_k = self.sum_total[k, c]  # not sum_left
+                sq_count_left += count_k * count_k
+
+            total_sq_count_left += wj * sq_count_left
+
+        impurity_left[0] = 1.0 - total_sq_count_left / (
+            weighted_n_cols_left * self.weighted_n_node_samples ** 2
+        )
+        impurity_right[0] = self.node_impurity() - impurity_left[0]

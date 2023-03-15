@@ -583,8 +583,10 @@ cdef class GMO(BipartiteCriterion):
 
         In scikit-learn trees it is only used at the root node.
         """
-        # Should be equal among axes.
-        return self.criterion_rows.node_impurity()
+        return 0.5 * (
+            self.criterion_rows.node_impurity()
+            + self.criterion_cols.node_impurity()
+        )
 
     cdef void children_impurity(
             self,
@@ -592,10 +594,29 @@ cdef class GMO(BipartiteCriterion):
             double* impurity_right,
             SIZE_t axis,
     ) nogil:
-        (<AxisCriterion> self._get_criterion(axis)).children_impurity(
+        cdef:
+            void* criterion = self._get_criterion(axis)
+            void* other_criterion = self._get_criterion(1-axis)
+            double other_impurity_left
+            double other_impurity_right
+
+        (<AxisCriterion>criterion).children_impurity(
             impurity_left,
             impurity_right,
         )
+        (<AxisCriterion>other_criterion).col_split_children_impurity(
+            (<AxisCriterion>criterion).pos,
+            &other_impurity_left,
+            &other_impurity_right,
+        )
+        with gil:
+            print('*** axis pos', axis, (<AxisCriterion>criterion).pos)
+            print('*** rows parent imp', (<AxisCriterion>criterion).node_impurity())
+            print('*** rowsimp left right', impurity_left[0], impurity_right[0])
+            print('*** cols parent imp', (<AxisCriterion>other_criterion).node_impurity())
+            print('*** colsimp left right', other_impurity_left, other_impurity_right)
+        impurity_left[0] = 0.5 * (impurity_left[0] + other_impurity_left)
+        impurity_right[0] = 0.5 * (impurity_right[0] + other_impurity_right)
 
     cdef double impurity_improvement(
         self,
@@ -606,7 +627,7 @@ cdef class GMO(BipartiteCriterion):
     ) nogil:
         """The final value to express the split quality. 
         """
-        return (<AxisCriterion> self._get_criterion(axis)).impurity_improvement(
+        return (<AxisCriterion>self._get_criterion(axis)).impurity_improvement(
             impurity_parent,
             impurity_left,
             impurity_right,

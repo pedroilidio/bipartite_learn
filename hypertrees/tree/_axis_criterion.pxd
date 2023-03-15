@@ -79,33 +79,18 @@ cdef class AxisCriterion(Criterion):
     # NOTE: self._cached_pos must be reset at AxisCriterion.init() to
     # ensure it always corresponds to the current tree node.
     cdef SIZE_t _cached_pos
-    cdef double _cached_rows_node_impurity
-    cdef double _cached_cols_node_impurity
-    cdef double _cached_rows_impurity_left
-    cdef double _cached_rows_impurity_right
-    cdef double _cached_cols_impurity_left
-    cdef double _cached_cols_impurity_right
+    cdef double _cached_node_impurity
+    cdef double _cached_impurity_left
+    cdef double _cached_impurity_right
 
-    cdef void init_columns(
+    cdef int init_columns(
         self,
         const DOUBLE_t[:] col_weights,
         double weighted_n_cols,
         const SIZE_t[:] col_indices,
         SIZE_t start_col,
         SIZE_t end_col,
-    ) nogil
-    cdef void node_axes_impurities(
-        self,
-        double* rows_impurity,
-        double* cols_impurity,
-    ) nogil
-    cdef void children_axes_impurities(
-        self,
-        double* rows_impurity_left,
-        double* rows_impurity_right,
-        double* cols_impurity_left,
-        double* cols_impurity_right,
-    ) nogil
+    ) except -1 nogil
     cdef int axis_init(
         self,
         const DOUBLE_t[:, :] y,
@@ -120,18 +105,18 @@ cdef class AxisCriterion(Criterion):
         SIZE_t start_col,
         SIZE_t end_col,
     ) except -1 nogil
-    cdef void total_node_value(self, double* dest) nogil
+    cdef void total_node_value(self, double* dest) noexcept nogil
+    cdef void col_split_children_impurity(
+        self,
+        SIZE_t col_split_pos,
+        double* impurity_left,
+        double* impurity_right,
+    ) noexcept nogil
 
 
 cdef class AxisRegressionCriterion(AxisCriterion):
     """Abstract regression criterion."""
-
     cdef double sq_sum_total
-    # TODO: sq_row_sums is naturally calculated by the criterion in the other
-    #       axis. We could set it as a pointer to the other axis criterion's
-    #       sum_total.
-    cdef double sum_sq_row_sums  # np.sum(sample_weights * np.sum(y, axis=1) ** 2)
-
     cdef double[::1] sum_total  # The sum of w*y.
     cdef double[::1] sum_left   # Same as above, but for the left side of the split
     cdef double[::1] sum_right  # Same as above, but for the right side of the split
@@ -139,10 +124,8 @@ cdef class AxisRegressionCriterion(AxisCriterion):
 
 cdef class AxisClassificationCriterion(AxisCriterion):
     """Abstract criterion for classification."""
-
     cdef SIZE_t[::1] n_classes
     cdef SIZE_t max_n_classes
-
     cdef double[:, ::1] sum_total   # The sum of the weighted count of each label.
     cdef double[:, ::1] sum_left    # Same as above, but for the left side of the split
     cdef double[:, ::1] sum_right   # Same as above, but for the right side of the split

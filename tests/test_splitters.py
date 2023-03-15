@@ -51,10 +51,8 @@ DTYPE_t, DOUBLE_t = np.float32, np.float64
 # Default test params
 DEF_PARAMS = dict(
     seed=0,
-    # shape=(10, 10),
-    shape=(50, 50),
-    # nattrs=(10, 9),
-    nattrs=(10, 10),
+    shape=(50, 40),
+    nattrs=(10, 9),
     nrules=1,
     min_samples_leaf=1,
     # min_samples_leaf=100,
@@ -958,14 +956,21 @@ def test_splitter_gmo(**params):
     )
 
 
-# TODO: compare results
-def test_splitter_gmo_classification(**params):
+def test_splitter_gmo_classification(random_state, **params):
     params = DEF_PARAMS | params
-    BipartiteSplitter = make_2d_splitter(
+
+    X, Y = make_interaction_blobs(
+        n_features=params['nattrs'],
+        n_samples=params['shape'],
+        random_state=check_random_state(random_state),
+        noise=5.0,
+        centers=10,
+    )
+    splitter2 = make_2d_splitter(
         criterion_wrapper_class=GMO,
-        is_classification=True,
+        is_classification=False,
         splitters=BestSplitter,
-        criteria=[AxisGini, AxisGini],
+        criteria=AxisMSE,
         max_features=params['nattrs'],
         n_samples=params['shape'],
         n_outputs=params['shape'][::-1],
@@ -973,14 +978,48 @@ def test_splitter_gmo_classification(**params):
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.0,
     )
+    result2 = test_splitter_nd(
+        splitter2,
+        X,
+        Y,
+        verbose=params['verbose'],
+    )
 
-    with pytest.raises(AssertionError):
-        compare_splitters_1d2d(
-            splitter1=BestSplitter,
-            splitter2=BipartiteSplitter,
-            multioutput_1d=True,
-            **params,
-        )
+    if result2['axis'] == 0:
+        x, y = X[0], Y
+    elif result2['axis'] == 1:
+        x, y = X[1], np.ascontiguousarray(Y.T)
+    else:
+        raise ValueError
+
+    splitter1 = BestSplitter(
+        criterion=MSE(
+            n_samples=y.shape[0],
+            n_outputs=y.shape[1],
+        ),
+        max_features=x.shape[1],
+        min_samples_leaf=1,
+        min_weight_leaf=0.0,
+        random_state=check_random_state(random_state),
+    )
+    result1 = test_splitter(
+        splitter1,
+        x,
+        y,
+        verbose=params['verbose'],
+    )
+    manual_result = manual_split_eval_mse(
+        x, y,
+        pos=result1['pos'],
+        feature=result1['feature'],
+    )
+    result1['feature'] += result2['axis'] * X[0].shape[1]
+
+    assert_equal_dicts(
+        result1, manual_result, msg_prefix='(manual) '
+    )
+
+    assert_equal_dicts(result2, result1, ignore=['axis'])
 
 
 def test_ss_axis_decision_only(supervision, random_state, **params):
