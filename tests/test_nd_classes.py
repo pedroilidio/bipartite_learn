@@ -261,15 +261,17 @@ class TestGMOSymmetry:
 
 @pytest.mark.parametrize("splitter", ["random", "best"])
 @pytest.mark.parametrize("adapter", ["gso", "gmosa"])
-def test_identity_gso(splitter, adapter, **params):
+def test_identity_gso_gmosa(splitter, adapter, **params):
     params = DEF_PARAMS | params
     XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
     tree = BipartiteDecisionTreeRegressor(
         min_samples_leaf=1,
         splitter=splitter,
         bipartite_adapter=adapter,
-    )
-    assert_allclose(tree.fit(XX, Y).predict(XX).reshape(Y.shape), Y)
+    ).fit(XX, Y)
+
+    assert_allclose(get_leaves(tree.tree_)['n_node_samples'], 1)
+    assert_allclose(tree.predict(XX).reshape(Y.shape), Y)
 
 
 @pytest.mark.parametrize(

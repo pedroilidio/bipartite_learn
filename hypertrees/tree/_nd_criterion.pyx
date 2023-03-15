@@ -609,12 +609,6 @@ cdef class GMO(BipartiteCriterion):
             &other_impurity_left,
             &other_impurity_right,
         )
-        with gil:
-            print('*** axis pos', axis, (<AxisCriterion>criterion).pos)
-            print('*** rows parent imp', (<AxisCriterion>criterion).node_impurity())
-            print('*** rowsimp left right', impurity_left[0], impurity_right[0])
-            print('*** cols parent imp', (<AxisCriterion>other_criterion).node_impurity())
-            print('*** colsimp left right', other_impurity_left, other_impurity_right)
         impurity_left[0] = 0.5 * (impurity_left[0] + other_impurity_left)
         impurity_right[0] = 0.5 * (impurity_right[0] + other_impurity_right)
 

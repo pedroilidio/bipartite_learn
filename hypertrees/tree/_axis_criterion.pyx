@@ -571,10 +571,8 @@ cdef class AxisMSE(AxisRegressionCriterion):
             SIZE_t i, j, p, q, k
             DOUBLE_t wi = 1.0, wj = 1.0
 
-        for q in range(self.start_col, self.start_col + col_split_pos):
+        for q in range(self.start_col, col_split_pos):
             j = self.col_indices[q]
-            # FIXME: order of col_indices is no more the order used to
-            # determine col_split_pos.
             k = search(_node_col_indices, j, 0, self.n_node_cols)
             if col_weights is not None:
                 wj = col_weights[j]
@@ -1017,13 +1015,6 @@ cdef class AxisEntropy(AxisClassificationCriterion):
                     count_k /= self.weighted_n_right
                     entropy_right -= wj * count_k * log(count_k)
 
-<<<<<<< HEAD
-        rows_impurity_left[0] = entropy_left / self.weighted_n_node_cols
-        rows_impurity_right[0] = entropy_right / self.weighted_n_node_cols
-
-        cols_impurity_left[0] = self.weighted_n_node_cols / self.weighted_n_cols  # FIXME
-        cols_impurity_right[0] = self.weighted_n_node_cols / self.weighted_n_cols  # FIXME
-=======
         impurity_left[0] = entropy_left / self.weighted_n_node_cols
         impurity_right[0] = entropy_right / self.weighted_n_node_cols
 
@@ -1048,10 +1039,11 @@ cdef class AxisEntropy(AxisClassificationCriterion):
             double weighted_n_cols_left = 0.0
             double wj = 1.0
             double count_k
-            SIZE_t k, c, j
+            SIZE_t k, c, j, q
 
-        for k in range(col_split_pos):
-            j = self._node_col_indices[k]
+        for q in range(self.start_col, col_split_pos):
+            j = self.col_indices[q]
+            k = search(self._node_col_indices, j, 0, self.n_node_cols)
             if self.col_weights is not None:
                 wj = self.col_weights[j]
 
@@ -1064,8 +1056,12 @@ cdef class AxisEntropy(AxisClassificationCriterion):
                     entropy_left -= wj * count_k * log(count_k)
 
         impurity_left[0] = entropy_left / weighted_n_cols_left
-        impurity_right[0] = self.node_impurity() - impurity_left[0]
->>>>>>> d2a145e (WIP new idea for axiscrit imp other axis)
+
+        # FIXME: redundant calculation
+        impurity_right[0] = (
+            self.weighted_n_cols * self.node_impurity()
+            - weighted_n_cols_left * impurity_left[0]
+        ) / (self.weighted_n_cols - weighted_n_cols_left)
 
 
 cdef class AxisGini(AxisClassificationCriterion):
@@ -1172,10 +1168,11 @@ cdef class AxisGini(AxisClassificationCriterion):
             double count_k
             double weighted_n_cols_left = 0.0
             double wj = 1.0
-            SIZE_t k, c, j
+            SIZE_t k, q, c, j
 
-        for k in range(col_split_pos):
-            j = self._node_col_indices[k]
+        for q in range(self.start_col, col_split_pos):
+            j = self.col_indices[q]
+            k = search(self._node_col_indices, j, 0, self.n_node_cols)
             sq_count_left = 0.0
 
             if self.col_weights is not None:
@@ -1192,4 +1189,9 @@ cdef class AxisGini(AxisClassificationCriterion):
         impurity_left[0] = 1.0 - total_sq_count_left / (
             weighted_n_cols_left * self.weighted_n_node_samples ** 2
         )
-        impurity_right[0] = self.node_impurity() - impurity_left[0]
+
+        # FIXME: redundant calculation
+        impurity_right[0] = (
+            self.weighted_n_cols * self.node_impurity()
+            - weighted_n_cols_left * impurity_left[0]
+        ) / (self.weighted_n_cols - weighted_n_cols_left)
