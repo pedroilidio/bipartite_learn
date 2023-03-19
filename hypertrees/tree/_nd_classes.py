@@ -803,6 +803,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
 class BipartiteDecisionTreeRegressor(
     BaseBipartiteDecisionTree,
     DecisionTreeRegressor,
+    RegressorMixin,
 ):
     """Decision tree regressor tailored to bipartite input.
 
