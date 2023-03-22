@@ -278,7 +278,6 @@ def test_bipartite_ss_criterion(data, n_features, n_samples, supervision, random
         n_samples=n_samples,
         n_outputs=1,
         random_state=check_random_state(random_state),
-        axis_decision_only=False,
     )
 
     row_splits, col_splits = apply_bipartite_ss_criterion(
@@ -355,7 +354,6 @@ def test_bipartite_ss_criterion_proxy_improvement(
         n_samples=n_samples,
         n_outputs=1,
         random_state=check_random_state(random_state),
-        axis_decision_only=False,
     )
     mono_criterion = make_semisupervised_criterion(
         supervision=supervision,

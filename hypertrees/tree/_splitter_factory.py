@@ -14,6 +14,8 @@ from ._nd_criterion import SquaredErrorGSO
 from ._semisupervised_criterion import (
     SemisupervisedCriterion,
     SSCompositeCriterion,
+    HomogeneousCompositeSS,
+    AxisHomogeneousCompositeSS,
     BipartiteSemisupervisedCriterion,
 )
 from ._axis_criterion import AxisCriterion, AxisClassificationCriterion
@@ -34,6 +36,34 @@ def _duplicate_single_parameters(*params, ndim=2):
             result.append([copy.deepcopy(param) for _ in range(ndim)])
 
     return result
+
+
+def _infer_ss_adapter_type(
+    *,
+    criterion: Type,
+    unsupervised_criterion: Type,
+) -> Type[SemisupervisedCriterion]:
+    if (
+        not issubclass(criterion, Criterion)
+        or not issubclass(unsupervised_criterion, Criterion)
+    ):
+        raise TypeError(
+            "Both of criterion and unsupervised criterion must "
+            "be subblasses of Criterion"
+        )
+    if (
+        issubclass(criterion, AxisCriterion)
+        != issubclass(unsupervised_criterion, AxisCriterion)
+    ):
+        raise TypeError(
+            "Either both or none of criterion and unsupervised criterion must "
+            "be subblasses of AxisCriterion"
+        )
+    if unsupervised_criterion == criterion:
+        if issubclass(criterion, AxisCriterion):
+            return AxisHomogeneousCompositeSS
+        return HomogeneousCompositeSS
+    return SSCompositeCriterion
 
 
 def check_criterion(
@@ -312,7 +342,6 @@ def make_2dss_splitter(
         n_outputs=n_outputs,
         random_state=random_state,
         pairwise=pairwise,
-        axis_decision_only=axis_decision_only,
         ss_criterion_wrapper_class=ss_criterion_wrapper_class,
     )
 
@@ -369,12 +398,9 @@ def make_semisupervised_criterion(
     n_features=None,
     n_samples=None,
     update_supervision=None,
-    ss_class=SSCompositeCriterion,
+    ss_class=None,
     pairwise=False,
 ):
-    # Facilitate setting the default ss_class as simply None
-    ss_class = SSCompositeCriterion if ss_class is None else ss_class
-
     supervised_criterion = check_criterion(
         criterion=supervised_criterion,
         n_outputs=n_outputs,
@@ -399,6 +425,12 @@ def make_semisupervised_criterion(
         pairwise=pairwise,
     )
 
+    if ss_class is None:
+        ss_class = _infer_ss_adapter_type(
+            criterion=type(supervised_criterion),
+            unsupervised_criterion=type(unsupervised_criterion),
+        )
+
     return ss_class(
         supervision=supervision,
         supervised_criterion=supervised_criterion,
@@ -421,7 +453,6 @@ def make_2dss_criterion(
     is_classification=False,
     random_state=None,
     pairwise=False,
-    axis_decision_only=False,
     ss_criterion_wrapper_class=BipartiteSemisupervisedCriterion,
 ):
     """Factory function of BipartiteSplitter instances with semisupervised criteria.
@@ -456,48 +487,24 @@ def make_2dss_criterion(
 
     # Make semi-supervised criteria
     for ax in range(2):
-        if axis_decision_only:  
-            supervised_criteria[ax] = check_criterion(
-                supervised_criteria[ax],
+        if not isinstance(ss_criteria[ax], SemisupervisedCriterion):
+            ss_criteria[ax] = make_semisupervised_criterion(
+                ss_class=ss_criteria[ax],
+                supervision=supervision[ax],
+                # update_supervision=update_supervision,
+                update_supervision=None,  # The wrapper will take charge
+                supervised_criterion=supervised_criteria[ax],
+                unsupervised_criterion=unsupervised_criteria[ax],
                 n_outputs=n_outputs[ax],
+                n_features=n_features[ax],
                 n_samples=n_samples[ax],
+                pairwise=pairwise[ax],
                 n_classes=n_classes[ax],
                 is_classification=is_classification,
             )
-            unsupervised_criteria[ax] = check_criterion(
-                unsupervised_criteria[ax],
-                n_outputs=n_features[ax],
-                n_samples=n_samples[ax],
-                pairwise=pairwise[ax],
-            )
-
-            if (ss_criteria[ax] is not None):
-                warnings.warn(
-                    f"Since {axis_decision_only=} is not None, the provided "
-                    f"{ss_criteria[ax]=} is being ignored."
-                )
-        else:  # not axis_decision_only
-            if ss_criteria[ax] is None:
-                ss_criteria[ax] = SSCompositeCriterion
-
-            if not isinstance(ss_criteria[ax], SemisupervisedCriterion):
-                ss_criteria[ax] = make_semisupervised_criterion(
-                    ss_class=ss_criteria[ax],
-                    supervision=supervision[ax],
-                    # update_supervision=update_supervision,
-                    update_supervision=None,  # The wrapper will take charge
-                    supervised_criterion=supervised_criteria[ax],
-                    unsupervised_criterion=unsupervised_criteria[ax],
-                    n_outputs=n_outputs[ax],
-                    n_features=n_features[ax],
-                    n_samples=n_samples[ax],
-                    pairwise=pairwise[ax],
-                    n_classes=n_classes[ax],
-                    is_classification=is_classification,
-                )
-            
-            supervised_criteria[ax] = ss_criteria[ax].supervised_criterion
-            unsupervised_criteria[ax] = ss_criteria[ax].unsupervised_criterion
+        
+        supervised_criteria[ax] = ss_criteria[ax].supervised_criterion
+        unsupervised_criteria[ax] = ss_criteria[ax].unsupervised_criterion
     
     return ss_criterion_wrapper_class(
         unsupervised_criterion_rows=unsupervised_criteria[0],

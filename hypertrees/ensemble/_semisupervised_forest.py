@@ -60,7 +60,7 @@ class RandomForestClassifierSS(ForestClassifier):
         unsupervised_criterion="squared_error",
         supervision=0.5,
         update_supervision=None,
-        ss_adapter="default",
+        ss_adapter=None,
         pairwise_X=False,
     ):
         super().__init__(
@@ -151,7 +151,7 @@ class ExtraTreesClassifierSS(ForestClassifier):
         unsupervised_criterion="squared_error",
         supervision=0.5,
         update_supervision=None,
-        ss_adapter="default",
+        ss_adapter=None,
         pairwise_X=False,
     ):
         super().__init__(
@@ -235,7 +235,7 @@ class ExtraTreesRegressorSS(ForestRegressor):
         unsupervised_criterion="squared_error",
         supervision=0.5,
         update_supervision=None,
-        ss_adapter="default",
+        ss_adapter=None,
         pairwise_X=False,
     ):
         super().__init__(
@@ -320,7 +320,7 @@ class RandomForestRegressorSS(ForestRegressor):
         unsupervised_criterion="squared_error",
         supervision=0.5,
         update_supervision=None,
-        ss_adapter="default",
+        ss_adapter=None,
         pairwise_X=False,
     ):
         super().__init__(
@@ -403,7 +403,7 @@ class ExtraTreesRegressorSS(ForestRegressor):
         unsupervised_criterion="squared_error",
         supervision=0.5,
         update_supervision=None,
-        ss_adapter="default",
+        ss_adapter=None,
         pairwise_X=False,
     ):
         super().__init__(
@@ -488,7 +488,7 @@ class BipartiteRandomForestRegressorSS(
         max_samples=None,
         # Semi-supervised parameters:
         supervision=0.5,
-        ss_adapter="default",
+        ss_adapter=None,
         unsupervised_criterion_rows="squared_error",
         unsupervised_criterion_cols="squared_error",
         update_supervision=None,
@@ -615,7 +615,7 @@ class BipartiteExtraTreesRegressorSS(
         max_samples=None,
         # Semi-supervised parameters:
         supervision=0.5,
-        ss_adapter="default",
+        ss_adapter=None,
         unsupervised_criterion_rows="squared_error",
         unsupervised_criterion_cols="squared_error",
         update_supervision=None,

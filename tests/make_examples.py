@@ -196,7 +196,7 @@ def make_interaction_regression(
     ret = [X, Y]
 
     if return_molten:
-        ret += [X_molten, Y_molten]
+        ret += [X_molten, Y_molten.reshape(-1, 1)]
     if return_tree:
         ret.append(tree.tree_)
 

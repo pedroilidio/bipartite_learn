@@ -9,7 +9,7 @@ randomized trees, adapted from sklearn for semi-supervised learning.
 #
 # License: BSD 3 clause
 
-
+from typing import Type
 import warnings
 from copy import deepcopy
 from abc import ABCMeta
@@ -46,9 +46,6 @@ from sklearn.tree import (
     ExtraTreeClassifier,
 )
 # Hypertree-specific:
-from itertools import product
-from typing import Iterable
-from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_splitter import BipartiteSplitter
 from ._splitter_factory import (
     make_2dss_splitter,
@@ -64,19 +61,20 @@ from sklearn.tree._classes import (
 from ._semisupervised_criterion import (
     SemisupervisedCriterion,
     SSCompositeCriterion,
-    BipartiteSemisupervisedCriterion,
+    HomogeneousCompositeSS,
+    AxisHomogeneousCompositeSS,
 )
-
-from ._dynamic_supervision_criterion import DynamicSSMSE
 
 from ._nd_classes import (
     BaseBipartiteDecisionTree,
     BipartiteDecisionTreeRegressor,
     BipartiteExtraTreeRegressor,
+    AXIS_CRITERIA,
     _get_criterion_classes,
 )
 
 from ._semisupervised_splitter import BestSplitterSFSS, RandomSplitterSFSS
+from ._axis_criterion import AxisClassificationCriterion
 
 
 __all__ = [
@@ -99,9 +97,10 @@ SINGLE_FEATURE_SPLITTERS = {
     "best": BestSplitterSFSS,
     "random": RandomSplitterSFSS,
 }
-
 CRITERIA_SS = {
     "default": SSCompositeCriterion,
+    "homogeneous": HomogeneousCompositeSS,
+    "homogeneous_axis": AxisHomogeneousCompositeSS,
 }
 
 
@@ -126,6 +125,18 @@ def _encode_classes(y, class_weight=None):
     return y_encoded, classes, n_classes, expanded_class_weight
 
 
+def _is_classification_criterion(criterion: str | Criterion | Type[Criterion]):
+    return (
+        isinstance(criterion, str) and criterion in CRITERIA_CLF
+        or isinstance(criterion, type) and issubclass(criterion, (
+                AxisClassificationCriterion,
+                *CRITERIA_CLF.values(),  # ClassificationCriterion not available
+            )
+        )
+        or isinstance(criterion, tuple(CRITERIA_CLF.values()))
+    )
+
+
 # =============================================================================
 # Semisupervised classes
 # =============================================================================
@@ -146,7 +157,8 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         "supervision": [Interval(Real, 0.0, 1.0, closed="both")],
         "update_supervision": [callable, None],
         "ss_adapter": [
-            StrOptions({"default"}),
+            None,
+            Hidden(StrOptions({"default", "homogeneous", "homogeneus_axis"})),
             Hidden(SemisupervisedCriterion),
         ],
         "pairwise_X": ["boolean"],
@@ -176,7 +188,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         supervision=0.5,
         unsupervised_criterion="squared_error",
         update_supervision=None,
-        ss_adapter="default",
+        ss_adapter=None,
         pairwise_X=False,
     ):
         self.supervision = supervision
@@ -200,7 +212,12 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
             ccp_alpha=ccp_alpha,
         )
 
-    # TODO: Avoid copying the whole BaseDecisionTree.fit()
+    # TODO: Avoid copying the whole BaseDecisionTree.fit(). We need to
+    # validate X and y separately, since unsupervised_criterion could be
+    # different from criterion. We also need to set n_outputs as y.shape[1].
+    # These both small changes require copying the entire fit() function from
+    # sklearn.tree._classes.BaseDecisionTree, while a simple
+    # super().fit(X, np.hstack((X, y))) would be ideal.
     def fit(self, X, y, sample_weight=None, check_input=True):
         self._validate_params()
         random_state = check_random_state(self.random_state)
@@ -244,6 +261,13 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
 
         # Determine output settings
         n_samples, self.n_features_in_ = X.shape
+
+        if len(y) != n_samples:
+            raise ValueError(
+                "Number of labels=%d does not match number of samples=%d"
+                % (len(y), n_samples)
+            )
+
         is_classification = is_classifier(self)
 
         y = np.atleast_1d(y)
@@ -262,20 +286,9 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
 
         X_targets = X.toarray() if issparse(X) else np.copy(X)
 
-        if isinstance(self.unsupervised_criterion, str):
-            if self.unsupervised_criterion in CRITERIA_CLF:
+        if _is_classification_criterion(self.unsupervised_criterion):
                 # TODO: class weights for X.
-                # FIXME: dtype will be converted to DOUBLE after concatenating.
-                #        Test if the Splitter receives it well.
                 X_targets, *_ = _encode_classes(X_targets)
-        else:
-            warnings.warn(
-                "A Criterion instance was passed as 'unsupervised_criterion'. "
-                "Note that if it is a classification criterion, X will not "
-                "preprocessed as it should: calling "
-                "check_classification_targets(X) and encoding its classes are "
-                "let as user responsabilities in this case."
-            )
 
         Xy = np.hstack((X_targets, y))
 
@@ -318,12 +331,6 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
 
         max_leaf_nodes = -1 if self.max_leaf_nodes is None else self.max_leaf_nodes
 
-        if len(y) != n_samples:
-            raise ValueError(
-                "Number of labels=%d does not match number of samples=%d"
-                % (len(y), n_samples)
-            )
-
         if sample_weight is not None:
             sample_weight = _check_sample_weight(sample_weight, X, DOUBLE)
 
@@ -349,8 +356,11 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         )
 
         if is_classifier(self):
-            self.tree_ = Tree(self.n_features_in_,
-                              self.n_classes_, self.n_outputs_)
+            self.tree_ = Tree(
+                self.n_features_in_,
+                self.n_classes_,
+                self.n_outputs_,
+            )
         else:
             self.tree_ = Tree(
                 self.n_features_in_,
@@ -404,6 +414,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         update_supervision=None,
         pairwise=False,
     ):
+        # FIXME: classification is not covered.
         n_outputs = n_outputs or self.n_outputs_
         n_features = n_features or self.n_features_in_
         supervision = supervision or self.supervision
@@ -415,7 +426,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
 
         if isinstance(ss_adapter, str):
             ss_adapter = CRITERIA_SS[ss_adapter]
-        else:  # SemisupervisedCriterion:
+        elif ss_adapter is not None:  # SemisupervisedCriterion:
             # Make a deepcopy in case the splitter has mutable attributes that
             # might be shared and modified concurrently during parallel fitting
             return deepcopy(ss_adapter)
@@ -637,13 +648,6 @@ class DecisionTreeClassifierSS(ClassifierMixin, BaseDecisionTreeSS):
         or a list containing the number of classes for each
         output (for multi-output problems).
 
-    n_features_ : int
-        The number of features when ``fit`` is performed.
-
-        .. deprecated:: 1.0
-           `n_features_` is deprecated in 1.0 and will be removed in
-           1.2. Use `n_features_in_` instead.
-
     n_features_in_ : int
         Number of features seen during :term:`fit`.
 
@@ -731,7 +735,7 @@ class DecisionTreeClassifierSS(ClassifierMixin, BaseDecisionTreeSS):
         ccp_alpha=0.0,
         # Semi-supervised parameters:
         supervision=0.5,
-        ss_adapter="default",
+        ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
         pairwise_X=False,
@@ -1027,23 +1031,12 @@ class DecisionTreeRegressorSS(RegressorMixin, BaseDecisionTreeSS):
     max_features_ : int
         The inferred value of max_features.
 
-    n_features_ : int
-        The number of features when ``fit`` is performed.
-
-        .. deprecated:: 1.0
-           `n_features_` is deprecated in 1.0 and will be removed in
-           1.2. Use `n_features_in_` instead.
-
     n_features_in_ : int
         Number of features seen during :term:`fit`.
-
-        .. versionadded:: 0.24
 
     feature_names_in_ : ndarray of shape (`n_features_in_`,)
         Names of features seen during :term:`fit`. Defined only when `X`
         has feature names that are all strings.
-
-        .. versionadded:: 1.0
 
     n_outputs_ : int
         The number of outputs when ``fit`` is performed.
@@ -1115,7 +1108,7 @@ class DecisionTreeRegressorSS(RegressorMixin, BaseDecisionTreeSS):
         ccp_alpha=0.0,
         # Semi-supervised parameters:
         supervision=0.5,
-        ss_adapter="default",
+        ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
         pairwise_X=False,
@@ -1371,23 +1364,12 @@ class ExtraTreeClassifierSS(DecisionTreeClassifierSS):
         high cardinality features (many unique values). See
         :func:`sklearn.inspection.permutation_importance` as an alternative.
 
-    n_features_ : int
-        The number of features when ``fit`` is performed.
-
-        .. deprecated:: 1.0
-           `n_features_` is deprecated in 1.0 and will be removed in
-           1.2. Use `n_features_in_` instead.
-
     n_features_in_ : int
         Number of features seen during :term:`fit`.
-
-        .. versionadded:: 0.24
 
     feature_names_in_ : ndarray of shape (`n_features_in_`,)
         Names of features seen during :term:`fit`. Defined only when `X`
         has feature names that are all strings.
-
-        .. versionadded:: 1.0
 
     n_outputs_ : int
         The number of outputs when ``fit`` is performed.
@@ -1460,7 +1442,7 @@ class ExtraTreeClassifierSS(DecisionTreeClassifierSS):
         ccp_alpha=0.0,
         # Semi-supervised parameters:
         supervision=0.5,
-        ss_adapter="default",
+        ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
         pairwise_X=False,
@@ -1627,23 +1609,12 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
     max_features_ : int
         The inferred value of max_features.
 
-    n_features_ : int
-        The number of features when ``fit`` is performed.
-
-        .. deprecated:: 1.0
-           `n_features_` is deprecated in 1.0 and will be removed in
-           1.2. Use `n_features_in_` instead.
-
     n_features_in_ : int
         Number of features seen during :term:`fit`.
-
-        .. versionadded:: 0.24
 
     feature_names_in_ : ndarray of shape (`n_features_in_`,)
         Names of features seen during :term:`fit`. Defined only when `X`
         has feature names that are all strings.
-
-        .. versionadded:: 1.0
 
     feature_importances_ : ndarray of shape (n_features,)
         Return impurity-based feature importances (the higher, the more
@@ -1719,7 +1690,7 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
         ccp_alpha=0.0,
         # Semi-supervised parameters:
         supervision=0.5,
-        ss_adapter="default",
+        ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
         pairwise_X=False,
@@ -1759,11 +1730,19 @@ class BaseBipartiteDecisionTreeSS(
         **BaseBipartiteDecisionTree._parameter_constraints,
         **BaseDecisionTreeSS._parameter_constraints,
         "unsupervised_criterion_rows": [
-            StrOptions(set(CRITERIA_CLF.keys()) | set(CRITERIA_REG.keys())),
+            StrOptions(
+                set(CRITERIA_CLF.keys())
+                | set(CRITERIA_REG.keys())
+                | set(AXIS_CRITERIA.keys())
+            ),
             Hidden(Criterion),
         ],
         "unsupervised_criterion_cols": [
-            StrOptions(set(CRITERIA_CLF.keys()) | set(CRITERIA_REG.keys())),
+            StrOptions(
+                set(CRITERIA_CLF.keys())
+                | set(CRITERIA_REG.keys())
+                | set(AXIS_CRITERIA.keys())
+            ),
             Hidden(Criterion),
         ],
     }
@@ -1798,7 +1777,7 @@ class BaseBipartiteDecisionTreeSS(
         prediction_weights=None,
         # Semi-supervised parameters:
         supervision=0.5,
-        ss_adapter="default",
+        ss_adapter=None,
         unsupervised_criterion_rows="squared_error",
         unsupervised_criterion_cols="squared_error",
         update_supervision=None,
@@ -1865,24 +1844,30 @@ class BaseBipartiteDecisionTreeSS(
             # might be shared and modified concurrently during parallel fitting
             return deepcopy(self.splitter)
 
-        # NOTE: It is possible to use diferent ss_adaptor for rows and columns,
+        # NOTE: It is possible to use diferent ss_adapter for rows and columns,
         #       but the user needs to pass an already built BipartiteSplitter instance
         #       if they want to do so.
         if isinstance(self.ss_adapter, SemisupervisedCriterion):
             ss_adapter = deepcopy(self.ss_adapter)
-        else:  # str
-            ss_adapter = self.ss_adapter
+        elif isinstance(self.ss_adapter, str):
+            ss_adapter = CRITERIA_SS[self.ss_adapter]
+        elif self.ss_adapter is None:
+            ss_adapter = None
+        else:
+            raise ValueError  # validate_params will not allow this to run
+
+        # TODO: specify if classifier or regression unsupervised criterion
+        if self.bipartite_adapter == "gso":
+            CRITERIA = CRITERIA_CLF | CRITERIA_REG
+        else:
+            CRITERIA = AXIS_CRITERIA
 
         if isinstance(self.unsupervised_criterion_rows, str):
-            # TODO: specify if classifier or regression unsupervised criterion
-            CRITERIA = CRITERIA_CLF | CRITERIA_REG
             unsup_criterion_rows = CRITERIA[self.unsupervised_criterion_rows]
         else:
             unsup_criterion_rows = deepcopy(self.unsupervised_criterion_rows)
 
         if isinstance(self.unsupervised_criterion_cols, str):
-            # TODO: specify if classifier or regression unsupervised criterion
-            CRITERIA = CRITERIA_CLF | CRITERIA_REG
             unsup_criterion_cols = CRITERIA[self.unsupervised_criterion_cols]
         else:
             unsup_criterion_cols = deepcopy(self.unsupervised_criterion_cols)
@@ -1925,6 +1910,7 @@ class BaseBipartiteDecisionTreeSS(
                 unsup_criterion_rows,
                 unsup_criterion_cols,
             ],
+            ss_criteria=ss_adapter,
             supervision=self.supervision,
             update_supervision=self.update_supervision,
             n_samples=n_samples,
@@ -1985,7 +1971,7 @@ class BipartiteDecisionTreeRegressorSS(
         prediction_weights=None,
         # Semi-supervised parameters:
         supervision=0.5,
-        ss_adapter="default",
+        ss_adapter=None,
         unsupervised_criterion_rows="squared_error",
         unsupervised_criterion_cols="squared_error",
         update_supervision=None,
@@ -2063,7 +2049,7 @@ class BipartiteExtraTreeRegressorSS(
         prediction_weights=None,
         # Semi-supervised parameters:
         supervision=0.5,
-        ss_adapter="default",
+        ss_adapter=None,
         unsupervised_criterion_rows="squared_error",
         unsupervised_criterion_cols="squared_error",
         update_supervision=None,

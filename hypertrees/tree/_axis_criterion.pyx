@@ -307,7 +307,6 @@ cdef class AxisCriterion(Criterion):
         pass
 
 
-# FIXME: do not multiply by column wights on update, only in impurities
 cdef class AxisRegressionCriterion(AxisCriterion):
     r"""Abstract regression criterion.
     This handles cases where the target is a continuous value, and is
@@ -748,6 +747,126 @@ cdef class AxisFriedmanMSE(AxisMSE):
 
         return (diff * diff / (self.weighted_n_left * self.weighted_n_right *
                                self.weighted_n_node_samples))
+
+
+cdef class AxisSquaredErrorGSO(AxisMSE):
+    cdef DOUBLE_t[:, ::1] _y_row_sums
+
+    def __cinit__(self, SIZE_t n_outputs, SIZE_t n_samples, *args, **kwargs):
+        self._y_row_sums = np.empty((n_samples, 1), dtype='float64', order='C')
+
+    cdef int axis_init(
+        self,
+        const DOUBLE_t[:, :] y,
+        const DOUBLE_t[:] sample_weight,
+        const DOUBLE_t[:] col_weights,
+        const SIZE_t[:] sample_indices,
+        const SIZE_t[:] col_indices,
+        double weighted_n_samples,
+        double weighted_n_cols,
+        SIZE_t start,
+        SIZE_t end,
+        SIZE_t start_col,
+        SIZE_t end_col,
+    ) except -1 nogil:
+
+        self._cached_pos = SIZE_MAX  # Important to reset cached values.
+        self.init_columns(
+            col_weights=col_weights,
+            weighted_n_cols=weighted_n_cols,
+            col_indices=col_indices,
+            start_col=start_col,
+            end_col=end_col,
+        )
+        # Initialize fields
+        self.sample_weight = sample_weight
+        self.sample_indices = sample_indices
+        self.start = start
+        self.end = end
+        self.n_node_samples = end - start
+        self.weighted_n_samples = weighted_n_samples
+
+        cdef:
+            SIZE_t[::1] _node_col_indices = self._node_col_indices
+            SIZE_t n_node_cols = self.n_node_cols
+            SIZE_t i, j, p, k
+            DOUBLE_t y_ij
+            DOUBLE_t wi = 1.0, wj = 1.0
+            DOUBLE_t row_sum
+
+        self.sq_sum_total = 0.0
+        self.sum_sq_row_sums = 0.0
+        self.weighted_n_node_samples = 0.0
+        memset(&self.sum_total[0], 0, sizeof(double))
+
+        for p in range(start, end):
+            i = sample_indices[p]
+            if sample_weight is not None:
+                wi = sample_weight[i]
+
+            self.weighted_n_node_samples += wi
+            row_sum = 0.0
+
+            for k in range(n_node_cols):
+                j = _node_col_indices[k]
+                if col_weights is not None:
+                    wj = col_weights[j]
+
+                y_ij = y[i, j]
+
+                row_sum += wj * y_ij
+                self.sq_sum_total += wi * wj * y_ij * y_ij
+
+            self.sum_sq_row_sums += wi * row_sum * row_sum
+            self._y_row_sums[i, 0] = row_sum
+            self.sum_total[0] += wi * row_sum
+
+        # HACK: Ovewriting stuff
+        # TODO: Contiguous y_
+        self.n_node_cols = 1
+        self.col_weights = None
+        self._node_col_indices[0] = 0
+        self.y_ = self._y_row_sums
+
+        # Reset to pos=start
+        self.reset()
+        return 0
+
+
+cdef class AxisFriedmanGSO(AxisFriedmanMSE):
+    cdef DOUBLE_t[:, ::1] _y_row_sums
+
+    def __cinit__(self, SIZE_t n_outputs, SIZE_t n_samples, *args, **kwargs):
+        self._y_row_sums = np.empty((n_samples, 1), dtype='float64', order='C')
+
+    cdef int axis_init(
+        self,
+        const DOUBLE_t[:, :] y,
+        const DOUBLE_t[:] sample_weight,
+        const DOUBLE_t[:] col_weights,
+        const SIZE_t[:] sample_indices,
+        const SIZE_t[:] col_indices,
+        double weighted_n_samples,
+        double weighted_n_cols,
+        SIZE_t start,
+        SIZE_t end,
+        SIZE_t start_col,
+        SIZE_t end_col,
+    ) except -1 nogil:
+        AxisSquaredErrorGSO.axis_init(
+            <AxisSquaredErrorGSO>self,
+            y,
+            sample_weight,
+            col_weights,
+            sample_indices,
+            col_indices,
+            weighted_n_samples,
+            weighted_n_cols,
+            start,
+            end,
+            start_col,
+            end_col,
+        )
 
 
 cdef class AxisClassificationCriterion(AxisCriterion):

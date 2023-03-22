@@ -51,7 +51,14 @@ from ._nd_criterion import (
 from ._nd_splitter import BipartiteSplitter
 from ..melter import row_cartesian_product
 from ..utils import check_similarity_matrix, _X_is_multipartite
-from ._axis_criterion import AxisMSE, AxisFriedmanMSE, AxisGini, AxisEntropy
+from ._axis_criterion import (
+    AxisMSE,
+    AxisFriedmanMSE,
+    AxisGini,
+    AxisEntropy,
+    AxisSquaredErrorGSO,
+    AxisFriedmanGSO,
+)
 from ._splitter_factory import make_2d_splitter
 
 
@@ -68,6 +75,17 @@ __all__ = [
 # =============================================================================
 
 SPARSE_SPLITTERS = {}
+
+
+AXIS_CRITERIA = {
+    "squared_error": AxisMSE,
+    "friedman_mse": AxisFriedmanMSE,
+    "squared_error_gso": AxisSquaredErrorGSO,
+    "friedman_gso": AxisFriedmanGSO,
+    "gini": AxisGini,
+    "entropy": AxisEntropy,
+    "log_loss": AxisEntropy,
+}
 
 
 # Stablish adequate pairs of criteria and bipartite adapters.
@@ -94,6 +112,8 @@ BIPARTITE_CRITERIA = {
         "regression": {
             "squared_error": (GMOSA, AxisMSE),
             "friedman_mse": (GMOSA, AxisFriedmanMSE),
+            "squared_error_gso": (GMOSA, AxisSquaredErrorGSO),
+            "friedman_gso": (GMOSA, AxisFriedmanGSO),
         },
         "classification": {
             "gini": (GMOSA, AxisGini),
@@ -218,7 +238,6 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             "array-like",
             StrOptions({
                 "precomputed",
-                "leaf_uniform",
                 "uniform",
                 "raw",
                 "square",
@@ -1090,6 +1109,7 @@ class BipartiteDecisionTreeRegressor(
         **BaseBipartiteDecisionTree._parameter_constraints,
         "criterion": [
             StrOptions({"squared_error", "friedman_mse"}),
+            Hidden(StrOptions({"squared_error_gso", "friedman_gso"})),
             Hidden(StrOptions({"absolute_error", "poisson"})),
             Hidden(Criterion),
         ],
@@ -1798,7 +1818,10 @@ class BipartiteDecisionTreeClassifier(
 
     _parameter_constraints: dict = {
         **BaseBipartiteDecisionTree._parameter_constraints,
-        "criterion": [StrOptions({"gini", "entropy", "log_loss"}), Hidden(Criterion)],
+        "criterion": [
+            StrOptions({"gini", "entropy", "log_loss"}),
+            Hidden(Criterion),
+        ],
         "class_weight": [dict, list, StrOptions({"balanced"}), None],
     }
 
