@@ -109,8 +109,8 @@ def test_semisupervised_forests(forest_params=None, **PARAMS):
         min_samples_leaf=PARAMS['min_samples_leaf'],
         random_state=PARAMS['seed'],
         n_estimators=PARAMS['n_estimators'],
-        bootstrap=False,
-        # max_samples=None,
+        bootstrap=True,
+        max_samples=0.7,
     ) | forest_params
     pprint(forest_params)
 

@@ -149,11 +149,9 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
                     current_supervision=self._curr_supervision,
                     original_supervision=self.supervision,
                 )
-        
-        # FIXME: fails if fit is called again with same n_samples
-        if self.n_node_samples == self.n_samples:
+        if self._root_supervised_impurity == 0.0:
             self.set_root_impurities()
-
+        
         return 0
 
     cdef void set_root_impurities(self) nogil:
@@ -196,12 +194,20 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         This is the primary function of the criterion class. The smaller the
         impurity the better.
         """
+        # FIXME: init is called before node_impurity by the TreeBuilder, where
+        # root impurities are also set. We will redundantly calculate the root
+        # impurity here as a consequence.
+        if self._root_supervised_impurity == 0.0:
+            self.set_root_impurities()
+            return 1.0
+
         cdef double sup = self._curr_supervision
+
         return (
             sup * self.supervised_criterion.node_impurity()
-            # / self._root_supervised_impurity
+            / self._root_supervised_impurity
             + (1.0-sup) * self.unsupervised_criterion.node_impurity()
-            # / self._root_unsupervised_impurity
+            / self._root_unsupervised_impurity
         )
 
     cdef void ss_children_impurities(
@@ -261,12 +267,12 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         )
 
         impurity_left[0] = (
-            sup * s_impurity_left# / self._root_supervised_impurity
-            + (1.0-sup) * u_impurity_left# / self._root_unsupervised_impurity
+            sup * s_impurity_left / self._root_supervised_impurity
+            + (1.0-sup) * u_impurity_left / self._root_unsupervised_impurity
         )
         impurity_right[0] = (
-            sup * s_impurity_right# / self._root_supervised_impurity
-            + (1.0-sup) * u_impurity_right# / self._root_unsupervised_impurity
+            sup * s_impurity_right / self._root_supervised_impurity
+            + (1.0-sup) * u_impurity_right / self._root_unsupervised_impurity
         )
 
     cdef void node_value(self, double* dest) nogil:
@@ -310,14 +316,12 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
                 self.supervised_criterion.weighted_n_left * s_imp_left
                 + self.supervised_criterion.weighted_n_right * s_imp_right
             )
-            / self._root_supervised_impurity
             / self.supervised_criterion.weighted_n_node_samples
 
             - (1.0 - sup) * (
                 self.unsupervised_criterion.weighted_n_left * u_imp_left
                 + self.unsupervised_criterion.weighted_n_right * u_imp_right
             )
-            / self._root_unsupervised_impurity
             / self.unsupervised_criterion.weighted_n_node_samples
 
         )
@@ -330,16 +334,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     ) nogil:
         """Compute the improvement in impurity.
 
-        Differently from the usual sklearn objects, the impurity improvement
-        is NOT:
-            (imp_parent - imp_children) / imp_parent
-        but instead:
-            (
-                sup * (s_imp_parent - s_imp_children) / s_imp_parent
-                + (1 - sup) * (u_imp_parent - u_imp_children) / u_imp_parent
-            )
-        Where 's' and 'u' designate supervised and unsupervised, respectively,
-        'imp' stands for 'impurity' and sup is 'self._curr_supervision'.
+            sup * supervised_improvement + (1 - sup) * unsupervised_improvement
         """
         # FIXME: Since we cannot access s_impurity and u_impurity
         # separately, we have to discard this method's input and calculate
@@ -373,11 +368,11 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
 
         u_improvement = self.unsupervised_criterion.impurity_improvement(
             u_impurity_parent, u_impurity_left, u_impurity_right,
-        ) / self._root_unsupervised_impurity
+        )
 
         s_improvement = self.supervised_criterion.impurity_improvement(
             s_impurity_parent, s_impurity_left, s_impurity_right,
-        ) / self._root_supervised_impurity
+        )
 
         return sup * s_improvement + (1.0-sup) * u_improvement
 
@@ -659,31 +654,8 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
             self.end,
         )
 
-        cdef SIZE_t n_rows = self.supervised_criterion_rows.n_samples
-        cdef SIZE_t n_cols = self.supervised_criterion_cols.n_samples
-
-        # FIXME: fails if fit is called again with dataset of same shape.
-        cdef bint is_root = (
-            start[0] == 0
-            and start[1] == 0
-            and end[0] == self.supervised_criterion_rows.n_samples
-            and end[1] == self.supervised_criterion_cols.n_samples
-        )
-        if not is_root and (
-            self._X_rows_double is None
-            or self._X_cols_double is None
-        ):
-            is_root = True
-            with gil:
-                warnings.warn(
-                    "The Criterion object was used before passing by the root "
-                    "node. Problems will arise if the tree is fitted again on "
-                    f"different data. start=[{start[0]}, {start[1]}], "
-                    f"end=[{end[0]} {end[1]}], y.shape={y.shape}, "
-                    f"n_rows={n_rows}, n_cols={n_cols}"
-                )
-
-        if is_root:
+        if self._X_rows_double is None:
+            # or self._X_cols_double is None
             with gil:
                 self.init_X()
 
@@ -703,9 +675,6 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
             start=self.start[1],
             end=self.end[1],
         )
-
-        if is_root:
-            self.set_root_impurities()
 
         self.n_row_features = self.unsupervised_criterion_rows.n_outputs
         self.n_col_features = self.unsupervised_criterion_cols.n_outputs
@@ -773,6 +742,11 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
         self.supervised_bipartite_criterion.node_value(dest)
 
     cdef double node_impurity(self) nogil:
+        if self._root_supervised_impurity == 0.0:
+            # or root_unsupervised_impurities == 0.0
+            self.set_root_impurities()
+            return 1.0
+
         cdef:
             double s_imp, u_imp_rows, u_imp_cols
             double sup_rows, sup_cols
@@ -783,17 +757,17 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
         s_imp = (
             self.supervised_bipartite_criterion.node_impurity()
             * (sup_rows + sup_cols)
-            # / self._root_supervised_impurity
+            / self._root_supervised_impurity
         )
         u_imp_rows = (
             self.unsupervised_criterion_rows.node_impurity()
             * (1.0 - sup_rows)
-            # / self._root_unsupervised_impurity_rows
+            / self._root_unsupervised_impurity_rows
         )
         u_imp_cols = (
             self.unsupervised_criterion_cols.node_impurity()
             * (1.0 - sup_cols)
-            # / self._root_unsupervised_impurity_cols
+            / self._root_unsupervised_impurity_cols
         )
 
         return 0.5 * (u_imp_rows + u_imp_cols + s_imp)
@@ -813,7 +787,7 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
         if axis == 0:
             other_u_imp = (
                 self.unsupervised_criterion_cols.node_impurity()
-                # / self._root_unsupervised_impurity_cols
+                / self._root_unsupervised_impurity_cols
             )
             # TODO: remove this dependency on the way we do axis_supervision_only.
             # There is no guarantee that the splitters are using the
@@ -827,8 +801,8 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
             self.unsupervised_criterion_rows.children_impurity(
                 &u_imp_left, &u_imp_right,
             )
-            # u_imp_left /= self._root_unsupervised_impurity_rows
-            # u_imp_right /= self._root_unsupervised_impurity_rows
+            u_imp_left /= self._root_unsupervised_impurity_rows
+            u_imp_right /= self._root_unsupervised_impurity_rows
 
             sup = self._curr_supervision_rows
             other_sup = self._curr_supervision_cols
@@ -836,7 +810,7 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
         elif axis == 1:
             other_u_imp = (
                 self.unsupervised_criterion_rows.node_impurity()
-                # / self._root_unsupervised_impurity_rows
+                / self._root_unsupervised_impurity_rows
             )
 
             # See the previous comment.
@@ -846,8 +820,8 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
             self.unsupervised_criterion_cols.children_impurity(
                 &u_imp_left, &u_imp_right,
             )
-            # u_imp_left /= self._root_unsupervised_impurity_cols
-            # u_imp_right /= self._root_unsupervised_impurity_cols
+            u_imp_left /= self._root_unsupervised_impurity_cols
+            u_imp_right /= self._root_unsupervised_impurity_cols
 
             sup = self._curr_supervision_cols
             other_sup = self._curr_supervision_rows
@@ -862,8 +836,8 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
         self.supervised_bipartite_criterion.children_impurity(
             impurity_left, impurity_right, axis,
         )
-        # impurity_left[0] /= self._root_supervised_impurity
-        # impurity_right[0] /= self._root_supervised_impurity
+        impurity_left[0] /= self._root_supervised_impurity
+        impurity_right[0] /= self._root_supervised_impurity
 
         total_sup = sup + other_sup
         impurity_left[0] = 0.5 * (u_imp_left + total_sup * impurity_left[0])
