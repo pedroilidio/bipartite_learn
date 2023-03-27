@@ -102,6 +102,7 @@ cdef class RegressionCriterionGSO(BipartiteCriterion):
             SIZE_t n_node_samples,
             double weighted_n_samples,
             double weighted_n_node_samples,
+            double sq_sum_total,
     ) nogil except -1
 
 

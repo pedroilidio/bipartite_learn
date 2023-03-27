@@ -115,17 +115,11 @@ def float_comparison_text(a: float, b: float):
 
 
 def comparison_text(a, b, equal_indices):
-    if not (
-        isinstance(a, (Number, np.ndarray))
-        and isinstance(b, (Number, np.ndarray))
-    ):
-        return f"{a} {'==' if equal_indices else '!='} {b}"
-
     if isinstance(a, float) and isinstance(b, float):
         return float_comparison_text(a, b)
 
-    a_is_array = isinstance(a, np.ndarray)
-    b_is_array = isinstance(b, np.ndarray)
+    a_is_array = isinstance(a, np.ndarray) and a.ndim
+    b_is_array = isinstance(b, np.ndarray) and b.ndim
 
     if not a_is_array and not b_is_array:
         return f"{a}{'==' if equal_indices else '!='}{b}"
@@ -144,8 +138,6 @@ def comparison_text(a, b, equal_indices):
 
     a = a.reshape(-1)
     b = b.reshape(-1)
-    max_absolute_diff = np.abs(a-b).max()
-    max_absolute_diff = np.abs(a-b).max()
 
     return (
         f"{n_diff} differing elements out of {a.size} ({100*n_diff/a.size:.4g}%)."
@@ -187,8 +179,10 @@ def assert_equal_dicts(
         )
         if differing_keys == "warn":
             warnings.warn(msg)
-        else:  # elif differing_keys == "raise":
+        elif differing_keys == "raise":
             raise ValueError(msg)
+        else:
+            raise NotImplementedError(f"Invalid {differing_keys=}")
 
     keys = sorted((keys - ignore) - unexpected_keys)
     equal_indices = []
@@ -202,9 +196,9 @@ def assert_equal_dicts(
         names.append(key)
         value_pairs.append((v1, v2))
 
-        if not (
-            isinstance(v1, (Number, np.ndarray))
-            or isinstance(v2, (Number, np.ndarray))
+        if (
+            not isinstance(v1, (Number, np.ndarray))
+            and not isinstance(v2, (Number, np.ndarray))
         ):
             equal_indices.append(v1 == v2)
             all_equal.append(v1 == v2)

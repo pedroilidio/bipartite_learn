@@ -146,3 +146,11 @@ cdef class AxisClassificationCriterion(AxisCriterion):
     cdef double[:, ::1] sum_total   # The sum of the weighted count of each label.
     cdef double[:, ::1] sum_left    # Same as above, but for the left side of the split
     cdef double[:, ::1] sum_right   # Same as above, but for the right side of the split
+
+
+cdef class AxisCriterionGSO(AxisCriterion):
+    cdef DOUBLE_t[::1] _y_row_sums
+    cdef double sq_sum_total
+    cdef double sum_total  # The sum of w*y.
+    cdef double sum_left   # Same as above, but for the left side of the split
+    cdef double sum_right  # Same as above, but for the right side of the split

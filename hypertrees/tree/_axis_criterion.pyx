@@ -287,8 +287,9 @@ cdef class AxisCriterion(Criterion):
             &cols_impurity_right,
         )
 
-        # NOTE: Columns impurity improvement should be zero.
-        return (
+        # The mean between improvements on both axes, but since the other axis'
+        # improvement is zero, it is half the current axis' improvement.
+        return 0.5 * (
             (self.weighted_n_node_samples / self.weighted_n_samples)
             * (self.weighted_n_node_cols / self.weighted_n_cols)
             * (
@@ -749,11 +750,11 @@ cdef class AxisFriedmanMSE(AxisMSE):
                                self.weighted_n_node_samples))
 
 
-cdef class AxisSquaredErrorGSO(AxisMSE):
-    cdef DOUBLE_t[:, ::1] _y_row_sums
+cdef class AxisCriterionGSO(AxisCriterion):
+    # TODO: when summing, should we divide each term to avoid overflow?
 
     def __cinit__(self, SIZE_t n_outputs, SIZE_t n_samples, *args, **kwargs):
-        self._y_row_sums = np.empty((n_samples, 1), dtype='float64', order='C')
+        self._y_row_sums = np.empty(n_samples, dtype='float64', order='C')
 
     cdef int axis_init(
         self,
@@ -779,6 +780,7 @@ cdef class AxisSquaredErrorGSO(AxisMSE):
             end_col=end_col,
         )
         # Initialize fields
+        self.y_ = y
         self.sample_weight = sample_weight
         self.sample_indices = sample_indices
         self.start = start
@@ -795,9 +797,8 @@ cdef class AxisSquaredErrorGSO(AxisMSE):
             DOUBLE_t row_sum
 
         self.sq_sum_total = 0.0
-        self.sum_sq_row_sums = 0.0
         self.weighted_n_node_samples = 0.0
-        memset(&self.sum_total[0], 0, sizeof(double))
+        self.sum_total = 0.0
 
         for p in range(start, end):
             i = sample_indices[p]
@@ -817,56 +818,230 @@ cdef class AxisSquaredErrorGSO(AxisMSE):
                 row_sum += wj * y_ij
                 self.sq_sum_total += wi * wj * y_ij * y_ij
 
-            self.sum_sq_row_sums += wi * row_sum * row_sum
-            self._y_row_sums[i, 0] = row_sum
-            self.sum_total[0] += wi * row_sum
-
-        # HACK: Ovewriting stuff
-        # TODO: Contiguous y_
-        self.n_node_cols = 1
-        self.col_weights = None
-        self._node_col_indices[0] = 0
-        self.y_ = self._y_row_sums
+            row_sum *= wi
+            self._y_row_sums[i] = row_sum
+            self.sum_total += row_sum
 
         # Reset to pos=start
         self.reset()
         return 0
 
+    cdef int reset(self) except -1 nogil:
+        """Reset the criterion at pos=start."""
+        self.sum_left = 0.0
+        self.sum_right = self.sum_total
 
-cdef class AxisFriedmanGSO(AxisFriedmanMSE):
-    cdef DOUBLE_t[:, ::1] _y_row_sums
+        self.weighted_n_left = 0.0
+        self.weighted_n_right = self.weighted_n_node_samples
+        self.pos = self.start
+        return 0
 
-    def __cinit__(self, SIZE_t n_outputs, SIZE_t n_samples, *args, **kwargs):
-        self._y_row_sums = np.empty((n_samples, 1), dtype='float64', order='C')
+    cdef int reverse_reset(self) except -1 nogil:
+        """Reset the criterion at pos=end."""
+        self.sum_left = self.sum_total
+        self.sum_right = 0.0
 
-    cdef int axis_init(
-        self,
-        const DOUBLE_t[:, :] y,
-        const DOUBLE_t[:] sample_weight,
-        const DOUBLE_t[:] col_weights,
-        const SIZE_t[:] sample_indices,
-        const SIZE_t[:] col_indices,
-        double weighted_n_samples,
-        double weighted_n_cols,
-        SIZE_t start,
-        SIZE_t end,
-        SIZE_t start_col,
-        SIZE_t end_col,
-    ) except -1 nogil:
-        AxisSquaredErrorGSO.axis_init(
-            <AxisSquaredErrorGSO>self,
-            y,
-            sample_weight,
-            col_weights,
-            sample_indices,
-            col_indices,
-            weighted_n_samples,
-            weighted_n_cols,
-            start,
-            end,
-            start_col,
-            end_col,
+        self.weighted_n_left = self.weighted_n_node_samples
+        self.weighted_n_right = 0.0
+        self.pos = self.end
+        return 0
+
+    cdef int update(self, SIZE_t new_pos) except -1 nogil:
+        """Updated statistics by moving sample_indices[pos:new_pos] to the left."""
+        cdef const DOUBLE_t[:] sample_weight = self.sample_weight
+        cdef const SIZE_t[:] sample_indices = self.sample_indices
+
+        cdef SIZE_t pos = self.pos
+        cdef SIZE_t end = self.end
+        cdef SIZE_t i
+        cdef SIZE_t p
+        cdef DOUBLE_t w = 1.0
+
+        # Update statistics up to new_pos
+        #
+        # Given that
+        #           sum_left[x] +  sum_right[x] = sum_total[x]
+        # and that sum_total is known, we are going to update
+        # sum_left from the direction that require the least amount
+        # of computations, i.e. from pos to new_pos or from end to new_pos.
+        if (new_pos - pos) <= (end - new_pos):
+            for p in range(pos, new_pos):
+                i = sample_indices[p]
+
+                if sample_weight is not None:
+                    w = sample_weight[i]
+
+                self.sum_left += self._y_row_sums[i]  # w is included
+                self.weighted_n_left += w
+        else:
+            self.reverse_reset()
+
+            for p in range(end - 1, new_pos - 1, -1):
+                i = sample_indices[p]
+
+                if sample_weight is not None:
+                    w = sample_weight[i]
+
+                self.sum_left -= self._y_row_sums[i]  # w is included
+                self.weighted_n_left -= w
+
+        self.weighted_n_right = (
+            self.weighted_n_node_samples - self.weighted_n_left
         )
+        self.sum_right = self.sum_total - self.sum_left
+
+        self.pos = new_pos
+        return 0
+
+    cdef void node_value(self, double* dest) noexcept nogil:
+        dest[0] = self.sum_total / (
+            self.weighted_n_node_samples
+            * self.weighted_n_node_cols
+        )
+
+    cdef double impurity_improvement(
+        self,
+        double impurity_parent,
+        double impurity_left,
+        double impurity_right,
+    ) nogil:
+        return (
+            (self.weighted_n_node_samples / self.weighted_n_samples)
+            * (self.weighted_n_node_cols / self.weighted_n_cols)
+            * (
+                impurity_parent
+                - impurity_right
+                    * (self.weighted_n_right / self.weighted_n_node_samples)
+                - impurity_left
+                    * (self.weighted_n_left / self.weighted_n_node_samples)
+            )
+        )
+    
+    cdef void total_node_value(self, double* dest) noexcept nogil:
+        self.node_value(dest)
+        
+
+    cdef double node_impurity(self) noexcept nogil:
+        pass
+
+    cdef void children_impurity(
+        self,
+        double* impurity_left,
+        double* impurity_right,
+    ) noexcept nogil:
+        pass
+
+
+cdef class AxisSquaredErrorGSO(AxisCriterionGSO):
+    """Mean squared error impurity criterion.
+        MSE = var_left + var_right
+    """
+    cdef double node_impurity(self) noexcept nogil:
+        cdef double total_weighted_n_node_samples = (
+            self.weighted_n_node_samples * self.weighted_n_node_cols
+        )
+        return (
+            self.sq_sum_total / total_weighted_n_node_samples
+            - (self.sum_total / total_weighted_n_node_samples) ** 2
+        )
+
+    cdef double proxy_impurity_improvement(self) noexcept nogil:
+        return (
+            self.sum_left * self.sum_left / self.weighted_n_left
+            + self.sum_right * self.sum_right / self.weighted_n_right
+        )
+    
+    cdef void children_impurity(
+        self,
+        double* impurity_left,
+        double* impurity_right,
+    ) noexcept nogil: 
+        cdef:
+            const DOUBLE_t[:] sample_weight = self.sample_weight
+            const SIZE_t[:] sample_indices = self.sample_indices
+            SIZE_t pos = self.pos
+            SIZE_t start = self.start
+
+            const DOUBLE_t[:] col_weights = self.col_weights
+            SIZE_t[::1] _node_col_indices = self._node_col_indices
+            SIZE_t n_node_cols = self.n_node_cols
+
+            double sq_sum_left = 0.0
+            double sq_sum_right
+            double total_weighted_n_left
+            double total_weighted_n_right
+
+            SIZE_t i, j, p, k
+            DOUBLE_t y_ij
+            DOUBLE_t wi = 1.0, wj = 1.0
+
+        # Obtain sq_sum_left 
+        for p in range(start, pos):
+            i = sample_indices[p]
+            if sample_weight is not None:
+                wi = sample_weight[i]
+
+            for k in range(n_node_cols):
+                j = _node_col_indices[k]
+                if col_weights is not None:
+                    wj = col_weights[j]
+
+                y_ij = self.y_[i, j]
+                sq_sum_left += wi * wj * y_ij * y_ij
+            
+        sq_sum_right = self.sq_sum_total - sq_sum_left
+
+        total_weighted_n_left = (
+            self.weighted_n_left * self.weighted_n_node_cols
+        )
+        total_weighted_n_right = (
+            self.weighted_n_right * self.weighted_n_node_cols
+        )
+
+        impurity_left[0] = (
+            sq_sum_left / total_weighted_n_left
+            - (self.sum_left / total_weighted_n_left) ** 2
+        )
+        impurity_right[0] = (
+            sq_sum_right / total_weighted_n_right
+            - (self.sum_right / total_weighted_n_right) ** 2
+        )
+
+
+cdef class AxisFriedmanGSO(AxisSquaredErrorGSO):
+    cdef double proxy_impurity_improvement(self) noexcept nogil:
+        cdef double diff = 0.0
+
+        diff = (
+            self.weighted_n_right * self.sum_left
+            - self.weighted_n_left * self.sum_right
+        )
+
+        return diff * diff / (self.weighted_n_left * self.weighted_n_right)
+
+    cdef double impurity_improvement(
+        self,
+        double impurity_parent,
+        double impurity_left,
+        double impurity_right
+    ) noexcept nogil:
+        # Note: none of the arguments are used here
+        cdef double diff
+
+        diff = (
+            self.weighted_n_right * self.sum_left
+            - self.weighted_n_left * self.sum_right
+        ) / self.weighted_n_node_cols
+
+        return (
+            diff * diff
+            / (
+                self.weighted_n_left
+                * self.weighted_n_right
+                * self.weighted_n_node_samples
+            )
+        )
+
 
 
 cdef class AxisClassificationCriterion(AxisCriterion):

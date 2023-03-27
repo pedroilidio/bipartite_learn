@@ -1,4 +1,4 @@
-# cython: boundscheck=False
+## cython: boundscheck=False
 from libc.stdlib cimport malloc, free
 from libc.string cimport memset
 from libc.stdint cimport SIZE_MAX
@@ -22,18 +22,7 @@ from ._axis_criterion cimport AxisCriterion
 cdef DOUBLE_t NAN = np.nan
 
 
-cdef class SemisupervisedCriterion(Criterion):
-    """Base class for semantic purposes and future maintenance.
-    """
-
-
-cdef class SSRegressionCriterion(SemisupervisedCriterion):
-    """Base class for semantic purposes and future maintenance.
-    """
-
-
-# TODO: Maybe "SSEnsembleCriterion"
-cdef class SSCompositeCriterion(SemisupervisedCriterion):
+cdef class SSCompositeCriterion(Criterion):
     """Combines results from two criteria to yield its own.
     
     One criteria will receive y in its init() and the other will receive X.
@@ -76,6 +65,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         double supervision,
         object update_supervision=None,
     ):
+        self.X = None
         self._cached_pos = SIZE_MAX
         self._root_supervised_impurity = 0.0
         self._root_unsupervised_impurity = 0.0
@@ -96,18 +86,17 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
 
         self.supervision = supervision
         self._curr_supervision = supervision
-
         self.update_supervision = update_supervision
-        self._supervision_is_dynamic = self.update_supervision is not None
+    
+    cdef inline void _copy_position_wise_attributes(self) noexcept nogil:
+        # TODO: weighted_n_left/right is calculated by both splitters,
+        # we couls find a good way of calculating it only once.
+        self.pos = self.supervised_criterion.pos
+        self.weighted_n_left = self.supervised_criterion.weighted_n_left
+        self.weighted_n_right = self.supervised_criterion.weighted_n_right
 
-    cdef void unpack_y(self, const DOUBLE_t[:, ::1] y) nogil:
-        """Set self.X and self.y from input y.
-
-        The semi-supervised tree class will actually provide np.hstack([X, y])
-        as the y parameter to self.init(). We need to unstack it.
-        """
-        self.X = y[:, :self.n_features]
-        self.y = y[:, self.n_features:]
+    cpdef void set_X(self, const DOUBLE_t[:, ::1] X):
+        self.X = X
 
     cdef int init(
         self, const DOUBLE_t[:, ::1] y,
@@ -117,9 +106,11 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         SIZE_t start,
         SIZE_t end,
     ) nogil except -1:
+        if self.X is None:
+            with gil:
+                raise RuntimeError("You must set_X() before init()")
         self._cached_pos = SIZE_MAX  # Important to reset cached values.
-
-        self.unpack_y(y)  # FIXME
+        self.y = y
         self.sample_weight = sample_weight
         self.sample_indices = sample_indices
         self.start = start
@@ -128,20 +119,26 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         self.weighted_n_samples = weighted_n_samples
         
         self.supervised_criterion.init(
-            self.y, sample_weight, weighted_n_samples, sample_indices, start, end,
+            self.y,
+            sample_weight,
+            weighted_n_samples,
+            sample_indices,
+            start,
+            end,
         )
         self.unsupervised_criterion.init(
-            self.X, sample_weight, weighted_n_samples, sample_indices, start, end,
+            self.X,
+            sample_weight,
+            weighted_n_samples,
+            sample_indices,
+            start,
+            end,
         )
 
-        # TODO: weighted_n_left/right is calculated by both splitters,
-        # we should find a good way of calculating it only once.
         self.weighted_n_node_samples = \
             self.supervised_criterion.weighted_n_node_samples
-        # self.weighted_n_left = self.supervised_criterion.weighted_n_left
-        # self.weighted_n_right = self.supervised_criterion.weighted_n_right
 
-        if self._supervision_is_dynamic:
+        if self.update_supervision is not None:
             with gil:
                 self._curr_supervision = self.update_supervision(
                     weighted_n_samples=self.weighted_n_samples,
@@ -150,8 +147,11 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
                     original_supervision=self.supervision,
                 )
         if self._root_supervised_impurity == 0.0:
+            # Root unupervised impurities == 0.0 as well
             self.set_root_impurities()
         
+        self._copy_position_wise_attributes()  # Because criteria were reset
+
         return 0
 
     cdef void set_root_impurities(self) nogil:
@@ -166,12 +166,14 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         """Reset the criteria at pos=start."""
         self.supervised_criterion.reset()
         self.unsupervised_criterion.reset()
+        self._copy_position_wise_attributes()
         return 0
 
     cdef int reverse_reset(self) nogil except -1:
         """Reset the criteria at pos=end."""
         self.supervised_criterion.reverse_reset()
         self.unsupervised_criterion.reverse_reset()
+        self._copy_position_wise_attributes()
         return 0
 
     cdef int update(self, SIZE_t new_pos) nogil except -1:
@@ -185,7 +187,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         """
         self.supervised_criterion.update(new_pos)
         self.unsupervised_criterion.update(new_pos)
-        self.pos = new_pos
+        self._copy_position_wise_attributes()
         return 0
 
     cdef double node_impurity(self) nogil:
@@ -198,6 +200,7 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         # root impurities are also set. We will redundantly calculate the root
         # impurity here as a consequence.
         if self._root_supervised_impurity == 0.0:
+            # Root unupervised impurities == 0.0 as well
             self.set_root_impurities()
             return 1.0
 
@@ -296,19 +299,18 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         The absolute impurity improvement is only computed by the
         impurity_improvement method once the best split has been found.
         """
-        # FIXME: make MSE-specific, since it is much faster
-        # FIXME: AxisCriterion.n_outputs (n_outputs) is not what we need.
-        # FIXME: PairwiseCriterion.n_outputs (n_features) is not what we need.
         cdef:
             double sup = self._curr_supervision
-            double s_imp_left
-            double s_imp_right
             double u_imp_left
             double u_imp_right
+            double s_imp_left
+            double s_imp_right
 
         self.ss_children_impurities(
-            &u_imp_left, &u_imp_right,
-            &s_imp_left, &s_imp_right,
+            &u_imp_left,
+            &u_imp_right,
+            &s_imp_left,
+            &s_imp_right,
         )
 
         return (
@@ -317,12 +319,14 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
                 + self.supervised_criterion.weighted_n_right * s_imp_right
             )
             / self.supervised_criterion.weighted_n_node_samples
+            / self._root_supervised_impurity
 
             - (1.0 - sup) * (
                 self.unsupervised_criterion.weighted_n_left * u_imp_left
                 + self.unsupervised_criterion.weighted_n_right * u_imp_right
             )
             / self.unsupervised_criterion.weighted_n_node_samples
+            / self._root_unsupervised_impurity
 
         )
 
@@ -368,13 +372,13 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
 
         u_improvement = self.unsupervised_criterion.impurity_improvement(
             u_impurity_parent, u_impurity_left, u_impurity_right,
-        )
+        ) / self._root_unsupervised_impurity
 
         s_improvement = self.supervised_criterion.impurity_improvement(
             s_impurity_parent, s_impurity_left, s_impurity_right,
-        )
+        ) / self._root_supervised_impurity
 
-        return sup * s_improvement + (1.0-sup) * u_improvement
+        return sup * s_improvement + (1.0 - sup) * u_improvement
 
 
 cdef class HomogeneousCompositeSS(SSCompositeCriterion):
@@ -415,11 +419,47 @@ cdef class HomogeneousCompositeSS(SSCompositeCriterion):
         self.set_proxy_sup()
 
     cdef double proxy_impurity_improvement(self) nogil:
-        return (
-            self._proxy_sup
+
+        with gil: print(
+            '*** self._curr_supervision',
+            self._curr_supervision,
+            'self.supervised_criterion.proxy_impurity_improvement()',
+            self.supervised_criterion.proxy_impurity_improvement(),
+            'self.n_outputs',
+            self.n_outputs,
+            'self._root_supervised_impurity',
+            self._root_supervised_impurity,
+            '(1.0 - self._curr_supervision)',
+            (1.0 - self._curr_supervision),
+            'self.unsupervised_criterion.proxy_impurity_improvement()',
+            self.unsupervised_criterion.proxy_impurity_improvement(),
+            'self._root_unsupervised_impurity',
+            self._root_unsupervised_impurity,
+            'self.n_features',
+            self.n_features,
+            'res',
+            self._curr_supervision
             * self.supervised_criterion.proxy_impurity_improvement()
-            + (1.0 - self._curr_supervision)  # here to avoid div by 0
+            / self.n_outputs
+            / self._root_supervised_impurity
+            + (1.0 - self._curr_supervision)
             * self.unsupervised_criterion.proxy_impurity_improvement()
+            / self._root_unsupervised_impurity
+            / self.n_features
+        )
+        return (
+            # self._proxy_sup
+            # * self.supervised_criterion.proxy_impurity_improvement()
+            # + (1.0 - self._curr_supervision)  # here to avoid div by 0
+            # * self.unsupervised_criterion.proxy_impurity_improvement()
+            self._curr_supervision
+            * self.supervised_criterion.proxy_impurity_improvement()
+            / self.n_outputs
+            / self._root_supervised_impurity
+            + (1.0 - self._curr_supervision)
+            * self.unsupervised_criterion.proxy_impurity_improvement()
+            / self._root_unsupervised_impurity
+            / self.n_features
         )
 
     cdef double impurity_improvement(
@@ -431,7 +471,7 @@ cdef class HomogeneousCompositeSS(SSCompositeCriterion):
         return self.supervised_criterion.impurity_improvement(
             impurity_parent,
             impurity_left,
-            impurity_left,
+            impurity_right,
         )
 
 
@@ -510,11 +550,6 @@ cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
             self, self.current_node_impurity, impurity_left, impurity_right)
             # self, self.node_impurity(), impurity_left, impurity_right)
 
-    cdef void unpack_y(self, const DOUBLE_t[:, ::1] y) nogil:
-        self.full_X = y[:, :-self.n_outputs]
-        self.y = y[:, -self.n_outputs:]
-        with gil:
-            self.set_feature(self.current_feature)
 
 
 # =============================================================================
@@ -542,8 +577,8 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
         double supervision_rows,
         double supervision_cols,
         object update_supervision=None,  # callable
-        SemisupervisedCriterion ss_criterion_rows=None,
-        SemisupervisedCriterion ss_criterion_cols=None,
+        SSCompositeCriterion ss_criterion_rows=None,
+        SSCompositeCriterion ss_criterion_cols=None,
     ):
         self.supervision_rows = supervision_rows
         self.supervision_cols = supervision_cols
@@ -552,8 +587,6 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
         self._curr_supervision_cols = supervision_cols
 
         self.update_supervision = update_supervision
-        self._supervision_is_dynamic = update_supervision is not None
-
         self.unsupervised_criterion_rows = unsupervised_criterion_rows
         self.unsupervised_criterion_cols = unsupervised_criterion_cols
 
@@ -601,12 +634,15 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
             is self.ss_criterion_cols.unsupervised_criterion
         )
 
-    cdef void init_X(self):
-        # FIXME: needed because Criterion cannot receive y as DTYPE, but
-        # generates a lot (!) of unecessary memory usage in forests, as each
-        # tree now hold a copy of X.
-        self._X_rows_double = np.ascontiguousarray(self.X_rows, dtype='float64')
-        self._X_cols_double = np.ascontiguousarray(self.X_cols, dtype='float64')
+    cpdef void set_X(
+        self,
+        const DOUBLE_t[:, ::1] X_rows,
+        const DOUBLE_t[:, ::1] X_cols,
+    ):
+        self.ss_criterion_rows.set_X(X_rows)
+        self.ss_criterion_cols.set_X(X_cols)
+        self._X_rows_double = X_rows
+        self._X_cols_double = X_cols
 
     cdef int init(
         self,
@@ -653,11 +689,31 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
             self.start,
             self.end,
         )
+        with gil:
+            print(
+                '*** (bip. init) node imp: srow urow scol ucol',
+                self.supervised_criterion_rows.node_impurity(),
+                self.unsupervised_criterion_rows.node_impurity(),
+                self.supervised_criterion_cols.node_impurity(),
+                self.unsupervised_criterion_cols.node_impurity(),
+            )
+            print(
+                '*** (bip. init) n_out: srow urow scol ucol',
+                self.supervised_criterion_rows.n_outputs,
+                self.unsupervised_criterion_rows.n_outputs,
+                self.supervised_criterion_cols.n_outputs,
+                self.unsupervised_criterion_cols.n_outputs,
+            )
+            print(
+                '*** (bip. init) n_samples: srow scol',
+                self.supervised_criterion_rows.n_samples,
+                self.supervised_criterion_cols.n_samples,
+            )
 
         if self._X_rows_double is None:
             # or self._X_cols_double is None
             with gil:
-                self.init_X()
+                raise RuntimeError("You must set_X() before init()")
 
         self.unsupervised_criterion_rows.init(
             y=self._X_rows_double,
@@ -692,9 +748,7 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
             self.supervised_bipartite_criterion.weighted_n_node_samples
         )
 
-        # Update supervision amount
-        # TODO: use function pointers
-        if self._supervision_is_dynamic:
+        if self.update_supervision is not None:
             with gil:
                 self._curr_supervision_rows = self.update_supervision(
                     weighted_n_samples=self.weighted_n_samples,
@@ -723,15 +777,64 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
         # consider both rows and column supervision).
         # FIXME: Will not work properly for different row/col sup values. Total
         # sup needs to be calculated at proxy_impurity_improvement as well.
-        self.ss_criterion_rows._curr_supervision = self._curr_supervision_rows
-        self.ss_criterion_cols._curr_supervision = self._curr_supervision_cols
+        cdef double total_sup = \
+            self._curr_supervision_rows + self._curr_supervision_cols
+
+        self.ss_criterion_rows._curr_supervision = \
+            total_sup / (self._curr_supervision_cols + 1)
+        self.ss_criterion_cols._curr_supervision = \
+            total_sup / (self._curr_supervision_rows + 1)
+
+        self.ss_criterion_rows.weighted_n_samples = self.weighted_n_rows
+        self.ss_criterion_cols.weighted_n_samples = self.weighted_n_cols
+        self.ss_criterion_rows.weighted_n_node_samples = self.weighted_n_node_rows
+        self.ss_criterion_cols.weighted_n_node_samples = self.weighted_n_node_cols
+
+        if self._root_supervised_impurity == 0.0:
+            # Root unupervised impurities == 0.0 as well
+            self.set_root_impurities()
 
     cdef void set_root_impurities(self) nogil:
         self.ss_criterion_rows.set_root_impurities()
         self.ss_criterion_cols.set_root_impurities()
+        with gil:
+            print(
+                '*** root imp srow urow scol ucol',
+                self.ss_criterion_rows._root_supervised_impurity,
+                self.ss_criterion_rows._root_unsupervised_impurity,
+                self.ss_criterion_cols._root_supervised_impurity,
+                self.ss_criterion_cols._root_unsupervised_impurity,
+            )
+            print(
+                '*** node imp: srow urow scol ucol',
+                self.supervised_criterion_rows.node_impurity(),
+                self.unsupervised_criterion_rows.node_impurity(),
+                self.supervised_criterion_cols.node_impurity(),
+                self.unsupervised_criterion_cols.node_impurity(),
+            )
+            print(
+                '*** start end: srow urow scol ucol',
+                self.supervised_criterion_rows.start,
+                self.supervised_criterion_rows.end,
+                '|',
+                self.unsupervised_criterion_rows.start,
+                self.unsupervised_criterion_rows.end,
+                '|',
+                self.supervised_criterion_cols.start,
+                self.supervised_criterion_cols.end,
+                '|',
+                self.unsupervised_criterion_cols.start,
+                self.unsupervised_criterion_cols.end,
+            )
 
         self._root_supervised_impurity = \
             self.supervised_bipartite_criterion.node_impurity()
+        
+        # XXX
+        self.ss_criterion_rows._root_supervised_impurity = \
+            self._root_supervised_impurity
+        self.ss_criterion_cols._root_supervised_impurity = \
+            self._root_supervised_impurity
 
         self._root_unsupervised_impurity_rows = \
             self.ss_criterion_rows._root_unsupervised_impurity
@@ -743,7 +846,7 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
 
     cdef double node_impurity(self) nogil:
         if self._root_supervised_impurity == 0.0:
-            # or root_unsupervised_impurities == 0.0
+            # Root unupervised impurities == 0.0 as well
             self.set_root_impurities()
             return 1.0
 
@@ -781,67 +884,63 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
         # TODO: use self.ss_criterion_* to simplify. Also, SSCompositeCriterion
         # caches children impurities.
         cdef:
-            double sup, other_sup, total_sup
-            double u_imp_left, u_imp_right, other_u_imp
+            double sup, other_sup
+            double s_imp_left, s_imp_right, s_root_imp
+            double u_imp_left, u_imp_right, u_other_imp
+            double u_root_imp, u_other_root_imp
+            void* u_criterion_ptr
+            void* u_other_criterion_ptr
 
         if axis == 0:
-            other_u_imp = (
-                self.unsupervised_criterion_cols.node_impurity()
-                / self._root_unsupervised_impurity_cols
-            )
-            # TODO: remove this dependency on the way we do axis_supervision_only.
-            # There is no guarantee that the splitters are using the
-            # unsupervised criteria, it is a valid option to use it only for
-            # choosing an axis, calculating the unsupervised impurity only
-            # here. Therefore, we must ensure the unsupervised criterion is in
-            # the right position.
-            self.unsupervised_criterion_rows.update(
-                self.supervised_criterion_rows.pos
-            )
-            self.unsupervised_criterion_rows.children_impurity(
-                &u_imp_left, &u_imp_right,
-            )
-            u_imp_left /= self._root_unsupervised_impurity_rows
-            u_imp_right /= self._root_unsupervised_impurity_rows
-
+            u_criterion_ptr = <void*>self.unsupervised_criterion_rows
+            u_other_criterion_ptr = <void*>self.unsupervised_criterion_cols
+            u_root_imp = self._root_unsupervised_impurity_rows
+            u_other_root_imp = self._root_unsupervised_impurity_cols
+            pos = self.supervised_criterion_rows.pos
             sup = self._curr_supervision_rows
             other_sup = self._curr_supervision_cols
-
         elif axis == 1:
-            other_u_imp = (
-                self.unsupervised_criterion_rows.node_impurity()
-                / self._root_unsupervised_impurity_rows
-            )
-
-            # See the previous comment.
-            self.unsupervised_criterion_cols.update(
-                self.supervised_criterion_cols.pos
-            )
-            self.unsupervised_criterion_cols.children_impurity(
-                &u_imp_left, &u_imp_right,
-            )
-            u_imp_left /= self._root_unsupervised_impurity_cols
-            u_imp_right /= self._root_unsupervised_impurity_cols
-
+            u_criterion_ptr = <void*>self.unsupervised_criterion_cols
+            u_other_criterion_ptr = <void*>self.unsupervised_criterion_rows
+            u_root_imp = self._root_unsupervised_impurity_cols
+            u_other_root_imp = self._root_unsupervised_impurity_rows
+            pos = self.supervised_criterion_cols.pos
             sup = self._curr_supervision_cols
             other_sup = self._curr_supervision_rows
-
         else:
             with gil:
-                raise InvalidAxisError
+                raise InvalidAxisError(axis)
 
-        u_imp_left = (1.0-sup) * u_imp_left + (1.0-other_sup) * other_u_imp
-        u_imp_right = (1.0-sup) * u_imp_right + (1.0-other_sup) * other_u_imp
+        s_root_imp = self._root_supervised_impurity
+        u_other_imp = (<Criterion>u_other_criterion_ptr).node_impurity()
 
-        self.supervised_bipartite_criterion.children_impurity(
-            impurity_left, impurity_right, axis,
+        # There is no guarantee that the splitters are using the
+        # unsupervised criteria, it is a valid option to use it only for
+        # choosing an axis, calculating the unsupervised impurity only
+        # here. Therefore, we must ensure the unsupervised criterion is in
+        # the right position.
+        # TODO: remove this dependency on the way we do axis_supervision_only.
+        (<Criterion>u_criterion_ptr).update(pos)
+        (<Criterion>u_criterion_ptr).children_impurity(
+            &u_imp_left,
+            &u_imp_right,
         )
-        impurity_left[0] /= self._root_supervised_impurity
-        impurity_right[0] /= self._root_supervised_impurity
+        self.supervised_bipartite_criterion.children_impurity(
+            &s_imp_left,
+            &s_imp_right,
+            axis,
+        )
 
-        total_sup = sup + other_sup
-        impurity_left[0] = 0.5 * (u_imp_left + total_sup * impurity_left[0])
-        impurity_right[0] = 0.5 * (u_imp_right + total_sup * impurity_right[0])
+        impurity_left[0] = 0.5 * (
+            (sup + other_sup) * s_imp_left / s_root_imp
+            + (1.0 - sup) * u_imp_left / u_root_imp
+            + (1.0 - other_sup) * u_other_imp / u_other_root_imp
+        )
+        impurity_right[0] = 0.5 * (
+            (sup + other_sup) * s_imp_right / s_root_imp
+            + (1.0 - sup) * u_imp_right / u_root_imp
+            + (1.0 - other_sup) * u_other_imp / u_other_root_imp
+        )
 
     cdef double impurity_improvement(
         self,
@@ -850,33 +949,70 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
         double impurity_right,
         SIZE_t axis,
     ) nogil:
+        cdef:
+            double s_impurity_parent, s_impurity_left, s_impurity_right
+            double u_impurity_parent, u_impurity_left, u_impurity_right
+            double s_improvement, u_improvement
+            double u_root_impurity
+            double sup, other_sup
+            SIZE_t pos
+            void* u_criterion_ptr
+
+        # FIXME: We recalculate due to not having access to the impurities
+        # individually. Receiving a custom SplitRecord object seems a more
+        # adequate solution.
+
+        s_impurity_parent = self.supervised_bipartite_criterion.node_impurity()
+
+        self.supervised_bipartite_criterion.children_impurity(
+            impurity_left=&s_impurity_left,
+            impurity_right=&s_impurity_right,
+            axis=axis,
+        )
+        s_improvement = self.supervised_bipartite_criterion.impurity_improvement(
+            impurity_parent=s_impurity_parent,
+            impurity_left=s_impurity_left,
+            impurity_right=s_impurity_right,
+            axis=axis,
+        )
+
         if axis == 0:
-            # TODO: remove this dependency on the way we do axis_supervision_only.
-            # There is no guarantee that the splitters are using the
-            # unsupervised criteria, it is a valid option to use it only for
-            # choosing an axis, calculating the unsupervised impurity only
-            # here. Therefore, we must ensure the unsupervised criterion is in
-            # the right position.
-            self.unsupervised_criterion_rows.update(
-                self.supervised_criterion_rows.pos
-            )
-            return self.ss_criterion_rows.impurity_improvement(
-                # SSCompositeCriterion ignores these values.
-                impurity_parent,
-                impurity_left,
-                impurity_right,
-            )
+            u_criterion_ptr = <void*>self.unsupervised_criterion_rows
+            pos = self.supervised_criterion_rows.pos
+            sup = self._curr_supervision_rows
+            other_sup = self._curr_supervision_cols
+            u_root_impurity = self._root_unsupervised_impurity_rows
         elif axis == 1:
-            # See the previous comment.
-            self.unsupervised_criterion_cols.update(
-                self.supervised_criterion_cols.pos
-            )
-            return self.ss_criterion_cols.impurity_improvement(
-                # SSCompositeCriterion ignores these values.
-                impurity_parent,
-                impurity_left,
-                impurity_right,
-            )
+            u_criterion_ptr = <void*>self.unsupervised_criterion_cols
+            pos = self.supervised_criterion_cols.pos
+            sup = self._curr_supervision_cols
+            other_sup = self._curr_supervision_rows
+            u_root_impurity = self._root_unsupervised_impurity_cols
         else:
             with gil:
-                raise InvalidAxisError
+                raise InvalidAxisError(axis)
+
+        # There is no guarantee that the splitters are using the
+        # unsupervised criteria, it is a valid option to use it only for
+        # choosing an axis, calculating the unsupervised impurity only
+        # here. Therefore, we must ensure the unsupervised criterion is in
+        # the right position.
+        # TODO: remove this dependency on the way we do axis_supervision_only.
+        (<Criterion>u_criterion_ptr).update(pos)
+
+        u_impurity_parent = (<Criterion>u_criterion_ptr).node_impurity()
+
+        (<Criterion>u_criterion_ptr).children_impurity(
+            impurity_left=&u_impurity_left,
+            impurity_right=&u_impurity_right,
+        )
+        u_improvement = (<Criterion>u_criterion_ptr).impurity_improvement(
+            impurity_parent=u_impurity_parent,
+            impurity_left=u_impurity_left,
+            impurity_right=u_impurity_right,
+        )
+
+        return 0.5 * (
+            (sup + other_sup) * s_improvement / self._root_supervised_impurity
+            + (1.0 - sup) * u_improvement / u_root_impurity
+        )

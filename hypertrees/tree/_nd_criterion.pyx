@@ -10,8 +10,13 @@ np.import_array()
 
 
 class InvalidAxisError(ValueError):
+    def __init__(self, axis: int | None = None):
+        self.axis = axis
     def __str__(self):
-        return "'axis' parameter can only be 0 or 1."
+        return (
+            "'axis' parameter can only be 0 or 1"
+            f", not {self.axis}." if self.axis is not None else "."
+        )
 
 
 cdef class BipartiteCriterion:
@@ -230,9 +235,10 @@ cdef class RegressionCriterionGSO(BipartiteCriterion):
             sample_indices=self.row_indices,
             start=self.start[0],
             end=self.end[0],
-            n_node_samples=self.n_node_rows,  # XXX
+            n_node_samples=self.n_node_rows,
             weighted_n_samples=self.weighted_n_rows,
             weighted_n_node_samples=self.weighted_n_node_rows,
+            sq_sum_total=self.sq_sum_total,
         )
         self._init_child_criterion(
             criterion=self.criterion_cols,
@@ -241,9 +247,10 @@ cdef class RegressionCriterionGSO(BipartiteCriterion):
             sample_indices=self.col_indices,
             start=self.start[1],
             end=self.end[1],
-            n_node_samples=self.n_node_cols,  # XXX
+            n_node_samples=self.n_node_cols,
             weighted_n_samples=self.weighted_n_cols,
             weighted_n_node_samples=self.weighted_n_node_cols,
+            sq_sum_total=self.sq_sum_total,
         )
 
         return 0
@@ -259,6 +266,7 @@ cdef class RegressionCriterionGSO(BipartiteCriterion):
             SIZE_t n_node_samples,
             double weighted_n_samples,
             double weighted_n_node_samples,
+            double sq_sum_total,  # FIXME: MSE specific
     ) nogil except -1:
         """Substitutes splitter.node_reset() setting child splitter on 2D data.
         """
@@ -270,10 +278,10 @@ cdef class RegressionCriterionGSO(BipartiteCriterion):
         criterion.n_node_samples = n_node_samples
         criterion.weighted_n_samples = weighted_n_samples
         criterion.weighted_n_node_samples = weighted_n_node_samples
+        criterion.sq_sum_total = sq_sum_total
 
         # Common for both children:
         criterion.sum_total[0] = self.sum_total[0]
-        criterion.sq_sum_total = self.sq_sum_total
         criterion.reset()
 
         return 0
@@ -309,7 +317,7 @@ cdef class RegressionCriterionGSO(BipartiteCriterion):
             return <void*> self.criterion_cols
         else:
             with gil:
-                raise InvalidAxisError
+                raise InvalidAxisError(axis)
 
 
 cdef class SquaredErrorGSO(RegressionCriterionGSO):
@@ -606,7 +614,7 @@ cdef class GMO(BipartiteCriterion):
     ) nogil:
         """The final value to express the split quality. 
         """
-        return (<AxisCriterion> self._get_criterion(axis)).impurity_improvement(
+        return (<AxisCriterion>self._get_criterion(axis)).impurity_improvement(
             impurity_parent,
             impurity_left,
             impurity_right,
@@ -619,7 +627,7 @@ cdef class GMO(BipartiteCriterion):
             return <void*> self.criterion_cols
         else:
             with gil:
-                raise InvalidAxisError
+                raise InvalidAxisError(axis)
 
 
 cdef class GMOSA(GMO):

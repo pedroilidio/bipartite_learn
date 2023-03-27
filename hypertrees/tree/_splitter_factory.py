@@ -12,7 +12,6 @@ from sklearn.utils._param_validation import (
 from ._nd_splitter import BipartiteSplitter
 from ._nd_criterion import SquaredErrorGSO
 from ._semisupervised_criterion import (
-    SemisupervisedCriterion,
     SSCompositeCriterion,
     HomogeneousCompositeSS,
     AxisHomogeneousCompositeSS,
@@ -42,23 +41,23 @@ def _infer_ss_adapter_type(
     *,
     criterion: Type,
     unsupervised_criterion: Type,
-) -> Type[SemisupervisedCriterion]:
+) -> Type[SSCompositeCriterion]:
     if (
         not issubclass(criterion, Criterion)
         or not issubclass(unsupervised_criterion, Criterion)
     ):
         raise TypeError(
             "Both of criterion and unsupervised criterion must "
-            "be subblasses of Criterion"
+            "be subclasses of Criterion"
         )
-    if (
-        issubclass(criterion, AxisCriterion)
-        != issubclass(unsupervised_criterion, AxisCriterion)
-    ):
-        raise TypeError(
-            "Either both or none of criterion and unsupervised criterion must "
-            "be subblasses of AxisCriterion"
-        )
+    # if (  # FIXME: pairwise criteria
+    #     issubclass(criterion, AxisCriterion)
+    #     != issubclass(unsupervised_criterion, AxisCriterion)
+    # ):
+    #      raise TypeError(
+    #          "Either both or none of criterion and unsupervised criterion must "
+    #          "be subclasses of AxisCriterion"
+    #      )
     if unsupervised_criterion == criterion:
         if issubclass(criterion, AxisCriterion):
             return AxisHomogeneousCompositeSS
@@ -187,40 +186,42 @@ def make_2d_splitter(
 
     ax_min_samples_leaf represents [min_rows_leaf, min_cols_leaf]
     """
-    (
-        n_samples,
-        max_features,
-        n_outputs,
-        ax_min_samples_leaf,
-        ax_min_weight_leaf,
-        splitters,
-        criteria,
-    ) = _duplicate_single_parameters(
-        n_samples,
-        max_features,
-        n_outputs,
-        ax_min_samples_leaf,
-        ax_min_weight_leaf,
-        splitters,
-        criteria,
-    )
+    if criteria is not None:
+        criterion_wrapper = make_bipartite_criterion(
+            criteria,
+            criterion_wrapper_class,
+            is_classification=is_classification,
+            n_samples=n_samples,
+            n_classes=n_classes,
+            n_outputs=n_outputs,
+        )
+        criteria = [
+            criterion_wrapper.criterion_rows,
+            criterion_wrapper.criterion_cols,
+        ]
 
-    if n_classes is None:
-        n_classes = (None, None)
+    (
+        max_features,
+        ax_min_samples_leaf,
+        ax_min_weight_leaf,
+        splitters,
+    ) = _duplicate_single_parameters(
+        max_features,
+        ax_min_samples_leaf,
+        ax_min_weight_leaf,
+        splitters,
+    )
 
     random_state = check_random_state(random_state)
 
     for ax in range(2):
-        criteria[ax] = check_criterion(
-            criteria[ax],
-            n_samples=n_samples[ax],
-            n_outputs=n_outputs[ax],
-            n_classes=n_classes[ax],
-            is_classification=is_classification,
-        )
-
         # Make splitter
         if issubclass(splitters[ax], Splitter):
+            if criteria is None:
+                raise ValueError (
+                    f"Since splitters[{ax}] is a class, criteria must "
+                    "be provided."
+                )
             if max_features[ax] is None:
                 raise ValueError(
                     f"max_features[{ax}] must be provided if splitters"
@@ -232,12 +233,11 @@ def make_2d_splitter(
                 min_weight_leaf=ax_min_weight_leaf[ax],
                 random_state=random_state,
             )
-        elif criteria[ax] is not None:
-            warnings.warn("Since splitters[ax] is not a class, the provided"
-                          " criteria[ax] is being ignored.")
-
-    # Wrap criteria.
-    criterion_wrapper = criterion_wrapper_class(criteria[0], criteria[1])
+        elif criteria is not None:
+            warnings.warn(
+                f"Since splitters[{ax}] is not a class, the provided "
+                f"{criteria[ax]=} is being ignored."
+            )
 
     # Wrap splitters.
     return BipartiteSplitter(
@@ -247,6 +247,42 @@ def make_2d_splitter(
         min_samples_leaf=min_samples_leaf,
         min_weight_leaf=min_weight_leaf,
     )
+
+
+def make_bipartite_criterion(
+    criteria,
+    criterion_wrapper_class,
+    *,
+    is_classification=False,
+    n_samples=None,
+    n_classes=None,
+    n_outputs=1,
+):
+    criteria, n_samples, n_outputs = _duplicate_single_parameters(
+        criteria,
+        n_samples,
+        n_outputs,
+    )
+
+    if n_classes is None:
+        n_classes = (None, None)
+    else:
+        if len(n_classes) != 2:
+            raise ValueError(
+                "A list with n_classes for each axis must be provided in the "
+                "n_classes parameter."
+            )
+
+    for ax in range(2):
+        criteria[ax] = check_criterion(
+            criteria[ax],
+            n_samples=n_samples[ax],
+            n_outputs=n_outputs[ax],
+            n_classes=n_classes[ax],
+            is_classification=is_classification,
+        )
+
+    return criterion_wrapper_class(criteria[0], criteria[1])
 
 
 # TODO: docs
@@ -340,7 +376,6 @@ def make_2dss_splitter(
         n_classes=n_classes,
         is_classification=is_classification,
         n_outputs=n_outputs,
-        random_state=random_state,
         pairwise=pairwise,
         ss_criterion_wrapper_class=ss_criterion_wrapper_class,
     )
@@ -384,7 +419,7 @@ def make_2dss_splitter(
     n_samples=[Interval(Integral, 1, None, closed="left"), None],
     n_classes=[np.ndarray, None],
     update_supervision=[callable, None],
-    ss_class=[type(SemisupervisedCriterion), None],
+    ss_class=[type(SSCompositeCriterion), None],
     pairwise=["boolean"],
 ))
 def make_semisupervised_criterion(
@@ -424,6 +459,10 @@ def make_semisupervised_criterion(
         n_samples=n_samples,
         pairwise=pairwise,
     )
+    if isinstance(unsupervised_criterion, AxisCriterion):
+        raise TypeError(
+            f"{unsupervised_criterion=} cannot be an instance of AxisCriterion"
+        )
 
     if ss_class is None:
         ss_class = _infer_ss_adapter_type(
@@ -451,7 +490,6 @@ def make_2dss_criterion(
     n_classes=None,
     n_outputs=1,
     is_classification=False,
-    random_state=None,
     pairwise=False,
     ss_criterion_wrapper_class=BipartiteSemisupervisedCriterion,
 ):
@@ -483,11 +521,10 @@ def make_2dss_criterion(
 
     if n_classes is None:
         n_classes = (None, None)
-    random_state = check_random_state(random_state)
 
     # Make semi-supervised criteria
     for ax in range(2):
-        if not isinstance(ss_criteria[ax], SemisupervisedCriterion):
+        if not isinstance(ss_criteria[ax], SSCompositeCriterion):
             ss_criteria[ax] = make_semisupervised_criterion(
                 ss_class=ss_criteria[ax],
                 supervision=supervision[ax],

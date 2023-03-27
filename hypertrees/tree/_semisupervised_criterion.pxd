@@ -10,16 +10,11 @@ cdef class BaseDenseSplitter(Splitter):
     cdef const DTYPE_t[:, :] X
 
 
-cdef class SemisupervisedCriterion(Criterion):
-    """Base class for semantic purposes and future maintenance.
-    """
-
-
-cdef class SSCompositeCriterion(SemisupervisedCriterion):
+cdef class SSCompositeCriterion(Criterion):
     cdef public Criterion supervised_criterion
     cdef public Criterion unsupervised_criterion
     cdef const DOUBLE_t[:, ::1] X
-    cdef public SIZE_t n_features
+    cdef SIZE_t n_features
 
     # The supervision attribute is a float between 0 and 1 that weights
     # supervised and unsupervised impurities when calculating the total
@@ -39,15 +34,9 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     cdef double _root_supervised_impurity
     cdef double _root_unsupervised_impurity
 
-    # TODO: setter method instead of public.
-    cdef public double _curr_supervision     # Current supervision amount
-    cdef public double supervision           # first supervision value received
-    cdef public object update_supervision    # callable to update supervision
-
-    # The _supervision_is_dynamic serves merely as a C-typed flag to
-    # avoid asking for the GIL if update_supervision was not provided.
-    # TODO: use function pointers
-    cdef bint _supervision_is_dynamic
+    cdef double _curr_supervision     # Current supervision amount
+    cdef double supervision           # first supervision value received
+    cdef object update_supervision    # callable to update supervision
 
     # TODO: explain
     cdef SIZE_t _cached_pos
@@ -57,10 +46,6 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
     cdef double _cached_s_impurity_right
 
     cdef void set_root_impurities(self) nogil
-
-    # TODO: explain
-    cdef void unpack_y(self, const DOUBLE_t[:, ::1] y) nogil
-
     cdef void ss_children_impurities(
         self,
         double* u_impurity_left,
@@ -68,16 +53,18 @@ cdef class SSCompositeCriterion(SemisupervisedCriterion):
         double* s_impurity_left,
         double* s_impurity_right,
     ) nogil
+    cpdef void set_X(self, const DOUBLE_t[:, ::1] X)
+    cdef inline void _copy_position_wise_attributes(self) noexcept nogil
 
 # FIXME
 cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
     """Uses only the current feature as unsupervised data.
     """
-    cdef public SIZE_t current_feature
-    cdef public double current_node_impurity
+    cdef SIZE_t current_feature
+    cdef double current_node_impurity
     cdef const DOUBLE_t[:, ::1] full_X
 
-# Regression?
+
 cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
     cdef public Criterion unsupervised_criterion_rows
     cdef public Criterion unsupervised_criterion_cols
@@ -102,18 +89,19 @@ cdef class BipartiteSemisupervisedCriterion(BipartiteCriterion):
     cdef double _root_unsupervised_impurity_cols
     cdef void set_root_impurities(self) nogil
 
-    cdef public double supervision_rows
-    cdef public double supervision_cols
+    cdef double supervision_rows
+    cdef double supervision_cols
     cdef double _curr_supervision_rows
     cdef double _curr_supervision_cols
 
     # TODO: use function pointers
     cdef object update_supervision  # callable
-    cdef bint _supervision_is_dynamic
 
-    # FIXME: needed because Criterion cannot receive y as DTYPE, but
-    # generates a lot (!) of unecessary memory usage in forests, as each
-    # tree now hold a copy of X.
     cdef const DOUBLE_t[:, ::1] _X_rows_double
     cdef const DOUBLE_t[:, ::1] _X_cols_double
-    cdef void init_X(self)
+
+    cpdef void set_X(
+        self,
+        const DOUBLE_t[:, ::1] X_rows,
+        const DOUBLE_t[:, ::1] X_cols,
+    )

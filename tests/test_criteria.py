@@ -1,6 +1,9 @@
 import logging
+from typing import Callable, Dict
 import numpy as np
+import scipy.stats
 import pytest
+from collections import defaultdict
 from numbers import Real, Integral
 from sklearn.utils.validation import check_random_state
 from sklearn.utils._testing import assert_allclose
@@ -9,14 +12,30 @@ from sklearn.tree._criterion import MSE, MAE, FriedmanMSE, Poisson
 from sklearn.tree._splitter import BestSplitter
 from hypertrees.tree._splitter_factory import (
     make_semisupervised_criterion,
+    make_bipartite_criterion,
     make_2dss_criterion,
+    _infer_ss_adapter_type,
 )
-from hypertrees.tree._nd_criterion import SquaredErrorGSO
+from hypertrees.tree._axis_criterion import (
+    AxisMSE,
+    AxisFriedmanMSE,
+    AxisSquaredErrorGSO
+)
+from hypertrees.tree._nd_criterion import (
+    SquaredErrorGSO, FriedmanGSO, GMO, GMOSA,
+)
+from hypertrees.tree._semisupervised_criterion import (
+    SSCompositeCriterion,
+    HomogeneousCompositeSS,
+    AxisHomogeneousCompositeSS,
+)
+
 from hypertrees.melter import row_cartesian_product
 from test_utils import assert_equal_dicts, comparison_text
 from make_examples import make_interaction_blobs
 from splitter_test import (
     apply_criterion,
+    apply_bipartite_criterion,
     apply_bipartite_ss_criterion,
     get_criterion_status,
     update_criterion,
@@ -30,7 +49,7 @@ def supervision(request):
 
 @pytest.fixture(params=range(10))
 def random_state(request):
-    return request.param
+    return check_random_state(request.param)
 
 
 @pytest.fixture
@@ -49,35 +68,36 @@ def data(n_samples, n_features, random_state):
         return_molten=True,
         n_features=n_features,
         n_samples=n_samples,
-        random_state=check_random_state(random_state),
+        random_state=random_state,
         noise=2.0,
         centers=10,
     )
     return X, Y, x, y
 
 
-def mse_impurity(a, axis=0):
-    """Calculate impurity the same way as MSE criterion.
+def assert_ranks_are_close(a, b, **kwargs):
+    a_s = np.argsort(a)
+    b_s = np.argsort(b)
+    # If any of swapped values (between both b and a ordering) is not
+    # different, do not raise.
+    try:
+        assert_equal_dicts(
+            {'a_sorted': a[a_s], 'b_sorted': b[a_s]},
+            {'a_sorted': a[b_s], 'b_sorted': b[b_s]},
+            **kwargs,
+        )
+    except AssertionError as error:
+        if "'b_sorted' and 'a_sorted" in str(error):
+            raise
 
-    Mathematically the same as a.var(axis).mean(), but prone to precision
-    issues.
-    """
-    a_sum = a.sum(axis)
-    n_out = a_sum.shape[0]
-    n_samples = a.shape[axis]
-    return ((a ** 2).sum()/n_samples - (a_sum ** 2).sum()/n_samples**2) / n_out
+
+# TODO: is it necessary to not simplify?
+def mse_impurity(a):
+    return a.var(0).mean()
 
 
-def global_mse_impurity(a, axis=0):
-    """Calculate impurity the same way as MSE criterion.
-
-    Mathematically the same as a.var(axis).mean(), but prone to precision
-    issues.
-    """
-    a_sum = a.sum(axis)
-    n_out = a_sum.shape[0]
-    n_samples = a.shape[axis]
-    return ((a ** 2).sum()/n_samples - a_sum.sum()**2/n_samples**2) / n_out
+def global_mse_impurity(a):
+    return a.var()
 
 
 def sort_by_feature(x, y, feature):
@@ -91,25 +111,100 @@ def sort_by_feature(x, y, feature):
     'start': [Integral],
     'end': [Integral],
     'feature': [Interval(Integral, 0, None, closed='left'), None],
-    'supervision': [Interval(Real, 0.0, 1.0, closed='both')],
+    'supervision': [Interval(Real, 0.0, 1.0, closed='both'), None],
     'average_both_axes': ['boolean'],
     'impurity': [callable],
 })
-def manual_split_eval_mse(
-    X,
-    y,
-    pos,  # absolute position, disregarding start and end
-    start=0,  # Crops the data between positions
-    end=0,
-    feature=None,
-    supervision=1.0,
-    average_both_axes=False,
-    impurity=mse_impurity,
-):
+def evaluate_split(
+    X: np.ndarray,
+    y: np.ndarray,
+    pos: int,
+    start: int = 0,
+    end: int = 0,
+    *,
+    feature: int | None = None,
+    supervision: float | None = None,
+    average_both_axes: bool = False,
+    sample_weight: np.ndarray | None = None,
+    weighted_n_samples: float | None = None,
+    weighted_n_node_samples: float | None = None,
+    impurity: Callable[[np.ndarray], float] = mse_impurity,
+    unsupervised_impurity: Callable[[np.ndarray], float] | None = None,
+) -> Dict[str, int | float]:
+    """
+    Evaluates the impurities of a given split position in a dataset, simulating
+    split evaluation by the Criterion objects of decision trees.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        The input data of shape (n_samples, n_features).
+    y : np.ndarray
+        The target values of shape (n_samples, n_outputs).
+    pos : int
+        The split position to evaluate. The absolute index must be provided,
+        relative to the begining of the dataset, NOT relative to `start`.
+    start : int, optional
+        The starting position of the data to evaluate, representing the start
+        index of the current node, by default 0.
+    end : int, optional
+        The ending position of the data to evaluate, representing the final
+        index of the current node, by default 0.
+    feature : int, optional
+        The feature index representing the column of X to sort the data by. If
+        None, no sorting is performed. By default None.
+    supervision : float between 0 and 1, optional
+        If not None, a semisupervised impurity is metric is considered instead,
+        calculated as follows:
+        ``
+            supervision \
+                * supervised_impurity(y) / root_supervised_impurity
+            + (1 - supervision) \
+                * unsupervised_impurity(x) / root_unsupervised_impurity
+        ``
+        The impurities at the root node are simply taken as to be the current
+        node impurity (i.e. the parent impurity). By default None.
+    average_both_axes : bool, optional
+        Whether to average the impurity on both axes. Useful to evaluate
+        bipartite criteria along each axis. By default False.
+    sample_weight : np.ndarray, optional
+        Sample weights of shape (n_samples, ), by default None.
+    weighted_n_samples : float, optional
+        The total weighted number of samples in the dataset, taken as
+        `sample_weight.sum()` if None, by default None.
+    weighted_n_node_samples : float, optional
+        The total weighted number of samples in the current node, taken to be
+        `sample_weight[start:end].sum()` if None, by default None.
+    impurity : Callable[[np.ndarray], float], optional
+        The function to use for calculating impurity, by default mse_impurity.
+    unsupervised_impurity : Callable[[np.ndarray], float], optional
+        The function to use for calculating unsupervised_impurity. If None,
+        we set unsupervised_impurity = impurity. By default None.
+
+    Returns
+    -------
+    Dict[str, int | float]
+        A dictionary with the following keys and values:
+        - 'pos': the split position.
+        - 'impurity_parent': the impurity of the parent node.
+        - 'weighted_n_left': the weighted number of samples in the left node.
+        - 'weighted_n_right': the weighted number of samples in the right node.
+        - 'impurity_left': the impurity of the left node.
+        - 'impurity_right': the impurity of the right node.
+        - 'improvement': the impurity improvement gained by the split.
+
+        If `supervision` is provided, the following values will be included:
+        - 'supervised_impurity_parent': the supervised impurity of the parent node.
+        - 'unsupervised_impurity_parent': the unsupervised impurity of the parent node.
+        - 'supervised_impurity_left': the supervised impurity of the left node.
+        - 'supervised_impurity_right': the supervised impurity of the right node.
+        - 'unsupervised_impurity_left': the unsupervised impurity of the left node.
+        - 'unsupervised_impurity_right': the unsupervised impurity of the right node.
+    """
     start = start if start >= 0 else y.shape[0] + start
     end = end if end > 0 else y.shape[0] + end
 
-    if not (start < pos < end):
+    if not (start < pos <= end):
         raise ValueError(
             f'Provided index {pos} is not between {start=} and {end=}.'
         )
@@ -124,37 +219,81 @@ def manual_split_eval_mse(
     n_samples = y.shape[0]
     n_node_samples = y_.shape[0]
 
-    result = {'pos': pos, 'impurity_parent': impurity(y_, 0)}
+    result = {'pos': pos, 'impurity_parent': impurity(y_)}
 
-    result['impurity_left'] = impurity(y_[:rel_pos], 0)
-    result['impurity_right'] = impurity(y_[rel_pos:], 0)
+    if sample_weight is None:
+        result['weighted_n_left'] = float(rel_pos)
+        weighted_n_samples = float(n_samples)
+        weighted_n_node_samples = float(n_node_samples)
+    else:
+        result['weighted_n_left'] = sample_weight[start:pos].sum()
+        if weighted_n_samples is None:
+            weighted_n_samples = sample_weight.sum()
+        if weighted_n_node_samples is None:
+            weighted_n_node_samples = sample_weight[start:end].sum()
+
+    result['weighted_n_right'] = (
+        weighted_n_node_samples - result['weighted_n_left']
+    )
+    result['impurity_left'] = impurity(y_[:rel_pos])
+    result['impurity_right'] = impurity(y_[rel_pos:])
 
     if average_both_axes:
-        result['impurity_parent'] += impurity(y_, 1)
+        result['impurity_parent'] += impurity(y_.T)
         result['impurity_parent'] /= 2
-        result['impurity_left'] += impurity(y_[:rel_pos], 1)
+        result['impurity_left'] += impurity(y_[:rel_pos].T)
         result['impurity_left'] /= 2
-        result['impurity_right'] += impurity(y_[rel_pos:], 1)
+        result['impurity_right'] += impurity(y_[rel_pos:].T)
         result['impurity_right'] /= 2
 
-    if supervision < 1.0:
-        result['impurity_parent'] *= supervision
-        result['impurity_parent'] += (1-supervision) * impurity(x_, 0)
-        result['impurity_left'] *= supervision
-        result['impurity_left'] += (1-supervision) * impurity(x_[:rel_pos], 0)
-        result['impurity_right'] *= supervision
-        result['impurity_right'] += (1-supervision) * \
-            impurity(x_[rel_pos:], 0)
+    if supervision is not None:
+        u_impurity = unsupervised_impurity or impurity
 
-    n_left = rel_pos
-    n_right = n_node_samples - rel_pos
+        root_supervised_impurity = result['impurity_parent']
+        result['supervised_impurity_parent'] = root_supervised_impurity
 
-    result['improvement'] = n_node_samples / n_samples * (
-        result['impurity_parent']
-        - (
-            n_left * result['impurity_left']
-            + n_right * result['impurity_right']
-        ) / n_node_samples
+        root_unsupervised_impurity = u_impurity(x_)
+        result['unsupervised_impurity_parent'] = root_unsupervised_impurity
+
+        result['impurity_parent'] = 1.0
+
+        result['supervised_impurity_left'] = result['impurity_left']
+        result['supervised_impurity_right'] = result['impurity_right']
+        result['unsupervised_impurity_left'] = u_impurity(x_[:rel_pos])
+        result['unsupervised_impurity_right'] = u_impurity(x_[rel_pos:])
+
+        unsupervised_impurity_left = (
+            result['unsupervised_impurity_left']
+            / root_unsupervised_impurity
+        )
+        unsupervised_impurity_right = (
+            result['unsupervised_impurity_right']
+            / root_unsupervised_impurity
+        )
+
+        if average_both_axes:
+            # unsup impurity of the other axis is 1.0, since it does not change
+            unsupervised_impurity_left = unsupervised_impurity_left/2 + 0.5
+            unsupervised_impurity_right = unsupervised_impurity_right/2 + 0.5
+
+        result['impurity_left'] = (
+            supervision * result['impurity_left'] / root_supervised_impurity
+            + (1 - supervision) * unsupervised_impurity_left
+        )
+        result['impurity_right'] = (
+            supervision * result['impurity_right'] / root_supervised_impurity
+            + (1 - supervision) * unsupervised_impurity_right
+        )
+
+    result['improvement'] = (
+        weighted_n_node_samples / weighted_n_samples
+        * (
+            result['impurity_parent']
+            - result['impurity_left']
+            * result['weighted_n_left'] / weighted_n_node_samples
+            - result['impurity_right']
+            * result['weighted_n_right'] / weighted_n_node_samples
+        )
     )
 
     return result
@@ -162,207 +301,562 @@ def manual_split_eval_mse(
 
 def manually_eval_all_splits(
     x, y,
-    start=0,  # Crops data to select partition, not related to indices
+    sample_weight=None,
+    start=0,
     end=0,
-    supervision=1.0,
+    supervision=None,
     indices=None,
     average_both_axes=False,
     impurity=mse_impurity,
+    unsupervised_impurity: Callable[[np.ndarray], float] | None = None,
 ):
-    result = dict(
-        pos=[],
-        impurity_parent=[],
-        impurity_left=[],
-        impurity_right=[],
-        improvement=[],
-    )
     start = start if start >= 0 else y.shape[0] + start
     end = end if end > 0 else y.shape[0] + end
 
+    if sample_weight is None:
+        weighted_n_samples = float(y.shape[0])
+        weighted_n_node_samples = float(end - start)
+    else:
+        weighted_n_samples = sample_weight.sum()
+        weighted_n_node_samples = sample_weight[start:end].sum()
+
     if indices is None:
-        indices = range(start+1, end)
+        indices = range(start + 1, end)
+
+    result = defaultdict(list)
 
     for pos in indices:
-        split = manual_split_eval_mse(
+        split = evaluate_split(
             x, y,
             pos=pos,
             start=start,
             end=end,
             supervision=supervision,
             average_both_axes=average_both_axes,
+            sample_weight=sample_weight,
+            weighted_n_samples=weighted_n_samples,
+            weighted_n_node_samples=weighted_n_node_samples,
             impurity=impurity,
+            unsupervised_impurity=unsupervised_impurity,
         )
         for k, v in split.items():
             result[k].append(v)
 
-    return {k: np.asarray(v) for k, v in result.items()}
+    result = {k: np.array(v) for k, v in result.items()}
+    result['weighted_n_samples'] = weighted_n_samples
+    result['weighted_n_node_samples'] = weighted_n_node_samples
+
+    return result
 
 
-def test_semisupervised_criterion(supervision, data):
-    X, Y, x, y = data
-
+def semisupervised_criterion_factory(
+    x, y,
+    supervised_criterion,
+    unsupervised_criterion,
+    supervision,
+    ss_adapter=None,
+):
     criterion = make_semisupervised_criterion(
         supervision=supervision,
-        supervised_criterion=MSE,
-        unsupervised_criterion=MSE,
-        n_features=x.shape[1],
-        n_samples=x.shape[0],
+        supervised_criterion=supervised_criterion,
+        unsupervised_criterion=unsupervised_criterion,
+        ss_class=ss_adapter,
+        n_samples=y.shape[0],
         n_outputs=y.shape[1],
+        n_features=x.shape[1],
+    )
+    criterion.set_X(np.ascontiguousarray(x, dtype='float64'))
+    return criterion
+
+
+# TODO
+def ss_gmo_criterion_factory(
+    x, y,
+    *,
+    n_samples,
+    n_features,
+    n_outputs,
+    supervision,
+    supervised_criterion,
+    unsupervised_criterion,
+    bipartite_adapter,
+    ss_criterion=None,  # TODO: AxisSSCompositeCriterion
+):
+    if ss_criterion is None:
+        ss_criterion = _infer_ss_adapter_type(
+            supervised_criterion,
+            unsupervised_criterion,
+        )
+    ss_criteria = []
+
+    for ax in range(2):
+        ss_criteria.append(
+            ss_criterion(
+                supervised_criterion=supervised_criterion(
+                    n_outputs=n_outputs[ax],
+                    n_samples=n_samples[ax],
+                ),
+                unsupervised_criterion=unsupervised_criterion(
+                    n_outputs=n_features[ax],
+                    n_samples=n_samples[ax],
+                ),
+                supervision=supervision,
+            )
+        )
+    
+    return bipartite_adapter(
+        criterion_rows=ss_criteria[0],
+        criterion_cols=ss_criteria[1],
     )
 
-    split_data = apply_criterion(criterion, np.hstack((x, y)))
-    manual_split_data = manually_eval_all_splits(x, y, supervision=supervision)
-    # rtol=1e-4 because x is converted from float32
-    assert_equal_dicts(split_data, manual_split_data, rtol=1e-3, atol=1e-8)
+
+def test_no_axis_criterion_as_unsupervised():
+    with pytest.raises(TypeError, match=r'.*AxisCriterion'):
+        make_semisupervised_criterion(
+            supervised_criterion=AxisMSE,
+            unsupervised_criterion=AxisMSE,
+            n_features=100,
+            n_samples=200,
+            n_outputs=10,
+            supervision=0.5,
+        )
+
+
+@pytest.fixture(
+    params=[
+        (
+            make_2dss_criterion,
+            {
+                'supervised_criteria': MSE,
+                'unsupervised_criteria': MSE,
+                'ss_criteria': SSCompositeCriterion,
+                'criterion_wrapper_class': SquaredErrorGSO,
+            },
+            global_mse_impurity,
+            mse_impurity,
+        ),
+        (
+            make_2dss_criterion,
+            {
+                'supervised_criteria': MSE,
+                'unsupervised_criteria': MSE,
+                'ss_criteria': HomogeneousCompositeSS,
+                'criterion_wrapper_class': SquaredErrorGSO,
+            },
+            global_mse_impurity,
+            mse_impurity,
+        ),
+        # (
+        #     make_2dss_criterion,
+        #     {
+        #         'supervised_criteria': MSE,
+        #         'unsupervised_criteria': MSE,
+        #         'ss_criteria': HomogeneousCompositeSS,
+        #         'criterion_wrapper_class': GMOSA,
+        #     },
+        #     global_mse_impurity,
+        #     mse_impurity,
+        # ),
+    ],
+    ids=['mse', 'homogeneus_mse'],
+)
+def gso_bipartite_criterion(request, n_samples, n_features, supervision):
+    factory, args, supervised_impurity, unsupervised_impurity = request.param
+
+    default_criterion_args = dict(
+        n_features=n_features,
+        n_samples=n_samples,
+        n_outputs=1,
+        supervision=supervision,
+    )
+
+    return {
+        'criterion': factory(**default_criterion_args | args),
+        'supervised_impurity': supervised_impurity,
+        'unsupervised_impurity': unsupervised_impurity,
+    }
+
+
+def assert_ss_bipartite_criterion_identities(criterion_data):
+    criterion = criterion_data['criterion']
+
+    assert (
+        criterion.supervised_criterion_rows
+        is criterion.ss_criterion_rows.supervised_criterion
+    )
+    assert (
+        criterion.unsupervised_criterion_rows
+        is criterion.ss_criterion_rows.unsupervised_criterion
+    )
+    assert (
+        criterion.supervised_criterion_cols
+        is criterion.ss_criterion_cols.supervised_criterion
+    )
+    assert (
+        criterion.unsupervised_criterion_cols
+        is criterion.ss_criterion_cols.unsupervised_criterion
+    )
+    assert (
+        criterion.supervised_criterion_rows
+        is criterion.supervised_bipartite_criterion.criterion_rows
+    )
+    assert (
+        criterion.supervised_criterion_cols
+        is criterion.supervised_bipartite_criterion.criterion_cols
+    )
+
+
+def test_criterion_identities_ss_bipartite(gso_bipartite_criterion):
+    assert_ss_bipartite_criterion_identities(gso_bipartite_criterion)
+
+
+@pytest.mark.parametrize(
+    'supervised_criterion, unsupervised_criterion, provided_type, target_type',
+    [
+        (MSE, MSE, None, HomogeneousCompositeSS),
+        (AxisMSE, AxisMSE, None, AxisHomogeneousCompositeSS),
+        (MSE, FriedmanMSE, None, SSCompositeCriterion),
+        (MSE, FriedmanMSE, HomogeneousCompositeSS, HomogeneousCompositeSS),
+        (AxisMSE, AxisFriedmanMSE, AxisHomogeneousCompositeSS,
+         AxisHomogeneousCompositeSS),
+    ],
+)
+def test_ss_criterion_factory_adapter_type_inference(
+    supervised_criterion,
+    unsupervised_criterion,
+    provided_type,
+    target_type,
+):
+    criterion = make_semisupervised_criterion(
+        supervised_criterion=supervised_criterion,
+        unsupervised_criterion=unsupervised_criterion,
+        ss_class=provided_type,
+        n_features=100,
+        n_samples=200,
+        n_outputs=10,
+        supervision=0.5,
+    )
+    assert type(criterion) == target_type
+
+
+@pytest.mark.parametrize(
+    'criterion_factory, criterion_args, impurity', [
+        (
+            semisupervised_criterion_factory,
+            {
+                'supervised_criterion': MSE,
+                'unsupervised_criterion': MSE,
+                'ss_adapter': SSCompositeCriterion,
+            },
+            mse_impurity,
+        ),
+        (
+            semisupervised_criterion_factory,
+            {'supervised_criterion': MSE, 'unsupervised_criterion': MSE},
+            mse_impurity,
+        ),
+    ],
+    ids=['ss', 'ss_homogeneous'],
+)
+def test_semisupervised_criterion(
+    supervision,
+    data,
+    criterion_factory,
+    criterion_args,
+    impurity,
+    unsupervised_impurity=None,
+):
+    XX, Y, *_ = data
+    X = XX[0]
+
+    # Because x is converted from float32
+    rtol = 1e-7 if supervision is None else 1e-4
+    atol = 1e-7
+
+    criterion = criterion_factory(
+        X, Y, supervision=supervision, **criterion_args,
+    )
+    split_data = apply_criterion(criterion, Y)
+
+    manual_split_data = manually_eval_all_splits(
+        X, Y,
+        supervision=supervision,
+        impurity=impurity,
+        unsupervised_impurity=unsupervised_impurity,
+    )
+
+    assert_equal_dicts(
+        split_data,
+        manual_split_data,
+        rtol=rtol,
+        atol=atol,
+        ignore={
+            'n_samples',
+            'n_node_samples',
+            'proxy_improvement',
+            'supervised_impurity_parent',
+            'supervised_impurity_left',
+            'supervised_impurity_right',
+            'unsupervised_impurity_parent',
+            'unsupervised_impurity_left',
+            'unsupervised_impurity_right',
+            'n_outputs',
+            'end',
+            'start',
+        },
+        differing_keys='raise',
+    )
+
+    # Test that the order of the proxy improvement values matches the order of
+    # the final improvement values.
+    assert_ranks_are_close(
+        split_data['proxy_improvement'],
+        manual_split_data['improvement'],
+        msg_prefix='(rows proxy) ',
+        rtol=rtol,
+        atol=atol,
+    )
 
 
 def test_supervised_criterion(data):
-    X, Y, x, y = data
+    XX, Y, *_ = data
+    X = XX[0]
 
     criterion = MSE(
-        n_samples=y.shape[0],
-        n_outputs=y.shape[1],
+        n_samples=Y.shape[0],
+        n_outputs=Y.shape[1],
     )
 
-    split_data = apply_criterion(criterion, y)
-    manual_split_data = manually_eval_all_splits(x, y)
-    assert_equal_dicts(split_data, manual_split_data, rtol=1e-7, atol=1e-8)
-
-
-def test_unsupervised_criterion(data):
-    X, Y, x, y = data
-
-    criterion = make_semisupervised_criterion(
-        supervision=0.0,
-        supervised_criterion=MSE,
-        unsupervised_criterion=MSE,
-        n_features=x.shape[1],
-        n_samples=x.shape[0],
-        n_outputs=y.shape[1],
+    split_data = apply_criterion(criterion, Y)
+    manual_split_data = manually_eval_all_splits(X, Y)
+    assert_equal_dicts(
+        split_data,
+        manual_split_data,
+        rtol=1e-7,
+        atol=1e-8,
+        differing_keys='raise',
+        ignore={
+            'proxy_improvement',
+            'n_outputs',
+            'n_samples',
+            'n_node_samples',
+            'start',
+            'end',
+        },
     )
 
-    split_data = apply_criterion(criterion, np.hstack((x, y)))
-    manual_split_data = manually_eval_all_splits(x=x, y=x, supervision=1.0)
-    # rtol=1e-4 because x is converted from float32
-    assert_equal_dicts(split_data, manual_split_data, rtol=1e-3, atol=1e-8)
-
-
-def test_fake_unsupervised_criterion(data):
-    X, Y, x, y = data
-
-    criterion = MSE(
-        n_samples=x.shape[0],
-        n_outputs=x.shape[1],
+    # Test that the order of the proxy improvement values matches the order of
+    # the final improvement values.
+    assert_ranks_are_close(
+        split_data['proxy_improvement'],
+        manual_split_data['improvement'],
+        msg_prefix='(proxy) ',
     )
 
-    split_data = apply_criterion(criterion, x.astype('float64'))
-    manual_split_data = manually_eval_all_splits(x=x, y=x, supervision=1.0)
-    # rtol=1e-4 because x is converted from float32
-    assert_equal_dicts(split_data, manual_split_data, rtol=1e-3, atol=1e-8)
 
-
-def test_bipartite_ss_criterion(data, n_features, n_samples, supervision, random_state):
+def test_bipartite_ss_criterion_gso(
+    data,
+    n_samples,
+    gso_bipartite_criterion,
+    supervision,
+    apply_criterion=apply_bipartite_ss_criterion,
+):
     start_row, start_col = 0, 0
-    end_row, end_col = n_samples
-    n_rows, n_cols = n_samples
+    end_row, end_col = n_rows, n_cols = n_samples
 
-    X, Y, x, y = data
-    xT, yT = row_cartesian_product([X[1], X[0]]), Y.T.reshape(-1, 1)
+    # Because x is converted from float32
+    rtol = 1e-7 if supervision is None else 1e-4
+    atol = 1e-7
 
-    criterion = make_2dss_criterion(
-        supervised_criteria=MSE,
-        unsupervised_criteria=MSE,
-        criterion_wrapper_class=SquaredErrorGSO,
-        supervision=supervision,
-        n_features=n_features,
-        n_samples=n_samples,
-        n_outputs=1,
-        random_state=check_random_state(random_state),
-    )
+    X, Y, *_ = data
 
-    row_splits, col_splits = apply_bipartite_ss_criterion(
+    criterion = gso_bipartite_criterion['criterion']
+    impurity = gso_bipartite_criterion['supervised_impurity']
+    unsupervised_impurity = gso_bipartite_criterion['unsupervised_impurity']
+
+    row_splits, col_splits = apply_criterion(
         criterion,
-        X[0],
-        X[1],
-        Y,
+        X_rows=X[0],
+        X_cols=X[1],
+        y=Y,
         start=[start_row, start_col],
         end=[end_row, end_col],
     )
 
-    row_indices = np.arange(start_row+1, end_row) * n_cols
-    col_indices = np.arange(start_col+1, end_col) * n_rows
+    # Split positions to evaluate
+    row_indices = np.arange(start_row + 1, end_row)
+    col_indices = np.arange(start_col + 1, end_col)
 
     row_manual_splits = manually_eval_all_splits(
-        x=x, y=y, supervision=supervision, indices=row_indices,
+        x=np.repeat(X[0], n_cols, axis=0),
+        y=Y.reshape(-1, 1),
+        supervision=supervision,
+        indices=row_indices * n_cols,
         start=start_row * n_cols,
         end=end_row * n_cols,
+        impurity=impurity,
+        unsupervised_impurity=unsupervised_impurity,
+        average_both_axes=True,
     )
     col_manual_splits = manually_eval_all_splits(
-        x=xT, y=yT, supervision=supervision, indices=col_indices,
+        x=np.repeat(X[1], n_rows, axis=0),
+        y=Y.T.reshape(-1, 1),
+        supervision=supervision,
+        indices=col_indices * n_rows,
         start=start_col * n_rows,
         end=end_col * n_rows,
+        impurity=impurity,
+        unsupervised_impurity=unsupervised_impurity,
+        average_both_axes=True,
     )
+    row_manual_splits['pos'] = row_indices
+    col_manual_splits['pos'] = col_indices
+
+    if supervision is not None:
+        row_manual_splits['supervised_pos'] = row_indices
+        row_manual_splits['unsupervised_pos'] = row_indices
+        col_manual_splits['supervised_pos'] = col_indices
+        col_manual_splits['unsupervised_pos'] = col_indices
+
+    ignore = {
+        'weighted_n_node_samples_axis',
+        'weighted_n_samples_axis',
+        'weighted_n_left',
+        'weighted_n_right',
+    }
+
+    # Test that the order of the proxy improvement values matches the order of
+    # the final improvement values.
+    assert_ranks_are_close(
+        row_splits['proxy_improvement'],
+        row_manual_splits['improvement'],
+        msg_prefix='(rows proxy) ',
+        rtol=rtol,
+        atol=atol,
+    )
+    assert_ranks_are_close(
+        col_splits['proxy_improvement'],
+        col_manual_splits['improvement'],
+        msg_prefix='(cols proxy) ',
+        rtol=rtol,
+        atol=atol,
+    )
+
     assert_equal_dicts(
         row_splits,
         row_manual_splits,
         msg_prefix='(rows) ',
         subset=row_manual_splits.keys(),
-        ignore=['pos'],
-        rtol=1e-4,
-        atol=1e-8,
-        differing_keys="raise",
+        ignore=ignore,
+        rtol=rtol,
+        atol=atol,
+        differing_keys='raise',
     )
     assert_equal_dicts(
         col_splits,
         col_manual_splits,
         msg_prefix='(cols) ',
         subset=row_manual_splits.keys(),
-        ignore=['pos'],
-        rtol=1e-4,
-        atol=1e-8,
-        differing_keys="raise",
+        ignore=ignore,
+        rtol=rtol,
+        atol=atol,
+        differing_keys='raise',
     )
 
 
-def test_bipartite_ss_criterion_proxy_improvement(
-    data, n_features, n_samples, supervision, random_state,
+@pytest.mark.parametrize(
+    'criterion_factory, criterion_args, impurity', [
+        (
+            make_bipartite_criterion,
+            {
+                'criteria': MSE,
+                'criterion_wrapper_class': SquaredErrorGSO,
+            },
+            global_mse_impurity,
+        ),
+        (
+            make_bipartite_criterion,
+            {
+                'criteria': AxisSquaredErrorGSO,
+                'criterion_wrapper_class': GMOSA,
+            },
+            global_mse_impurity,
+        ),
+    ],
+    ids=['mse', 'gmo_mse'],
+)
+def test_bipartite_criterion_gso(
+    data,
+    n_samples,
+    criterion_factory,
+    criterion_args,
+    impurity,
+    default_criterion_args=None,
+):
+    default_criterion_args = default_criterion_args or dict(
+        n_samples=n_samples,
+        n_outputs=(
+            n_samples[::-1] if criterion_args.get('criterion_wrapper_class')
+            in (GMOSA, GMO) else 1
+        ),
+    )
+    criterion = criterion_factory(**default_criterion_args | criterion_args)
+
+    test_bipartite_ss_criterion_gso(
+        data=data,
+        n_samples=n_samples,
+        supervision=None,
+        gso_bipartite_criterion={
+            'criterion': criterion,
+            'supervised_impurity': impurity,
+            'unsupervised_impurity': None,
+        },
+        apply_criterion=apply_bipartite_criterion,
+    )
+
+
+@pytest.mark.parametrize(
+    'criterion_factory, criterion_args, impurity, unsupervised_impurity', [
+        (
+            make_2dss_criterion,
+            {
+                'supervised_criteria': AxisMSE,
+                'unsupervised_criteria': MSE,
+                'ss_criteria': SSCompositeCriterion,
+                'criterion_wrapper_class': GMOSA,
+            },
+            mse_impurity,
+            None,
+        ),
+    ],
+    ids=['mse'],
+)
+def test_bipartite_ss_criterion_gmo(
+    data,
+    n_features,
+    n_samples,
+    criterion_factory,
+    criterion_args,
+    impurity,
+    unsupervised_impurity,
+    supervision,
 ):
     start_row, start_col = 0, 0
     end_row, end_col = n_samples
-    n_rows, n_cols = n_samples
-    n_total_features = sum(n_features)
-    feature = 1
 
-    X, Y, x, y = data
-    indices = X[0][:, feature].argsort()
-    mono_indices = x[:, feature].argsort()
+    # Because x is converted from float32
+    rtol = 1e-7 if supervision is None else 1e-4
+    atol = 1e-7
 
-    X[0] = X[0][indices]
-    Y = Y[indices]
+    X, Y, *_ = data
 
-    x = x[mono_indices]
-    y = y[mono_indices]
-
-    xT, yT = row_cartesian_product([X[1], X[0]]), Y.T.reshape(-1, 1)
-
-    criterion = make_2dss_criterion(
-        supervised_criteria=MSE,
-        unsupervised_criteria=MSE,
-        criterion_wrapper_class=SquaredErrorGSO,
-        supervision=supervision,
+    default_args = dict(
         n_features=n_features,
         n_samples=n_samples,
-        n_outputs=1,
-        random_state=check_random_state(random_state),
-    )
-    mono_criterion = make_semisupervised_criterion(
+        n_outputs=sum(n_samples),
         supervision=supervision,
-        supervised_criterion=MSE,
-        unsupervised_criterion=MSE,
-        n_features=x.shape[1],
-        n_samples=x.shape[0],
-        n_outputs=y.shape[1],
     )
+    criterion = criterion_factory(**default_args | criterion_args)
 
     row_splits, col_splits = apply_bipartite_ss_criterion(
         criterion,
@@ -373,278 +867,70 @@ def test_bipartite_ss_criterion_proxy_improvement(
         end=[end_row, end_col],
     )
 
-    row_indices = np.arange(start_row+1, end_row) * n_cols
-    col_indices = np.arange(start_col+1, end_col) * n_rows
-
-    row_splits_mono = apply_criterion(
-        mono_criterion,
-        y=np.hstack((np.sqrt(n_total_features / n_features[0]) * x, y)),
-        start=start_row * n_cols,
-        end=end_row * n_cols,
-    )
-    col_splits_mono = apply_criterion(
-        mono_criterion,
-        # y=np.hstack((xT, yT)),
-        y=np.hstack((np.sqrt(n_total_features / n_features[1]) * xT, yT)),
-        start=start_col * n_rows,
-        end=end_col * n_rows,
-    )
-
-    row_splits_mono_subsample = {
-        k: v[row_indices-1] if isinstance(v, np.ndarray) else v
-        for k, v in row_splits_mono.items()
-    }
-    col_splits_mono_subsample = {
-        k: v[col_indices-1] if isinstance(v, np.ndarray) else v
-        for k, v in col_splits_mono.items()
-    }
-
-    row_bipartite_proxy=row_splits['proxy_improvement']
-    row_monopartite_proxy=row_splits_mono_subsample['proxy_improvement']
-    row_corr = np.corrcoef(row_bipartite_proxy, row_monopartite_proxy)[0, 1]
-    logging.info(f'{1-row_corr=}')
-
-    col_bipartite_proxy=col_splits['proxy_improvement']
-    col_monopartite_proxy=col_splits_mono_subsample['proxy_improvement']
-    col_corr = np.corrcoef(col_bipartite_proxy, col_monopartite_proxy)[0, 1]
-    logging.info(f'{1-col_corr=}')
-    comparisons = [
-        (  # 0
-            row_splits_mono_subsample['proxy_improvement'],
-            row_splits_mono_subsample['improvement'],
-        ),
-        (  # 1
-            row_splits['proxy_improvement'],
-            row_splits['improvement'],
-        ),
-        (  # 2
-            row_splits['proxy_improvement'],
-            row_splits_mono_subsample['proxy_improvement'],
-        ),
-        (  # 3
-            row_splits['improvement'],
-            row_splits_mono_subsample['proxy_improvement'],
-        ),
-        (  # 4
-            col_splits_mono_subsample['proxy_improvement'],
-            col_splits_mono_subsample['improvement'],
-        ),
-        (  # 5
-            col_splits['proxy_improvement'],
-            col_splits['improvement'],
-        ),
-        (  # 6
-            col_splits['proxy_improvement'],
-            col_splits_mono_subsample['proxy_improvement'],
-        ),
-        (  # 7
-            col_splits['improvement'],
-            col_splits_mono_subsample['proxy_improvement'],
-        ),
-    ]
-
-    assert_equal_dicts(
-        dict(corr=np.array([
-            np.corrcoef(a, b)[0, 1] for a, b in comparisons
-        ])[2]),
-        dict(corr=1),
-        rtol=1e-4,
-    )
-    return # XXX
-
-    assert_equal_dicts(
-        dict(corr=max(row_corr, col_corr)),
-        dict(corr=1),
-        rtol=1e-4,
-        msg_prefix=f'Corr errors: {1 - row_corr:.7f} {1 - col_corr:.7f} | ',
-    )
-    # XXX
-    # assert_equal_dicts(
-    #     dict(corr=col_corr),
-    #     dict(corr=1),
-    #     rtol=1e-4,
-    #     msg_prefix=f'Col corr error: {1 - col_corr:.7f} | ',
-    # )
-    # assert_equal_dicts(
-    #     dict(corr=row_corr),
-    #     dict(corr=1),
-    #     rtol=1e-4,
-    #     msg_prefix=f'Row corr error: {1 - row_corr:.7f} | ',
-    # )
-
-    # Compare proxy improvement values order
-    top_proxies = 0  # consider all positions
-
-    row_proxy_order = row_splits['proxy_improvement'].argsort()
-    row_proxy_order_mono = row_splits_mono_subsample['proxy_improvement'].argsort()
-
-    # consider only the top improvements, which matter the most for the splitter
-    row_proxy_order = row_proxy_order[-top_proxies:]
-    row_proxy_order_mono = row_proxy_order_mono[-top_proxies:]
-    comparison_row_proxy = row_proxy_order == row_proxy_order_mono
-
-    col_proxy_order = col_splits['proxy_improvement'].argsort()
-    col_proxy_order_mono = col_splits_mono_subsample['proxy_improvement'].argsort()
-
-    # consider only the top improvements, which matter the most for the splitter
-    col_proxy_order = col_proxy_order[-top_proxies:]
-    col_proxy_order_mono = col_proxy_order_mono[-top_proxies:]
-    comparison_col_proxy = col_proxy_order == col_proxy_order_mono
-
-    # XXX
-    # bipartite_order = dict(
-    #     bipartite_proxy=bipartite_proxy[row_proxy_order],
-    #     monopartite_proxy=monopartite_proxy[row_proxy_order],
-    # )
-    # monopartite_order = dict(
-    #     bipartite_proxy=bipartite_proxy[row_proxy_order_mono],
-    #     monopartite_proxy=monopartite_proxy[row_proxy_order_mono],
-    # )
-
-    # assert_equal_dicts(
-    #     bipartite_order,
-    #     monopartite_order,
-    #     msg_prefix=f'Corr. error: {1 - corr:.7f} | ',
-    # )
-
-    return  # XXX
-    assert_allclose(
-        row_splits['proxy_improvement'][row_proxy_order],
-        row_splits['proxy_improvement'][row_proxy_order_mono],
-        rtol=1e-4,
-    )
-    assert_allclose(
-        row_splits_mono_subsample['proxy_improvement'][row_proxy_order],
-        row_splits_mono_subsample['proxy_improvement'][row_proxy_order_mono],
-        rtol=1e-4,
-    )
-    # =====
-
-    assert comparison_row_proxy.all(), (
-        f'(row proxy argsort) {row_proxy_order} {row_proxy_order_mono} = \n\t'
-        + str(row_splits['proxy_improvement'][row_proxy_order]) + '\n\t'
-        + str(row_splits_mono_subsample['proxy_improvement'][row_proxy_order_mono])
-        + '\n-> '
-        + comparison_text(
-            row_splits['proxy_improvement'][row_proxy_order],
-            row_splits['proxy_improvement'][row_proxy_order_mono],
-            # row_proxy_order,
-            # row_proxy_order_mono,
-            comparison_row_proxy,
-        )
-    )
-
-    # Since feature is on row_axis, proxies in cols are more likely to differ
-    # assert comparison_col_proxy.all(), (
-    #     f'(col proxy) {col_proxy_order} {col_proxy_order_mono} -> '
-    #     + comparison_text(
-    #         col_proxy_order,
-    #         col_proxy_order_mono,
-    #         comparison_col_proxy,
-    #     )
-    # )
-
-    assert_equal_dicts(
-        row_splits,
-        row_splits_mono_subsample,
-        msg_prefix='(rows 1d2d) ',
-        ignore={
-            'pos',
-            'weighted_n_left',
-            'weighted_n_right',
-            'proxy_improvement',
-        },
-        rtol=1e-4,
-        atol=1e-8,
-        # differing_keys="raise",
-    )
-    assert_equal_dicts(
-        col_splits,
-        col_splits_mono_subsample,
-        msg_prefix='(cols 1d2d) ',
-        ignore={
-            'pos',
-            'weighted_n_left',
-            'weighted_n_right',
-            'proxy_improvement',
-        },
-        rtol=1e-4,
-        atol=1e-8,
-        # differing_keys="raise",
-    )
-    
-    # Asserts bellow are mostly scaffold
-    # ==================================
     row_manual_splits = manually_eval_all_splits(
-        x=x, y=y, supervision=supervision, indices=row_indices,
-        start=start_row * n_cols,
-        end=end_row * n_cols,
+        x=X[0], y=Y,
+        supervision=supervision,
+        start=start_row,
+        end=end_row,
+        average_both_axes=True,
+        impurity=impurity,
+        unsupervised_impurity=unsupervised_impurity,
     )
     col_manual_splits = manually_eval_all_splits(
-        x=xT, y=yT, supervision=supervision, indices=col_indices,
-        start=start_col * n_rows,
-        end=end_col * n_rows,
+        x=X[1], y=Y.T,
+        supervision=supervision,
+        start=start_col,
+        end=end_col,
+        average_both_axes=True,
+        impurity=impurity,
+        unsupervised_impurity=unsupervised_impurity,
     )
 
-    row_manual_splits_complete = manually_eval_all_splits(
-        x=x, y=y, supervision=supervision,
-    )
-    col_manual_splits_complete = manually_eval_all_splits(
-        x=xT, y=yT, supervision=supervision,
-    )
+    row_manual_splits['axis_weighted_n_samples'] = \
+        row_manual_splits['weighted_n_samples']
+    col_manual_splits['axis_weighted_n_samples'] = \
+        col_manual_splits['weighted_n_samples']
+    row_manual_splits['axis_weighted_n_node_samples'] = \
+        row_manual_splits['weighted_n_node_samples']
+    col_manual_splits['axis_weighted_n_node_samples'] = \
+        col_manual_splits['weighted_n_node_samples']
+
+    ignore = {'weighted_n_samples', 'weighted_n_node_samples'}
 
     assert_equal_dicts(
         row_splits,
         row_manual_splits,
         msg_prefix='(rows) ',
         subset=row_manual_splits.keys(),
-        ignore=['pos'],
-        rtol=1e-4,
-        atol=1e-8,
-        differing_keys="raise",
+        ignore=ignore,
+        rtol=rtol,
+        atol=atol,
+        differing_keys='raise',
     )
     assert_equal_dicts(
         col_splits,
         col_manual_splits,
         msg_prefix='(cols) ',
         subset=row_manual_splits.keys(),
-        ignore=['pos'],
-        rtol=1e-4,
-        atol=1e-8,
-        differing_keys="raise",
-    )
-    assert_equal_dicts(
-        row_splits_mono_subsample,
-        row_manual_splits,
-        msg_prefix='(rows mono) ',
-        subset=row_manual_splits.keys(),
-        ignore=['pos'],
-        rtol=1e-4,
-        atol=1e-8,
-        differing_keys="raise",
-    )
-    assert_equal_dicts(
-        col_splits_mono_subsample,
-        col_manual_splits,
-        msg_prefix='(cols mono) ',
-        subset=row_manual_splits.keys(),
-        ignore=['pos'],
-        rtol=1e-4,
-        atol=1e-8,
-        differing_keys="raise",
+        ignore=ignore,
+        rtol=rtol,
+        atol=atol,
+        differing_keys='raise',
     )
 
-    assert_equal_dicts(
-        row_splits_mono,
-        row_manual_splits_complete,
-        msg_prefix='(rows complete) ',
-        rtol=1e-3,
-        atol=1e-8,
+    # Test that the order of the proxy improvement values matches the order of
+    # the final improvement values.
+    assert_ranks_are_close(
+        row_splits['proxy_improvement'],
+        row_manual_splits['improvement'],
+        msg_prefix='(rows proxy) ',
+        rtol=rtol,
+        atol=atol,
     )
-    assert_equal_dicts(
-        col_splits_mono,
-        col_manual_splits_complete,
-        msg_prefix='(cols complete) ',
-        rtol=1e-3,
-        atol=1e-8,
+    assert_ranks_are_close(
+        col_splits['proxy_improvement'],
+        col_manual_splits['improvement'],
+        msg_prefix='(cols proxy) ',
+        rtol=rtol,
+        atol=atol,
     )

@@ -117,9 +117,14 @@ def test_semisupervised_forests(forest_params=None, **PARAMS):
     estimators1d = {
         'SSRF': RandomForestRegressorSS(**forest_params),
         'SSXT': ExtraTreesRegressorSS(**forest_params),
+        'SSXT': ExtraTreesRegressorSS(**forest_params),
     }
     estimators2d = {
         'SSBRF': BipartiteRandomForestRegressorSS(**forest_params),
         'SSBXT': BipartiteExtraTreesRegressorSS(**forest_params),
+        'SSBXT': BipartiteExtraTreesRegressorSS(
+            axis_decision_only=True,
+            **forest_params,
+        ),
     }
     compare_estimators(estimators1d, estimators2d, **PARAMS)

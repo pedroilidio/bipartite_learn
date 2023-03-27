@@ -10,7 +10,6 @@ randomized trees, adapted from sklearn for semi-supervised learning.
 # License: BSD 3 clause
 
 from typing import Type
-import warnings
 from copy import deepcopy
 from abc import ABCMeta
 from abc import abstractmethod
@@ -30,7 +29,9 @@ from sklearn.utils import check_scalar
 from sklearn.utils.validation import _check_sample_weight
 from sklearn.utils import compute_sample_weight
 from sklearn.utils.multiclass import check_classification_targets
-from sklearn.utils._param_validation import Interval, StrOptions, Hidden
+from sklearn.utils._param_validation import (
+    validate_params, Interval, StrOptions, Hidden,
+)
 from sklearn.metrics.pairwise import check_pairwise_arrays
 
 from sklearn.tree._criterion import Criterion
@@ -58,13 +59,6 @@ from sklearn.tree._classes import (
     check_is_fitted, BaseDecisionTree, CRITERIA_CLF, CRITERIA_REG,
     DENSE_SPLITTERS, SPARSE_SPLITTERS,
 )
-from ._semisupervised_criterion import (
-    SemisupervisedCriterion,
-    SSCompositeCriterion,
-    HomogeneousCompositeSS,
-    AxisHomogeneousCompositeSS,
-)
-
 from ._nd_classes import (
     BaseBipartiteDecisionTree,
     BipartiteDecisionTreeRegressor,
@@ -72,9 +66,12 @@ from ._nd_classes import (
     AXIS_CRITERIA,
     _get_criterion_classes,
 )
-
-from ._semisupervised_splitter import BestSplitterSFSS, RandomSplitterSFSS
-from ._axis_criterion import AxisClassificationCriterion
+from . import (
+    _semisupervised_splitter,
+    _semisupervised_criterion,
+    _pairwise_criterion,
+    _axis_criterion,
+)
 
 
 __all__ = [
@@ -94,14 +91,25 @@ DTYPE = _tree.DTYPE
 DOUBLE = _tree.DOUBLE
 
 SINGLE_FEATURE_SPLITTERS = {
-    "best": BestSplitterSFSS,
-    "random": RandomSplitterSFSS,
+    "best": _semisupervised_splitter.BestSplitterSFSS,
+    "random": _semisupervised_splitter.RandomSplitterSFSS,
 }
 CRITERIA_SS = {
-    "default": SSCompositeCriterion,
-    "homogeneous": HomogeneousCompositeSS,
-    "homogeneous_axis": AxisHomogeneousCompositeSS,
+    "default": _semisupervised_criterion.SSCompositeCriterion,
+    "homogeneous": _semisupervised_criterion.HomogeneousCompositeSS,
+    "homogeneous_axis": _semisupervised_criterion.AxisHomogeneousCompositeSS,
 }
+PAIRWISE_CRITERIA_REG = {
+    "pairwise_squared_error": _pairwise_criterion.PairwiseSquaredError,
+    "pairwise_friedman": _pairwise_criterion.PairwiseFriedman,
+}
+PAIRWISE_CRITERIA_CLF = {
+    "pairwise_gini": _pairwise_criterion.PairwiseGini,
+    "pairwise_entropy": _pairwise_criterion.PairwiseEntropy,
+}
+UNSUPERVISED_CRITERIA = (
+    CRITERIA_REG | CRITERIA_CLF | PAIRWISE_CRITERIA_REG | PAIRWISE_CRITERIA_CLF
+)
 
 
 def _encode_classes(y, class_weight=None):
@@ -125,16 +133,24 @@ def _encode_classes(y, class_weight=None):
     return y_encoded, classes, n_classes, expanded_class_weight
 
 
+@validate_params({
+    "criterion": [str, Criterion, Type[Criterion]]
+})
 def _is_classification_criterion(criterion: str | Criterion | Type[Criterion]):
-    return (
-        isinstance(criterion, str) and criterion in CRITERIA_CLF
-        or isinstance(criterion, type) and issubclass(criterion, (
-                AxisClassificationCriterion,
-                *CRITERIA_CLF.values(),  # ClassificationCriterion not available
-            )
-        )
-        or isinstance(criterion, tuple(CRITERIA_CLF.values()))
-    )
+    if isinstance(criterion, str):
+        return criterion in CRITERIA_CLF or criterion in PAIRWISE_CRITERIA_CLF
+    if isinstance(criterion, type):
+        return issubclass(criterion, (
+            _axis_criterion.AxisClassificationCriterion,
+            *CRITERIA_CLF.values(),  # ClassificationCriterion not available
+            *PAIRWISE_CRITERIA_CLF.values(),
+        ))
+    if isinstance(criterion, Criterion):
+        return isinstance(criterion, (
+            *CRITERIA_CLF.values(),  # ClassificationCriterion not available
+            *PAIRWISE_CRITERIA_CLF.values(),
+        ))
+    raise TypeError
 
 
 # =============================================================================
@@ -151,15 +167,15 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
     _parameter_constraints: dict = {
         **BaseDecisionTree._parameter_constraints,
         "unsupervised_criterion": [
-            StrOptions(set(CRITERIA_CLF.keys()) | set(CRITERIA_REG.keys())),
+            StrOptions(set(UNSUPERVISED_CRITERIA.keys())),
             Hidden(Criterion),
         ],
         "supervision": [Interval(Real, 0.0, 1.0, closed="both")],
         "update_supervision": [callable, None],
         "ss_adapter": [
             None,
-            Hidden(StrOptions({"default", "homogeneous", "homogeneus_axis"})),
-            Hidden(SemisupervisedCriterion),
+            Hidden(StrOptions(set(CRITERIA_SS.keys()))),
+            Hidden(_semisupervised_criterion.SemisupervisedCriterion),
         ],
         "pairwise_X": ["boolean"],
     }
@@ -287,8 +303,8 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         X_targets = X.toarray() if issparse(X) else np.copy(X)
 
         if _is_classification_criterion(self.unsupervised_criterion):
-                # TODO: class weights for X.
-                X_targets, *_ = _encode_classes(X_targets)
+            # TODO: class weights for X.
+            X_targets, *_ = _encode_classes(X_targets)
 
         Xy = np.hstack((X_targets, y))
 
@@ -438,9 +454,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
             criterion = deepcopy(criterion)
 
         if isinstance(unsupervised_criterion, str):
-            # TODO: specify if classifier or regression unsupervised criterion
-            CRITERIA = CRITERIA_CLF | CRITERIA_REG
-            unsupervised_criterion = CRITERIA[unsupervised_criterion]
+            unsupervised_criterion = UNSUPERVISED_CRITERIA[unsupervised_criterion]
         else:
             unsupervised_criterion = deepcopy(unsupervised_criterion)
 
@@ -1730,19 +1744,11 @@ class BaseBipartiteDecisionTreeSS(
         **BaseBipartiteDecisionTree._parameter_constraints,
         **BaseDecisionTreeSS._parameter_constraints,
         "unsupervised_criterion_rows": [
-            StrOptions(
-                set(CRITERIA_CLF.keys())
-                | set(CRITERIA_REG.keys())
-                | set(AXIS_CRITERIA.keys())
-            ),
+            StrOptions(set(UNSUPERVISED_CRITERIA.keys())),
             Hidden(Criterion),
         ],
         "unsupervised_criterion_cols": [
-            StrOptions(
-                set(CRITERIA_CLF.keys())
-                | set(CRITERIA_REG.keys())
-                | set(AXIS_CRITERIA.keys())
-            ),
+            StrOptions(set(UNSUPERVISED_CRITERIA.keys())),
             Hidden(Criterion),
         ],
     }
@@ -1847,7 +1853,7 @@ class BaseBipartiteDecisionTreeSS(
         # NOTE: It is possible to use diferent ss_adapter for rows and columns,
         #       but the user needs to pass an already built BipartiteSplitter instance
         #       if they want to do so.
-        if isinstance(self.ss_adapter, SemisupervisedCriterion):
+        if isinstance(self.ss_adapter, _semisupervised_criterion.SemisupervisedCriterion):
             ss_adapter = deepcopy(self.ss_adapter)
         elif isinstance(self.ss_adapter, str):
             ss_adapter = CRITERIA_SS[self.ss_adapter]
@@ -1863,12 +1869,14 @@ class BaseBipartiteDecisionTreeSS(
             CRITERIA = AXIS_CRITERIA
 
         if isinstance(self.unsupervised_criterion_rows, str):
-            unsup_criterion_rows = CRITERIA[self.unsupervised_criterion_rows]
+            unsup_criterion_rows = \
+                UNSUPERVISED_CRITERIA[self.unsupervised_criterion_rows]
         else:
             unsup_criterion_rows = deepcopy(self.unsupervised_criterion_rows)
 
         if isinstance(self.unsupervised_criterion_cols, str):
-            unsup_criterion_cols = CRITERIA[self.unsupervised_criterion_cols]
+            unsup_criterion_cols = \
+                UNSUPERVISED_CRITERIA[self.unsupervised_criterion_cols]
         else:
             unsup_criterion_cols = deepcopy(self.unsupervised_criterion_cols)
 
