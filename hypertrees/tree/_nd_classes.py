@@ -1,3 +1,4 @@
+# TODO: review criterion and bipartite str options and validation
 """
 This module gathers tree-based methods, including decision, regression and
 randomized trees, adapted from sklearn for bipartite training data.
@@ -43,8 +44,6 @@ from ..base import BaseMultipartiteEstimator
 from ._nd_tree import DepthFirstTreeBuilder2D
 from ._nd_criterion import (
     BipartiteCriterion,
-    SquaredErrorGSO,
-    FriedmanGSO,
     GMO,
     GMOSA,
 )
@@ -52,14 +51,13 @@ from ._nd_splitter import BipartiteSplitter
 from ..melter import row_cartesian_product
 from ..utils import check_similarity_matrix, _X_is_multipartite
 from ._axis_criterion import (
-    AxisMSE,
-    AxisFriedmanMSE,
+    AxisSquaredError,
     AxisGini,
     AxisEntropy,
     AxisSquaredErrorGSO,
     AxisFriedmanGSO,
 )
-from ._splitter_factory import make_2d_splitter
+from ._splitter_factory import make_bipartite_splitter
 
 
 __all__ = [
@@ -78,10 +76,9 @@ SPARSE_SPLITTERS = {}
 
 
 AXIS_CRITERIA = {
-    "squared_error": AxisMSE,
-    "friedman_mse": AxisFriedmanMSE,
+    "squared_error": AxisSquaredError,
+    "friedman_mse": AxisFriedmanGSO,
     "squared_error_gso": AxisSquaredErrorGSO,
-    "friedman_gso": AxisFriedmanGSO,
     "gini": AxisGini,
     "entropy": AxisEntropy,
     "log_loss": AxisEntropy,
@@ -90,17 +87,9 @@ AXIS_CRITERIA = {
 
 # Stablish adequate pairs of criteria and bipartite adapters.
 BIPARTITE_CRITERIA = {
-    "gso": {
-        "regression": {
-            "squared_error": (SquaredErrorGSO, CRITERIA_REG['squared_error']),
-            "friedman_mse": (FriedmanGSO, CRITERIA_REG['friedman_mse']),
-        },
-        "classification": {},
-    },
     "gmo": {
         "regression": {
-            "squared_error": (GMO, AxisMSE),
-            "friedman_mse": (GMO, AxisFriedmanMSE),
+            "squared_error": (GMO, AxisSquaredError),
         },
         "classification": {
             "gini": (GMO, AxisGini),
@@ -110,10 +99,9 @@ BIPARTITE_CRITERIA = {
     },
     "gmosa": {
         "regression": {
-            "squared_error": (GMOSA, AxisMSE),
-            "friedman_mse": (GMOSA, AxisFriedmanMSE),
+            "squared_error": (GMOSA, AxisSquaredError),
+            "friedman_mse": (GMOSA, AxisFriedmanGSO),
             "squared_error_gso": (GMOSA, AxisSquaredErrorGSO),
-            "friedman_gso": (GMOSA, AxisFriedmanGSO),
         },
         "classification": {
             "gini": (GMOSA, AxisGini),
@@ -157,7 +145,7 @@ def _get_criterion_classes(
             f"{clf_or_reg} criterion options are: "
             + ', '.join(map(repr, criterion_options))
         )
-    
+
     return result
 
 
@@ -185,8 +173,11 @@ def _normalize_weights(weights, pred):
 # =============================================================================
 
 
-class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
-                                metaclass=ABCMeta):
+class BaseBipartiteDecisionTree(
+    BaseMultipartiteEstimator,
+    BaseDecisionTree,
+    metaclass=ABCMeta,
+):
     """Base class for bipartite decision trees.
 
     Warning: This class should not be used directly.
@@ -194,7 +185,10 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
     """
 
     _parameter_constraints: dict = BaseDecisionTree._parameter_constraints | {
-        "splitter": [StrOptions({"best", "random"}), Hidden(BipartiteSplitter)],
+        "splitter": [
+            StrOptions({"best", "random"}),
+            Hidden(BipartiteSplitter),
+        ],
         "min_rows_split": [
             # min value is not 2 to still allow splitting on the other axis.
             Interval(Integral, 1, None, closed="left"),
@@ -232,7 +226,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             None,
         ],
         "bipartite_adapter": [
-            StrOptions({"gso", "gmo", "gmosa"}),
+            StrOptions({"gmo", "gmosa"}),
         ],
         "prediction_weights": [
             "array-like",
@@ -243,7 +237,6 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                 "square",
                 "softmax",
             }),
-            Hidden(StrOptions({"gmosa"})),
             callable,
             None,
         ],
@@ -274,7 +267,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="gso",
+        bipartite_adapter="gmosa",
         prediction_weights=None,
     ):
         self.criterion = criterion
@@ -351,20 +344,22 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
         self.n_features_in_ = self.n_row_features_in_ + self.n_col_features_in_
 
         # self.n_outputs_ = y.shape[-1]  # TODO: implement multi-output (3D y).
-        self.n_outputs_ = 1
 
         if self.bipartite_adapter == "gmo":
             # The Criterion initially generates one output for each y row and
             # y column, with a bunch of np.nan to indicate samples not in the
             # node. These values are then processed by predict to yield a
             # single output.
-            n_raw_outputs = n_rows + n_cols
-            if self.prediction_weights == "raw":
-                self.n_outputs_ = n_raw_outputs
-        else:
-            n_raw_outputs = self.n_outputs_
+            self._n_raw_outputs = n_rows + n_cols
 
-        self._n_raw_outputs = n_raw_outputs
+            if self.prediction_weights == "raw":
+                self.n_outputs_ = self._n_raw_outputs
+            else:
+                self.n_outputs_ = 1
+        else:
+            self._n_raw_outputs = 1
+            self.n_outputs_ = 1
+
         self.n_row_classes_ = self.n_col_classes_ = None
 
         is_classification = is_classifier(self)
@@ -560,7 +555,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                         "one-dimensional. Received "
                         f"{self.prediction_weights.shape = }."
                     )
-                if self.prediction_weights.size != n_raw_outputs:
+                if self.prediction_weights.size != self._n_raw_outputs:
                     raise ValueError(
                         "If an array, prediction_weights must be of "
                         f"length = {n_rows + n_cols = }. Received "
@@ -575,12 +570,11 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             ):
                 for Xi in X:
                     check_similarity_matrix(Xi, symmetry_exception=True)
-        
-        # bipartite_adapter == "gso" or "gmosa"
-        else:
+
+        elif self.bipartite_adapter == "gmosa":
             if is_classifier(self):
                 raise NotImplementedError(  # TODO
-                    "bipartite_adapter='gso' currently only "
+                    f"{self.bipartite_adapter=!r} currently only "
                     f"supports regression. Received {self.criterion=!r}. "
                     "Notice, however, that the 'squared_error' criterion "
                     "corresponds to the Gini impurity when targets are binary."
@@ -591,30 +585,27 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
                     "bipartite_adapter='gmo' and must be set to "
                     "'None' otherwise."
                 )
+        elif isinstance(self.bipartite_adapter, str):
+            raise ValueError(f"Invalid option {self.bipartite_adapter=!r}")
 
         if is_classifier(self):
             self.tree_ = Tree(
                 self.n_features_in_,
                 self.n_classes_,
-                n_raw_outputs,
+                self._n_raw_outputs,
             )
         else:
             self.tree_ = Tree(
                 self.n_features_in_,
                 # TODO(sklearn): tree shouldn't need this in this case
-                np.array([1] * n_raw_outputs, dtype=np.intp),
-                n_raw_outputs,
+                np.array([1] * self._n_raw_outputs, dtype=np.intp),
+                self._n_raw_outputs,
             )
-
-        if self.bipartite_adapter == "gso":
-            ax_n_outputs = 1
-        else:
-            ax_n_outputs = (n_cols, n_rows)
 
         splitter = self._make_splitter(
             X=X,
             n_samples=(n_rows, n_cols),
-            n_outputs=ax_n_outputs,
+            n_outputs=(n_cols, n_rows),
             n_classes=(self.n_col_classes_, self.n_row_classes_),
             min_samples_leaf=min_samples_leaf,
             min_weight_leaf=min_weight_leaf,
@@ -714,7 +705,7 @@ class BaseBipartiteDecisionTree(BaseMultipartiteEstimator, BaseDecisionTree,
             else:  # is a Splitter instance
                 splitter[ax] = copy.deepcopy(splitter[ax])
 
-        splitter = make_2d_splitter(
+        splitter = make_bipartite_splitter(
             splitters=splitter,
             criteria=criterion,
             n_outputs=n_outputs,
@@ -967,8 +958,8 @@ class BipartiteDecisionTreeRegressor(
         subtree with the largest cost complexity that is smaller than
         ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
         :ref:`minimal_cost_complexity_pruning` for details.
-    
-    bipartite_adapter : {"gso", "gmo", "gmosa"}, default="gso"
+
+    bipartite_adapter : {"gmo", "gmosa"}, default="gmosa"
         Which strategy to employ when searching for the best split. The global
         single-output strategy ("gso") is equivalent to grow a tree on all
         combinations of row samples with column samples and their corresponding
@@ -997,7 +988,7 @@ class BipartiteDecisionTreeRegressor(
         to specify prediction weights.
 
         See [1] for more information.
-        
+
     prediction_weights : {"uniform", "raw", "precomputed", "square", "softmax"\
             }, 1D-array or callable, default="uniform"
         Determines how to compute the final predicted value. Initially, all
@@ -1108,8 +1099,12 @@ class BipartiteDecisionTreeRegressor(
     _parameter_constraints: dict = {
         **BaseBipartiteDecisionTree._parameter_constraints,
         "criterion": [
-            StrOptions({"squared_error", "friedman_mse"}),
-            Hidden(StrOptions({"squared_error_gso", "friedman_gso"})),
+            StrOptions({
+                "squared_error",
+                "friedman",
+                "squared_error_gso",
+                "friedman_gso",
+            }),
             Hidden(StrOptions({"absolute_error", "poisson"})),
             Hidden(Criterion),
         ],
@@ -1138,7 +1133,7 @@ class BipartiteDecisionTreeRegressor(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="gso",
+        bipartite_adapter="gmosa",
         prediction_weights=None,
     ):
         super().__init__(
@@ -1344,8 +1339,8 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         subtree with the largest cost complexity that is smaller than
         ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
         :ref:`minimal_cost_complexity_pruning` for details.
-    
-    bipartite_adapter : {"gso", "gmo", "gmosa"}, default="gso"
+
+    bipartite_adapter : {"gmo", "gmosa"}, default="gmosa"
         Which strategy to employ when searching for the best split. The global
         single-output strategy ("gso") is equivalent to grow a tree on all
         combinations of row samples with column samples and their corresponding
@@ -1374,7 +1369,7 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         to specify prediction weights.
 
         See [1] for more information.
-        
+
     prediction_weights : {"uniform", "raw", "precomputed", "square", "softmax"\
             }, 1D-array or callable, default="uniform"
         Determines how to compute the final predicted value. Initially, all
@@ -1504,7 +1499,7 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="gso",
+        bipartite_adapter="gmosa",
         prediction_weights=None,
     ):
         super().__init__(
@@ -1678,8 +1673,8 @@ class BipartiteDecisionTreeClassifier(
         subtree with the largest cost complexity that is smaller than
         ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
         :ref:`minimal_cost_complexity_pruning` for details.
-    
-    bipartite_adapter : {"gso", "gmo", "gmosa"}, default="gmosa"
+
+    bipartite_adapter : {"gmo", "gmosa"}, default="gmosa"
         Which strategy to employ when searching for the best split. The global
         single-output strategy ("gso") is equivalent to grow a tree on all
         combinations of row samples with column samples and their corresponding
@@ -1708,7 +1703,7 @@ class BipartiteDecisionTreeClassifier(
         to specify prediction weights.
 
         See [1] for more information.
-        
+
     prediction_weights : {"uniform", "raw", "precomputed", "square", "softmax"\
             }, 1D-array or callable, default="uniform"
         Determines how to compute the final predicted value. Initially, all
@@ -2098,8 +2093,8 @@ class BipartiteExtraTreeClassifier(BipartiteDecisionTreeClassifier):
         subtree with the largest cost complexity that is smaller than
         ``ccp_alpha`` will be chosen. By default, no pruning is performed. See
         :ref:`minimal_cost_complexity_pruning` for details.
-    
-    bipartite_adapter : {"gso", "gmo", "gmosa"}, default="gmosa"
+
+    bipartite_adapter : {"gmo", "gmosa"}, default="gmosa"
         Which strategy to employ when searching for the best split. The global
         single-output strategy ("gso") is equivalent to grow a tree on all
         combinations of row samples with column samples and their corresponding
@@ -2128,7 +2123,7 @@ class BipartiteExtraTreeClassifier(BipartiteDecisionTreeClassifier):
         to specify prediction weights.
 
         See [1] for more information.
-        
+
     prediction_weights : {"uniform", "raw", "precomputed", "square", "softmax"\
             }, 1D-array or callable, default="uniform"
         Determines how to compute the final predicted value. Initially, all
@@ -2234,6 +2229,7 @@ class BipartiteExtraTreeClassifier(BipartiteDecisionTreeClassifier):
            <doi.org/10.1186/s12859-020-3379-z>`
            Pliakos and Vens, 2020
     """
+
     def __init__(
         self,
         *,

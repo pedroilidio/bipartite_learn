@@ -1,18 +1,28 @@
-# cython: boundscheck=False
 cimport numpy as cnp
 from sklearn.tree._tree cimport DTYPE_t         # Type of X
 from sklearn.tree._tree cimport DOUBLE_t        # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t          # Type for indices and counters
 from ._axis_criterion cimport AxisCriterion
-from ._axis_criterion import (
-    AxisMSE, AxisFriedmanMSE, AxisGini, AxisEntropy
-)
+
+import sklearn.tree._criterion
+from . import _axis_criterion
 
 
-cdef class BaseCriterionWrapper(Criterion):
+cnp.import_array()
+
+
+cdef class BaseUnsupervisedCriterion(BaseComposableCriterion):
+    """ABC for unsupervised criteria used is semi-supervised compositions.
+    """
+
+
+cdef class UnsupervisedWrapperCriterion(BaseUnsupervisedCriterion):
     """ABC for extending existing criteria with composition."""
     def __cinit__(self, *args, **kwargs):
         self.criterion = None
+
+    def __init__(self, Criterion criterion, *args, **kwargs):
+        self.criterion = criterion
 
     cdef inline void _copy_node_wise_attributes(self) noexcept nogil:
         self.y = self.criterion.y
@@ -95,8 +105,16 @@ cdef class BaseCriterionWrapper(Criterion):
     cdef double proxy_impurity_improvement(self) nogil:
         return self.criterion.proxy_impurity_improvement()
 
+    cdef double _proxy_improvement_factor(self) noexcept nogil:
+        """If improvement = proxy_improvement / a + b, this method returns a
 
-cdef class PairwiseCriterion(BaseCriterionWrapper):
+        This is useful when defining proxy impurity improvements for
+        compositions of Criterion objects.
+        """
+        return self.criterion.n_outputs * self.criterion.weighted_n_samples
+
+
+cdef class PairwiseCriterion(UnsupervisedWrapperCriterion):
     """Unsupervision-focused criterion to use with pairwise data.
 
     It wraps an AxisCriterion instance and selects the columns corresponding
@@ -132,15 +150,34 @@ cdef class PairwiseCriterion(BaseCriterionWrapper):
         self._copy_node_wise_attributes()
         return 0
 
+    cdef double _proxy_improvement_factor(self) noexcept nogil:
+        """If improvement = proxy_improvement / a + b, this method returns a
+
+        This is useful when defining proxy impurity improvements for
+        compositions of Criterion objects.
+        """
+        return (<AxisCriterion>self.criterion)._proxy_improvement_factor()
+
 
 cdef class PairwiseSquaredError(PairwiseCriterion):
     def __init__(self, SIZE_t n_outputs, SIZE_t n_samples):
-        self.criterion = AxisMSE(n_outputs=n_outputs, n_samples=n_samples)
+        self.criterion = _axis_criterion.AxisSquaredError(
+            n_outputs=n_outputs,
+            n_samples=n_samples,
+        )
+
+
+cdef class PairwiseSquaredErrorGSO(PairwiseCriterion):
+    def __init__(self, SIZE_t n_outputs, SIZE_t n_samples):
+        self.criterion = _axis_criterion.AxisSquaredErrorGSO(
+            n_outputs=n_outputs,
+            n_samples=n_samples,
+        )
 
 
 cdef class PairwiseFriedman(PairwiseCriterion):
     def __init__(self, SIZE_t n_outputs, SIZE_t n_samples):
-        self.criterion = AxisFriedmanMSE(
+        self.criterion = _axis_criterion.AxisFriedmanGSO(
             n_outputs=n_outputs,
             n_samples=n_samples,
         )
@@ -152,7 +189,7 @@ cdef class PairwiseGini(PairwiseCriterion):
         SIZE_t n_outputs,
         cnp.ndarray[SIZE_t, ndim=1] n_classes,
     ):
-        self.criterion = AxisGini(
+        self.criterion = _axis_criterion.AxisGini(
             n_outputs=n_outputs,
             n_classes=n_classes,
         )
@@ -164,9 +201,54 @@ cdef class PairwiseEntropy(PairwiseCriterion):
         SIZE_t n_outputs,
         cnp.ndarray[SIZE_t, ndim=1] n_classes,
     ):
-        self.criterion = AxisEntropy(
+        self.criterion = _axis_criterion.AxisEntropy(
             n_outputs=n_outputs,
             n_classes=n_classes,
         )
 
-# TODO: AxisGSO
+
+cdef class UnsupervisedSquaredError(UnsupervisedWrapperCriterion):
+    def __init__(self, SIZE_t n_outputs, SIZE_t n_samples):
+        self.criterion = sklearn.tree._criterion.MSE(
+            n_outputs=n_outputs,
+            n_samples=n_samples,
+        )
+
+
+cdef class UnsupervisedFriedman(UnsupervisedWrapperCriterion):
+    def __init__(self, SIZE_t n_outputs, SIZE_t n_samples):
+        self.criterion = sklearn.tree._criterion.FriedmanMSE(
+            n_outputs=n_outputs,
+            n_samples=n_samples,
+        )
+
+    cdef double _proxy_improvement_factor(self) noexcept nogil:
+        return (
+            self.n_outputs
+            * self.n_outputs
+            * self.weighted_n_node_samples
+        )
+
+
+cdef class UnsupervisedGini(UnsupervisedWrapperCriterion):
+    def __init__(
+        self,
+        SIZE_t n_outputs,
+        cnp.ndarray[SIZE_t, ndim=1] n_classes,
+    ):
+        self.criterion = sklearn.tree._criterion.Gini(
+            n_outputs=n_outputs,
+            n_classes=n_classes,
+        )
+
+
+cdef class UnsupervisedEntropy(UnsupervisedWrapperCriterion):
+    def __init__(
+        self,
+        SIZE_t n_outputs,
+        cnp.ndarray[SIZE_t, ndim=1] n_classes,
+    ):
+        self.criterion = sklearn.tree._criterion.Entropy(
+            n_outputs=n_outputs,
+            n_classes=n_classes,
+        )

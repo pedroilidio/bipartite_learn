@@ -12,7 +12,12 @@ from sklearn.tree._tree cimport SIZE_t          # Type for indices and counters
 from sklearn.tree._tree cimport INT32_t         # Signed 32 bit integer
 from sklearn.tree._tree cimport UINT32_t        # Unsigned 32 bit integer
 
-cdef class AxisCriterion(Criterion):
+
+cdef class BaseComposableCriterion(Criterion):
+    cdef double _proxy_improvement_factor(self) noexcept nogil
+
+
+cdef class AxisCriterion(BaseComposableCriterion):
     # AxisCriterion is analogous to sklearn.tree._criterion.Criterion, but can
     # also calculate the impurity on the other axis for the current node and
     # children (as if each child partition were transposed), and has an
@@ -121,6 +126,7 @@ cdef class AxisCriterion(Criterion):
         SIZE_t end_col,
     ) except -1 nogil
     cdef void total_node_value(self, double* dest) nogil
+    cdef double _proxy_improvement_factor(self) noexcept nogil
 
 
 cdef class AxisRegressionCriterion(AxisCriterion):

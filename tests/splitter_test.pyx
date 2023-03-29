@@ -184,6 +184,25 @@ cpdef get_criterion_status(
     }
 
 
+cpdef get_ss_criterion_status(
+    SSCompositeCriterion criterion,
+):
+    return (
+        {
+            'supervised_' + k: v for k, v in
+            get_criterion_status(criterion.supervised_criterion).items()
+        }
+        | {
+            'unsupervised_' + k: v for k, v in
+            get_criterion_status(criterion.unsupervised_criterion).items()
+        }
+        | {
+            'ss_' + k: v for k, v in
+            get_criterion_status(criterion).items()
+        }
+    )
+
+
 cpdef get_bipartite_criterion_status(
     BipartiteCriterion bipartite_criterion,
     SIZE_t axis,
@@ -238,6 +257,7 @@ cpdef apply_criterion(
     DOUBLE_t[:] sample_weight=None,
     SIZE_t start=0,
     SIZE_t end=0,
+    status_getter=get_criterion_status,
 ):
     cdef double weighted_n_samples
     cdef double impurity_left, impurity_right
@@ -268,7 +288,7 @@ cpdef apply_criterion(
     # Consider min_samples_leaf=1, to avoid ZeroDivision errors.
     for pos in range(start + 1, end):
         criterion.update(pos)
-        for k, v in get_criterion_status(criterion).items():
+        for k, v in status_getter(criterion).items():
             result[k].append(v)
     
     for k, v in result.items():
@@ -276,6 +296,23 @@ cpdef apply_criterion(
             result[k] = np.array(v)
     
     return dict(result)
+
+
+cpdef apply_ss_criterion(
+    Criterion criterion,
+    DOUBLE_t[:, ::1] y,
+    DOUBLE_t[:] sample_weight=None,
+    SIZE_t start=0,
+    SIZE_t end=0,
+):
+    return apply_criterion(
+        criterion,
+        y=y,
+        sample_weight=sample_weight,
+        start=start,
+        end=end,
+        status_getter=get_ss_criterion_status,
+    )
 
 
 cpdef apply_bipartite_criterion(
@@ -434,12 +471,12 @@ cpdef apply_bipartite_ss_criterion(
         end=end_,
     )
 
-    unsup_criterion_rows = bipartite_ss_criterion.unsupervised_criterion_rows
-    unsup_criterion_cols = bipartite_ss_criterion.unsupervised_criterion_cols
-    sup_criterion_rows = bipartite_ss_criterion.supervised_criterion_rows
-    sup_criterion_cols = bipartite_ss_criterion.supervised_criterion_cols
-    ss_criterion_rows = bipartite_ss_criterion.ss_criterion_rows
-    ss_criterion_cols = bipartite_ss_criterion.ss_criterion_cols
+    ss_criterion_rows = bipartite_ss_criterion.criterion_rows
+    ss_criterion_cols = bipartite_ss_criterion.criterion_cols
+    unsup_criterion_rows = ss_criterion_rows.unsupervised_criterion
+    unsup_criterion_cols = ss_criterion_cols.unsupervised_criterion
+    sup_criterion_rows = ss_criterion_rows.supervised_criterion
+    sup_criterion_cols = ss_criterion_cols.supervised_criterion
 
     result = []
 
@@ -454,15 +491,9 @@ cpdef apply_bipartite_ss_criterion(
         for pos in range(start_[ax] + 1, end_[ax]):
             ss_criterion.update(pos)
 
-            for k, v in get_criterion_status(unsup_criterion).items():
-                axis_result['unsupervised_' + k].append(v)
+            for k, v in get_ss_criterion_status(ss_criterion).items():
+                axis_result[k].append(v)
 
-            for k, v in get_bipartite_criterion_status(
-                bipartite_ss_criterion.supervised_bipartite_criterion,
-                axis=ax,
-            ).items():
-                axis_result['supervised_' + k].append(v)
-        
             for k, v in get_bipartite_criterion_status(
                 bipartite_ss_criterion,
                 axis=ax,

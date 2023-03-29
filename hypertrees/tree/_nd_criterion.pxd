@@ -1,18 +1,17 @@
-import numpy as np
-cimport numpy as np
-
-from sklearn.tree._tree cimport DTYPE_t         # Type of X
-from sklearn.tree._tree cimport DOUBLE_t        # Type of y, sample_weight
-from sklearn.tree._tree cimport SIZE_t          # Type for indices and counters
-
-from sklearn.tree._criterion cimport RegressionCriterion
+from sklearn.tree._tree cimport (
+    DTYPE_t,   # Type of X
+    DOUBLE_t,  # Type of y, sample_weight
+    SIZE_t,    # Type for indices and counters
+)
 from ._axis_criterion cimport AxisCriterion
+
+
+cdef class BaseBipartiteCriterion:
+    """Abstract base class."""
 
 
 cdef class BipartiteCriterion:
     """Abstract base class."""
-    # TODO: X dtype must be DOUBLE_t, not DTYPE_t (float32) to use
-    # semisupervision.
     cdef const DTYPE_t[:, ::1] X_rows
     cdef const DTYPE_t[:, ::1] X_cols
     cdef const DOUBLE_t[:, :] y
@@ -43,9 +42,9 @@ cdef class BipartiteCriterion:
     cdef double weighted_n_cols
     cdef double weighted_n_samples
 
-    cdef double weighted_n_node_samples
     cdef double weighted_n_node_rows
     cdef double weighted_n_node_cols
+    cdef double weighted_n_node_samples
 
     cdef int init(
         self,
@@ -82,45 +81,14 @@ cdef class BipartiteCriterion:
     ) nogil
 
 
-cdef class RegressionCriterionGSO(BipartiteCriterion):
-    cdef public RegressionCriterion criterion_rows
-    cdef public RegressionCriterion criterion_cols
-
-    cdef DOUBLE_t[:, ::1] y_row_sums
-    cdef DOUBLE_t[:, ::1] y_col_sums
-
-    cdef void* _get_criterion(self, SIZE_t axis) nogil except NULL
-
-    cdef inline int _init_child_criterion(
-            self,
-            RegressionCriterion criterion,
-            const DOUBLE_t[:, ::1] y,
-            const DOUBLE_t[:] sample_weight,
-            const SIZE_t[:] sample_indices,
-            SIZE_t start,
-            SIZE_t end,
-            SIZE_t n_node_samples,
-            double weighted_n_samples,
-            double weighted_n_node_samples,
-            double sq_sum_total,
-    ) nogil except -1
-
-
 cdef class GMO(BipartiteCriterion):
     """Applies Predictive Bi-Clustering Trees method.
 
     See [Pliakos _et al._, 2018](https://doi.org/10.1007/s10994-018-5700-x).
     """
-    cdef public AxisCriterion criterion_rows
-    cdef public AxisCriterion criterion_cols
-    cdef SIZE_t max_n_classes
+    cdef:
+        SIZE_t max_n_classes
+        public AxisCriterion criterion_rows
+        public AxisCriterion criterion_cols
 
-    cdef void* _get_criterion(self, SIZE_t axis) nogil except NULL
-
-
-cdef class SquaredErrorGSO(RegressionCriterionGSO):
-    pass
-
-
-cdef class FriedmanGSO(SquaredErrorGSO):
-    pass
+        void* _get_criterion(self, SIZE_t axis) except NULL nogil

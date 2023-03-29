@@ -11,10 +11,20 @@ cimport numpy as cnp
 import numpy as np
 from sklearn.tree._utils cimport log
 
+cnp.import_array()
 cdef double NAN = np.nan
 
 
-cdef class AxisCriterion(Criterion):
+cdef class BaseComposableCriterion(Criterion):
+    cdef double _proxy_improvement_factor(self) noexcept nogil:
+        """If improvement = proxy_improvement / a + b, this method returns a
+
+        This is useful when defining proxy impurity improvements for
+        compositions of Criterion objects.
+        """
+
+
+cdef class AxisCriterion(BaseComposableCriterion):
     """Criterion that is able to select a subset of columns to consider.
 
     Criterion objects gather methods to evaluate the impurity of a partition
@@ -41,7 +51,7 @@ cdef class AxisCriterion(Criterion):
     def __setstate__(self, d):
         pass
 
-    def __cinit__(self, SIZE_t n_outputs, *args, **kwargs):
+    def __cinit__(self):
         self.y = None
         self._columns_are_set = False
         self._cached_pos = SIZE_MAX
@@ -55,7 +65,12 @@ cdef class AxisCriterion(Criterion):
         # TODO: Possibly remove if Splitter can find split without reordering
         # sample_indices. The upside is that we reduce memory usage, the downside is
         # that we lose C contiguity, which seems important here.
-        self._node_col_indices = np.empty(n_outputs, dtype=np.intp, order='C')
+        
+        # TODO: set a default node_col_indices to use global friedman with
+        # monopartite splitters
+        # self._node_col_indices = np.arange(
+        #     self.n_outputs, dtype='intp', order='C'
+        # )
 
     cdef int init(
         self,
@@ -259,44 +274,14 @@ cdef class AxisCriterion(Criterion):
         In many cases, however, columns impurity improvement is zero, and we
         return only the impurity over rows.
         """
-        # FIXME: Since we cannot access rows_impurity and cols_impurity
-        # separately, we have to discard this method's input and calculate
-        # them again. To mitigate this problem, self.children_impurity()
-        # caches the previous values it calculated and reuses them if
-        # self.pos == self._cached_pos.
-        # NOTE: self._cached_pos must be reset at AxisCriterion.init() to
-        # ensure it always corresponds to the current tree node.
-        cdef:
-            double rows_impurity_parent
-            double rows_impurity_left
-            double rows_impurity_right
-
-            # To be discarded:
-            double cols_impurity_parent
-            double cols_impurity_left
-            double cols_impurity_right
-
-        self.node_axes_impurities(
-            &rows_impurity_parent,
-            &cols_impurity_parent,
-        )
-        self.children_axes_impurities(
-            &rows_impurity_left,
-            &rows_impurity_right,
-            &cols_impurity_left,
-            &cols_impurity_right,
-        )
-
-        # The mean between improvements on both axes, but since the other axis'
-        # improvement is zero, it is half the current axis' improvement.
-        return 0.5 * (
+        return (
             (self.weighted_n_node_samples / self.weighted_n_samples)
             * (self.weighted_n_node_cols / self.weighted_n_cols)
             * (
-                rows_impurity_parent
-                - rows_impurity_right
+                impurity_parent
+                - impurity_right
                     * (self.weighted_n_right / self.weighted_n_node_samples)
-                - rows_impurity_left
+                - impurity_left
                     * (self.weighted_n_left / self.weighted_n_node_samples)
             )
         )
@@ -306,6 +291,19 @@ cdef class AxisCriterion(Criterion):
 
     cdef void total_node_value(self, double* dest) nogil:
         pass
+    
+    cdef double _proxy_improvement_factor(self) noexcept nogil:
+        """If improvement = proxy_improvement / a + b, this method returns a
+
+        This is useful when defining proxy impurity improvements for
+        compositions of Criterion objects.
+        """
+        # return self.criterion.n_outputs * self.criterion.weighted_n_samples
+        return (
+            self.weighted_n_cols 
+            * self.weighted_n_samples
+            # self.weighted_n_node_cols
+        )
 
 
 cdef class AxisRegressionCriterion(AxisCriterion):
@@ -340,10 +338,11 @@ cdef class AxisRegressionCriterion(AxisCriterion):
         self.weighted_n_right = 0.0
 
         self.sq_sum_total = 0.0
-
         self.sum_total = np.zeros(n_outputs, dtype=np.float64)
         self.sum_left = np.zeros(n_outputs, dtype=np.float64)
         self.sum_right = np.zeros(n_outputs, dtype=np.float64)
+
+        self._node_col_indices = np.empty(n_outputs, dtype=np.intp, order='C')
 
     def __reduce__(self):
         return (type(self), (self.n_outputs, self.n_samples), self.__getstate__())
@@ -517,7 +516,7 @@ cdef class AxisRegressionCriterion(AxisCriterion):
         dest[0] /= (self.weighted_n_node_samples * self.weighted_n_node_cols)
 
 
-cdef class AxisMSE(AxisRegressionCriterion):
+cdef class AxisSquaredError(AxisRegressionCriterion):
     """Mean squared error impurity criterion.
         MSE = var_left + var_right
     """
@@ -685,69 +684,12 @@ cdef class AxisMSE(AxisRegressionCriterion):
         self._cached_cols_impurity_left = cols_impurity_left[0]
         self._cached_cols_impurity_right = cols_impurity_right[0]
 
-
-cdef class AxisFriedmanMSE(AxisMSE):
-    """Mean squared error impurity criterion with improvement score by Friedman.
-    Uses the formula (35) in Friedman's original Gradient Boosting paper:
-        diff = mean_left - mean_right
-        improvement = n_left * n_right * diff^2 / (n_left + n_right)
-    """
-
-    cdef double proxy_impurity_improvement(self) noexcept nogil:
-        """Compute a proxy of the impurity reduction.
-        This method is used to speed up the search for the best split.
-        It is a proxy quantity such that the split that maximizes this value
-        also maximizes the impurity improvement. It neglects all constant terms
-        of the impurity decrease for a given split.
-        The absolute impurity improvement is only computed by the
-        impurity_improvement method once the best split has been found.
-        """
-        cdef:
-            double total_sum_left = 0.0
-            double total_sum_right = 0.0
-
-            SIZE_t k
-            double diff = 0.0
-            double wj = 1.0
-
-        for k in range(self.n_node_cols):
-            if self.col_weights is not None:
-                wj = self.col_weights[self._node_col_indices[k]]
-
-            total_sum_left += wj * self.sum_left[k]
-            total_sum_right += wj * self.sum_right[k]
-
-        diff = (self.weighted_n_right * total_sum_left -
-                self.weighted_n_left * total_sum_right)
-
-        return diff * diff / (self.weighted_n_left * self.weighted_n_right)
-
-    cdef double impurity_improvement(
-        self,
-        double impurity_parent,
-        double impurity_left,
-        double impurity_right
-    ) noexcept nogil:
-        # Note: none of the arguments are used here
-        cdef:
-            double total_sum_left = 0.0
-            double total_sum_right = 0.0
-            double diff = 0.0
-            double wj = 1.0
-            SIZE_t k
-
-        for k in range(self.n_node_cols):
-            if self.col_weights is not None:
-                wj = self.col_weights[self._node_col_indices[k]]
-
-            total_sum_left += wj * self.sum_left[k]
-            total_sum_right += wj * self.sum_right[k]
-
-        diff = (self.weighted_n_right * total_sum_left -
-                self.weighted_n_left * total_sum_right) / self.weighted_n_node_cols
-
-        return (diff * diff / (self.weighted_n_left * self.weighted_n_right *
-                               self.weighted_n_node_samples))
+    # cdef double _proxy_improvement_factor(self) noexcept nogil:
+    #     return (
+    #         self.weighted_n_node_cols
+    #         * self.weighted_n_node_cols
+    #         * self.weighted_n_node_samples
+    #     )
 
 
 cdef class AxisCriterionGSO(AxisCriterion):
@@ -755,6 +697,7 @@ cdef class AxisCriterionGSO(AxisCriterion):
 
     def __cinit__(self, SIZE_t n_outputs, SIZE_t n_samples, *args, **kwargs):
         self._y_row_sums = np.empty(n_samples, dtype='float64', order='C')
+        self._node_col_indices = np.empty(n_outputs, dtype=np.intp, order='C')
 
     cdef int axis_init(
         self,
@@ -951,6 +894,12 @@ cdef class AxisSquaredErrorGSO(AxisCriterionGSO):
             + self.sum_right * self.sum_right / self.weighted_n_right
         )
     
+    cdef double _proxy_improvement_factor(self) noexcept nogil:
+        return (
+            self.weighted_n_cols
+            * self.weighted_n_samples
+        )
+
     cdef void children_impurity(
         self,
         double* impurity_left,
@@ -1042,8 +991,15 @@ cdef class AxisFriedmanGSO(AxisSquaredErrorGSO):
             )
         )
 
+    cdef double _proxy_improvement_factor(self) noexcept nogil:
+        return (
+            self.weighted_n_node_cols
+            * self.weighted_n_node_cols
+            * self.weighted_n_node_samples
+        )
 
 
+# FIXME: the other axis impurity is not calculated
 cdef class AxisClassificationCriterion(AxisCriterion):
     """Abstract criterion for classification."""
 
@@ -1090,6 +1046,8 @@ cdef class AxisClassificationCriterion(AxisCriterion):
         self.sum_total = np.zeros((n_outputs, max_n_classes), dtype=np.float64)
         self.sum_left = np.zeros((n_outputs, max_n_classes), dtype=np.float64)
         self.sum_right = np.zeros((n_outputs, max_n_classes), dtype=np.float64)
+
+        self._node_col_indices = np.empty(n_outputs, dtype=np.intp, order='C')
 
     def __reduce__(self):
         return (type(self),

@@ -1,33 +1,34 @@
-import logging
+# TODO: test Friedman Criterion
 from typing import Callable, Dict
 import numpy as np
-import scipy.stats
 import pytest
 from collections import defaultdict
 from numbers import Real, Integral
 from sklearn.utils.validation import check_random_state
-from sklearn.utils._testing import assert_allclose
 from sklearn.utils._param_validation import validate_params, Interval
 from sklearn.tree._criterion import MSE, MAE, FriedmanMSE, Poisson
-from sklearn.tree._splitter import BestSplitter
 from hypertrees.tree._splitter_factory import (
     make_semisupervised_criterion,
     make_bipartite_criterion,
     make_2dss_criterion,
-    _infer_ss_adapter_type,
 )
 from hypertrees.tree._axis_criterion import (
-    AxisMSE,
-    AxisFriedmanMSE,
-    AxisSquaredErrorGSO
+    AxisSquaredError,
+    AxisSquaredErrorGSO,
+    AxisFriedmanGSO,
 )
-from hypertrees.tree._nd_criterion import (
-    SquaredErrorGSO, FriedmanGSO, GMO, GMOSA,
+from hypertrees.tree._unsupervised_criterion import (
+    PairwiseFriedman,
+    PairwiseSquaredError,
+    PairwiseSquaredErrorGSO,
+    UnsupervisedSquaredError,
+    # UnsupervisedSquaredErrorGSO,  # TODO
+    UnsupervisedFriedman,
 )
+from hypertrees.tree._nd_criterion import GMO, GMOSA
 from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
     HomogeneousCompositeSS,
-    AxisHomogeneousCompositeSS,
 )
 
 from hypertrees.melter import row_cartesian_product
@@ -35,11 +36,15 @@ from test_utils import assert_equal_dicts, comparison_text
 from make_examples import make_interaction_blobs
 from splitter_test import (
     apply_criterion,
+    apply_ss_criterion,
     apply_bipartite_criterion,
     apply_bipartite_ss_criterion,
-    get_criterion_status,
-    update_criterion,
 )
+
+
+# =============================================================================
+# General fixtures
+# =============================================================================
 
 
 @pytest.fixture(params=[0.0, 0.00001, 0.1, 0.2328, 0.569, 0.782, 0.995, 1.0])
@@ -72,7 +77,160 @@ def data(n_samples, n_features, random_state):
         noise=2.0,
         centers=10,
     )
+    X = [Xi.astype('float64') for Xi in X]
     return X, Y, x, y
+
+
+# =============================================================================
+# Manually defined impurity functions
+# =============================================================================
+
+
+def mse_impurity(y):
+    return y.var(0).mean()
+
+
+def global_mse_impurity(y):
+    return y.var()
+
+
+# =============================================================================
+# Criterion fixtures and corresponding impurity functions
+# =============================================================================
+
+
+@pytest.fixture(
+    params=[
+        (
+            make_semisupervised_criterion,
+            {
+                'supervised_criterion': MSE,
+                'unsupervised_criterion': MSE,
+                'ss_class': SSCompositeCriterion,
+            },
+            mse_impurity,
+            mse_impurity,
+        ),
+        (
+            make_semisupervised_criterion,
+            {
+                'supervised_criterion': MSE,
+                'unsupervised_criterion': MSE,
+            },
+            mse_impurity,
+            mse_impurity,
+        ),
+    ],
+    ids=['ss', 'ss_homogeneous'],
+)
+def semisupervised_criterion(
+    request,
+    n_samples,
+    n_features,
+    supervision,
+):
+    factory, args, supervised_impurity, unsupervised_impurity = request.param
+
+    default_criterion_args = dict(
+        n_features=n_features[0],
+        n_samples=n_samples[0],
+        n_outputs=n_samples[1],
+        supervision=supervision,
+    )
+
+    return {
+        'criterion': factory(**default_criterion_args | args),
+        'supervised_impurity': supervised_impurity,
+        'unsupervised_impurity': unsupervised_impurity,
+    }
+
+
+@pytest.fixture(
+    params=[
+        (
+            make_2dss_criterion,
+            {
+                'supervised_criteria': AxisSquaredErrorGSO,
+                'unsupervised_criteria': MSE,
+                'ss_criteria': SSCompositeCriterion,
+                'criterion_wrapper_class': GMOSA,
+            },
+            global_mse_impurity,
+            mse_impurity,
+        ),
+        (
+            make_2dss_criterion,
+            {
+                'supervised_criteria': AxisSquaredError,
+                'unsupervised_criteria': MSE,
+                'ss_criteria': SSCompositeCriterion,
+                'criterion_wrapper_class': GMOSA,
+            },
+            mse_impurity,
+            mse_impurity,
+        ),
+    ],
+    ids=['mse_gso', 'mse_gmo'],
+)
+def ss_bipartite_criterion(
+    request,
+    n_samples,
+    n_features,
+    supervision,
+):
+    factory, args, supervised_impurity, unsupervised_impurity = request.param
+
+    default_criterion_args = dict(
+        n_features=n_features,
+        n_samples=n_samples,
+        n_outputs=n_samples[::-1],
+        supervision=supervision,
+    )
+
+    return {
+        'criterion': factory(**default_criterion_args | args),
+        'supervised_impurity': supervised_impurity,
+        'unsupervised_impurity': unsupervised_impurity,
+    }
+
+
+@pytest.fixture(
+    params=[
+        (
+            make_bipartite_criterion,
+            {
+                'criteria': AxisSquaredErrorGSO,
+                'criterion_wrapper_class': GMOSA,
+            },
+            global_mse_impurity,
+        ),
+        (
+            make_bipartite_criterion,
+            {
+                'criteria': AxisSquaredError,
+                'criterion_wrapper_class': GMOSA,
+            },
+            mse_impurity,
+        ),
+    ],
+    ids=['mse_gso', 'mse_gmo'],
+)
+def supervised_bipartite_criterion(request, n_samples):
+    factory, args, impurity = request.param
+
+    default_criterion_args = dict(
+        n_samples=n_samples,
+        n_outputs=n_samples[::-1],
+    )
+    return {
+        'criterion': factory(**default_criterion_args | args),
+        'impurity': impurity,
+    }
+
+
+# =============================================================================
+# Utility functions
+# =============================================================================
 
 
 def assert_ranks_are_close(a, b, **kwargs):
@@ -89,15 +247,6 @@ def assert_ranks_are_close(a, b, **kwargs):
     except AssertionError as error:
         if "'b_sorted' and 'a_sorted" in str(error):
             raise
-
-
-# TODO: is it necessary to not simplify?
-def mse_impurity(a):
-    return a.var(0).mean()
-
-
-def global_mse_impurity(a):
-    return a.var()
 
 
 def sort_by_feature(x, y, feature):
@@ -349,72 +498,16 @@ def manually_eval_all_splits(
     return result
 
 
-def semisupervised_criterion_factory(
-    x, y,
-    supervised_criterion,
-    unsupervised_criterion,
-    supervision,
-    ss_adapter=None,
-):
-    criterion = make_semisupervised_criterion(
-        supervision=supervision,
-        supervised_criterion=supervised_criterion,
-        unsupervised_criterion=unsupervised_criterion,
-        ss_class=ss_adapter,
-        n_samples=y.shape[0],
-        n_outputs=y.shape[1],
-        n_features=x.shape[1],
-    )
-    criterion.set_X(np.ascontiguousarray(x, dtype='float64'))
-    return criterion
-
-
-# TODO
-def ss_gmo_criterion_factory(
-    x, y,
-    *,
-    n_samples,
-    n_features,
-    n_outputs,
-    supervision,
-    supervised_criterion,
-    unsupervised_criterion,
-    bipartite_adapter,
-    ss_criterion=None,  # TODO: AxisSSCompositeCriterion
-):
-    if ss_criterion is None:
-        ss_criterion = _infer_ss_adapter_type(
-            supervised_criterion,
-            unsupervised_criterion,
-        )
-    ss_criteria = []
-
-    for ax in range(2):
-        ss_criteria.append(
-            ss_criterion(
-                supervised_criterion=supervised_criterion(
-                    n_outputs=n_outputs[ax],
-                    n_samples=n_samples[ax],
-                ),
-                unsupervised_criterion=unsupervised_criterion(
-                    n_outputs=n_features[ax],
-                    n_samples=n_samples[ax],
-                ),
-                supervision=supervision,
-            )
-        )
-    
-    return bipartite_adapter(
-        criterion_rows=ss_criteria[0],
-        criterion_cols=ss_criteria[1],
-    )
+# =============================================================================
+# Tests
+# =============================================================================
 
 
 def test_no_axis_criterion_as_unsupervised():
     with pytest.raises(TypeError, match=r'.*AxisCriterion'):
         make_semisupervised_criterion(
-            supervised_criterion=AxisMSE,
-            unsupervised_criterion=AxisMSE,
+            supervised_criterion=AxisSquaredError,
+            unsupervised_criterion=AxisSquaredError,
             n_features=100,
             n_samples=200,
             n_outputs=10,
@@ -422,103 +515,12 @@ def test_no_axis_criterion_as_unsupervised():
         )
 
 
-@pytest.fixture(
-    params=[
-        (
-            make_2dss_criterion,
-            {
-                'supervised_criteria': MSE,
-                'unsupervised_criteria': MSE,
-                'ss_criteria': SSCompositeCriterion,
-                'criterion_wrapper_class': SquaredErrorGSO,
-            },
-            global_mse_impurity,
-            mse_impurity,
-        ),
-        (
-            make_2dss_criterion,
-            {
-                'supervised_criteria': MSE,
-                'unsupervised_criteria': MSE,
-                'ss_criteria': HomogeneousCompositeSS,
-                'criterion_wrapper_class': SquaredErrorGSO,
-            },
-            global_mse_impurity,
-            mse_impurity,
-        ),
-        # (
-        #     make_2dss_criterion,
-        #     {
-        #         'supervised_criteria': MSE,
-        #         'unsupervised_criteria': MSE,
-        #         'ss_criteria': HomogeneousCompositeSS,
-        #         'criterion_wrapper_class': GMOSA,
-        #     },
-        #     global_mse_impurity,
-        #     mse_impurity,
-        # ),
-    ],
-    ids=['mse', 'homogeneus_mse'],
-)
-def gso_bipartite_criterion(request, n_samples, n_features, supervision):
-    factory, args, supervised_impurity, unsupervised_impurity = request.param
-
-    default_criterion_args = dict(
-        n_features=n_features,
-        n_samples=n_samples,
-        n_outputs=1,
-        supervision=supervision,
-    )
-
-    return {
-        'criterion': factory(**default_criterion_args | args),
-        'supervised_impurity': supervised_impurity,
-        'unsupervised_impurity': unsupervised_impurity,
-    }
-
-
-def assert_ss_bipartite_criterion_identities(criterion_data):
-    criterion = criterion_data['criterion']
-
-    assert (
-        criterion.supervised_criterion_rows
-        is criterion.ss_criterion_rows.supervised_criterion
-    )
-    assert (
-        criterion.unsupervised_criterion_rows
-        is criterion.ss_criterion_rows.unsupervised_criterion
-    )
-    assert (
-        criterion.supervised_criterion_cols
-        is criterion.ss_criterion_cols.supervised_criterion
-    )
-    assert (
-        criterion.unsupervised_criterion_cols
-        is criterion.ss_criterion_cols.unsupervised_criterion
-    )
-    assert (
-        criterion.supervised_criterion_rows
-        is criterion.supervised_bipartite_criterion.criterion_rows
-    )
-    assert (
-        criterion.supervised_criterion_cols
-        is criterion.supervised_bipartite_criterion.criterion_cols
-    )
-
-
-def test_criterion_identities_ss_bipartite(gso_bipartite_criterion):
-    assert_ss_bipartite_criterion_identities(gso_bipartite_criterion)
-
-
 @pytest.mark.parametrize(
     'supervised_criterion, unsupervised_criterion, provided_type, target_type',
     [
         (MSE, MSE, None, HomogeneousCompositeSS),
-        (AxisMSE, AxisMSE, None, AxisHomogeneousCompositeSS),
         (MSE, FriedmanMSE, None, SSCompositeCriterion),
         (MSE, FriedmanMSE, HomogeneousCompositeSS, HomogeneousCompositeSS),
-        (AxisMSE, AxisFriedmanMSE, AxisHomogeneousCompositeSS,
-         AxisHomogeneousCompositeSS),
     ],
 )
 def test_ss_criterion_factory_adapter_type_inference(
@@ -539,49 +541,30 @@ def test_ss_criterion_factory_adapter_type_inference(
     assert type(criterion) == target_type
 
 
-@pytest.mark.parametrize(
-    'criterion_factory, criterion_args, impurity', [
-        (
-            semisupervised_criterion_factory,
-            {
-                'supervised_criterion': MSE,
-                'unsupervised_criterion': MSE,
-                'ss_adapter': SSCompositeCriterion,
-            },
-            mse_impurity,
-        ),
-        (
-            semisupervised_criterion_factory,
-            {'supervised_criterion': MSE, 'unsupervised_criterion': MSE},
-            mse_impurity,
-        ),
-    ],
-    ids=['ss', 'ss_homogeneous'],
-)
 def test_semisupervised_criterion(
     supervision,
     data,
-    criterion_factory,
-    criterion_args,
-    impurity,
-    unsupervised_impurity=None,
+    semisupervised_criterion,
 ):
     XX, Y, *_ = data
-    X = XX[0]
+    X = XX[0].astype('float64')
 
     # Because x is converted from float32
     rtol = 1e-7 if supervision is None else 1e-4
     atol = 1e-7
 
-    criterion = criterion_factory(
-        X, Y, supervision=supervision, **criterion_args,
-    )
+    criterion = semisupervised_criterion['criterion']
+    supervised_impurity = semisupervised_criterion['supervised_impurity']
+    unsupervised_impurity = semisupervised_criterion['unsupervised_impurity']
+
+    criterion.set_X(X)
+
     split_data = apply_criterion(criterion, Y)
 
     manual_split_data = manually_eval_all_splits(
         X, Y,
         supervision=supervision,
-        impurity=impurity,
+        impurity=supervised_impurity,
         unsupervised_impurity=unsupervised_impurity,
     )
 
@@ -654,192 +637,12 @@ def test_supervised_criterion(data):
     )
 
 
-def test_bipartite_ss_criterion_gso(
+def test_semisupervised_bipartite_criterion(
     data,
     n_samples,
-    gso_bipartite_criterion,
     supervision,
+    ss_bipartite_criterion,
     apply_criterion=apply_bipartite_ss_criterion,
-):
-    start_row, start_col = 0, 0
-    end_row, end_col = n_rows, n_cols = n_samples
-
-    # Because x is converted from float32
-    rtol = 1e-7 if supervision is None else 1e-4
-    atol = 1e-7
-
-    X, Y, *_ = data
-
-    criterion = gso_bipartite_criterion['criterion']
-    impurity = gso_bipartite_criterion['supervised_impurity']
-    unsupervised_impurity = gso_bipartite_criterion['unsupervised_impurity']
-
-    row_splits, col_splits = apply_criterion(
-        criterion,
-        X_rows=X[0],
-        X_cols=X[1],
-        y=Y,
-        start=[start_row, start_col],
-        end=[end_row, end_col],
-    )
-
-    # Split positions to evaluate
-    row_indices = np.arange(start_row + 1, end_row)
-    col_indices = np.arange(start_col + 1, end_col)
-
-    row_manual_splits = manually_eval_all_splits(
-        x=np.repeat(X[0], n_cols, axis=0),
-        y=Y.reshape(-1, 1),
-        supervision=supervision,
-        indices=row_indices * n_cols,
-        start=start_row * n_cols,
-        end=end_row * n_cols,
-        impurity=impurity,
-        unsupervised_impurity=unsupervised_impurity,
-        average_both_axes=True,
-    )
-    col_manual_splits = manually_eval_all_splits(
-        x=np.repeat(X[1], n_rows, axis=0),
-        y=Y.T.reshape(-1, 1),
-        supervision=supervision,
-        indices=col_indices * n_rows,
-        start=start_col * n_rows,
-        end=end_col * n_rows,
-        impurity=impurity,
-        unsupervised_impurity=unsupervised_impurity,
-        average_both_axes=True,
-    )
-    row_manual_splits['pos'] = row_indices
-    col_manual_splits['pos'] = col_indices
-
-    if supervision is not None:
-        row_manual_splits['supervised_pos'] = row_indices
-        row_manual_splits['unsupervised_pos'] = row_indices
-        col_manual_splits['supervised_pos'] = col_indices
-        col_manual_splits['unsupervised_pos'] = col_indices
-
-    ignore = {
-        'weighted_n_node_samples_axis',
-        'weighted_n_samples_axis',
-        'weighted_n_left',
-        'weighted_n_right',
-    }
-
-    # Test that the order of the proxy improvement values matches the order of
-    # the final improvement values.
-    assert_ranks_are_close(
-        row_splits['proxy_improvement'],
-        row_manual_splits['improvement'],
-        msg_prefix='(rows proxy) ',
-        rtol=rtol,
-        atol=atol,
-    )
-    assert_ranks_are_close(
-        col_splits['proxy_improvement'],
-        col_manual_splits['improvement'],
-        msg_prefix='(cols proxy) ',
-        rtol=rtol,
-        atol=atol,
-    )
-
-    assert_equal_dicts(
-        row_splits,
-        row_manual_splits,
-        msg_prefix='(rows) ',
-        subset=row_manual_splits.keys(),
-        ignore=ignore,
-        rtol=rtol,
-        atol=atol,
-        differing_keys='raise',
-    )
-    assert_equal_dicts(
-        col_splits,
-        col_manual_splits,
-        msg_prefix='(cols) ',
-        subset=row_manual_splits.keys(),
-        ignore=ignore,
-        rtol=rtol,
-        atol=atol,
-        differing_keys='raise',
-    )
-
-
-@pytest.mark.parametrize(
-    'criterion_factory, criterion_args, impurity', [
-        (
-            make_bipartite_criterion,
-            {
-                'criteria': MSE,
-                'criterion_wrapper_class': SquaredErrorGSO,
-            },
-            global_mse_impurity,
-        ),
-        (
-            make_bipartite_criterion,
-            {
-                'criteria': AxisSquaredErrorGSO,
-                'criterion_wrapper_class': GMOSA,
-            },
-            global_mse_impurity,
-        ),
-    ],
-    ids=['mse', 'gmo_mse'],
-)
-def test_bipartite_criterion_gso(
-    data,
-    n_samples,
-    criterion_factory,
-    criterion_args,
-    impurity,
-    default_criterion_args=None,
-):
-    default_criterion_args = default_criterion_args or dict(
-        n_samples=n_samples,
-        n_outputs=(
-            n_samples[::-1] if criterion_args.get('criterion_wrapper_class')
-            in (GMOSA, GMO) else 1
-        ),
-    )
-    criterion = criterion_factory(**default_criterion_args | criterion_args)
-
-    test_bipartite_ss_criterion_gso(
-        data=data,
-        n_samples=n_samples,
-        supervision=None,
-        gso_bipartite_criterion={
-            'criterion': criterion,
-            'supervised_impurity': impurity,
-            'unsupervised_impurity': None,
-        },
-        apply_criterion=apply_bipartite_criterion,
-    )
-
-
-@pytest.mark.parametrize(
-    'criterion_factory, criterion_args, impurity, unsupervised_impurity', [
-        (
-            make_2dss_criterion,
-            {
-                'supervised_criteria': AxisMSE,
-                'unsupervised_criteria': MSE,
-                'ss_criteria': SSCompositeCriterion,
-                'criterion_wrapper_class': GMOSA,
-            },
-            mse_impurity,
-            None,
-        ),
-    ],
-    ids=['mse'],
-)
-def test_bipartite_ss_criterion_gmo(
-    data,
-    n_features,
-    n_samples,
-    criterion_factory,
-    criterion_args,
-    impurity,
-    unsupervised_impurity,
-    supervision,
 ):
     start_row, start_col = 0, 0
     end_row, end_col = n_samples
@@ -850,15 +653,11 @@ def test_bipartite_ss_criterion_gmo(
 
     X, Y, *_ = data
 
-    default_args = dict(
-        n_features=n_features,
-        n_samples=n_samples,
-        n_outputs=sum(n_samples),
-        supervision=supervision,
-    )
-    criterion = criterion_factory(**default_args | criterion_args)
+    criterion = ss_bipartite_criterion['criterion']
+    supervised_impurity = ss_bipartite_criterion['supervised_impurity']
+    unsupervised_impurity = ss_bipartite_criterion['unsupervised_impurity']
 
-    row_splits, col_splits = apply_bipartite_ss_criterion(
+    row_splits, col_splits = apply_criterion(
         criterion,
         X[0],
         X[1],
@@ -873,7 +672,7 @@ def test_bipartite_ss_criterion_gmo(
         start=start_row,
         end=end_row,
         average_both_axes=True,
-        impurity=impurity,
+        impurity=supervised_impurity,
         unsupervised_impurity=unsupervised_impurity,
     )
     col_manual_splits = manually_eval_all_splits(
@@ -882,7 +681,7 @@ def test_bipartite_ss_criterion_gmo(
         start=start_col,
         end=end_col,
         average_both_axes=True,
-        impurity=impurity,
+        impurity=supervised_impurity,
         unsupervised_impurity=unsupervised_impurity,
     )
 
@@ -934,3 +733,328 @@ def test_bipartite_ss_criterion_gmo(
         rtol=rtol,
         atol=atol,
     )
+
+
+def test_supervised_bipartite_criterion(
+    data,
+    n_samples,
+    supervised_bipartite_criterion,
+):
+    criterion = supervised_bipartite_criterion['criterion']
+    impurity = supervised_bipartite_criterion['impurity']
+
+    test_semisupervised_bipartite_criterion(
+        data=data,
+        n_samples=n_samples,
+        supervision=None,
+        ss_bipartite_criterion={
+            'criterion': criterion,
+            'supervised_impurity': impurity,
+            'unsupervised_impurity': None,
+        },
+        apply_criterion=apply_bipartite_criterion,
+    )
+
+
+@pytest.mark.parametrize(
+    'single_output_impurity, multioutput_impurity', [
+        (global_mse_impurity, mse_impurity),
+    ],
+    ids=['mse'],
+)
+def test_gso_gmo_equivalence(
+    data,
+    n_samples,
+    supervision,
+    single_output_impurity,
+    multioutput_impurity,
+):
+    """Tests if a single-output impurity metric is invariant in the GSO format.
+
+    The test ensures that a single-output version of a metric (that ignores
+    different columns as different outputs) yields the same values on the two
+    formats of a bipartite dataset described bellow.
+
+        1. Global Multi-Output (GMO) format: 
+            Axis 0 (rows) receives:
+                X = X[0]
+                Y = Y
+            Axis 1 (columns) receives:
+                X = X[1]
+                Y = Y.T
+
+        2. Global Single Output (GSO) format: 
+            Axis 0 (rows) receives:
+                X = np.repeat(X[0], n_cols, axis=0)
+                Y = Y.reshape(-1, 1))
+            Axis 1 (columns) receives:
+                X = np.repeat(X[1], n_rows, axis=0)
+                Y = Y.reshape(-1, 1))
+
+    An example of single-output impurity is the MSE defined as Y.var() instead
+    of its more usual multioutput form Y.var(0).mean().
+
+    If the metric passes this test, we can employ it in testing bipartite
+    criteria directly in the more convenient GMO format (done by
+    `test_semisupervised_bipartite_criterion()`) being sure the criterion being compared to
+    the metric would yield the same results if the multi-output counterpart of
+    the metric were to be applied in the GSO-formatted dataset.
+    """
+    start_row, start_col = 0, 0
+    end_row, end_col = n_samples
+    n_rows, n_cols = n_samples
+
+    rtol = 1e-7
+    atol = 1e-7
+
+    X, Y, *_ = data
+
+    # Split positions to evaluate
+    row_indices = np.arange(start_row + 1, end_row)
+    col_indices = np.arange(start_col + 1, end_col)
+
+    so_row_splits = manually_eval_all_splits(
+        x=np.repeat(X[0], n_cols, axis=0),
+        y=Y.reshape(-1, 1),
+        supervision=supervision,
+        indices=row_indices * n_cols,
+        start=start_row * n_cols,
+        end=end_row * n_cols,
+        impurity=multioutput_impurity,
+        unsupervised_impurity=multioutput_impurity,
+    )
+    so_col_splits = manually_eval_all_splits(
+        x=np.repeat(X[1], n_rows, axis=0),
+        y=Y.T.reshape(-1, 1),
+        supervision=supervision,
+        indices=col_indices * n_rows,
+        start=start_col * n_rows,
+        end=end_col * n_rows,
+        impurity=multioutput_impurity,
+        unsupervised_impurity=multioutput_impurity,
+    )
+    
+    mo_row_splits = manually_eval_all_splits(
+        x=X[0], y=Y,
+        supervision=supervision,
+        start=start_row,
+        end=end_row,
+        impurity=single_output_impurity,
+        unsupervised_impurity=multioutput_impurity,
+    )
+    mo_col_splits = manually_eval_all_splits(
+        x=X[1], y=Y.T,
+        supervision=supervision,
+        start=start_col,
+        end=end_col,
+        impurity=single_output_impurity,
+        unsupervised_impurity=multioutput_impurity,
+    )
+
+    so_row_splits['pos'] = row_indices
+    so_col_splits['pos'] = col_indices
+
+    ignore = {
+        'weighted_n_left',
+        'weighted_n_right',
+        'weighted_n_samples',
+        'weighted_n_node_samples',
+    }
+    assert_equal_dicts(
+        so_row_splits,
+        mo_row_splits,
+        msg_prefix='(rows) ',
+        ignore=ignore,
+        rtol=rtol,
+        atol=atol,
+        differing_keys='raise',
+    )
+    assert_equal_dicts(
+        so_col_splits,
+        mo_col_splits,
+        msg_prefix='(cols) ',
+        ignore=ignore,
+        rtol=rtol,
+        atol=atol,
+        differing_keys='raise',
+    )
+
+
+@pytest.mark.parametrize(
+    'sup_criterion, unsup_criterion, allow_fast_proxy',
+    [
+        (UnsupervisedSquaredError, UnsupervisedSquaredError, True),
+        (UnsupervisedSquaredError, PairwiseSquaredError, True),
+        (UnsupervisedFriedman, UnsupervisedFriedman, True),
+        (UnsupervisedFriedman, PairwiseFriedman, True),
+    ],
+    ids=[
+        'mse',
+        'pairwise_mse',
+        'friedman',
+        'pairwise_friedman',
+    ]
+)
+def test_criterion_pairs_with_fast_proxy(
+    data,
+    n_samples,
+    supervision,
+    sup_criterion,
+    unsup_criterion,
+    allow_fast_proxy,
+):
+    X, Y, *_ = data
+    X = (X[0] @ X[0].T).astype('float64')  # Make it square
+
+    ss_criterion_slow_proxy = make_semisupervised_criterion(
+        supervised_criterion=sup_criterion,
+        unsupervised_criterion=unsup_criterion,
+        ss_class=SSCompositeCriterion,
+        supervision=supervision,
+        n_samples=n_samples[0],
+        n_outputs=n_samples[1],
+        n_features=n_samples[0],
+    )
+    ss_criterion_fast_proxy = make_semisupervised_criterion(
+        supervised_criterion=sup_criterion,
+        unsupervised_criterion=unsup_criterion,
+        ss_class=HomogeneousCompositeSS,
+        supervision=supervision,
+        n_samples=n_samples[0],
+        n_outputs=n_samples[1],
+        n_features=n_samples[0],
+    )
+
+    ss_criterion_slow_proxy.set_X(X)
+    ss_criterion_fast_proxy.set_X(X)
+
+    slow_proxy_splits = apply_ss_criterion(ss_criterion_slow_proxy, Y)
+    fast_proxy_splits = apply_ss_criterion(ss_criterion_fast_proxy, Y)
+
+    try:
+        assert_equal_dicts(
+            slow_proxy_splits,
+            fast_proxy_splits,
+            ignore={
+                'ss_proxy_improvement',
+                'supervised_proxy_improvement',
+                'unsupervised_proxy_improvement',
+            },
+        )
+        # assert_ranks_are_close(
+        #     fast_proxy_splits['ss_proxy_improvement'],
+        #     slow_proxy_splits['ss_improvement'],
+        #     msg_prefix=f'(proxy vs proxy) ',
+        #     rtol=1e-7,
+        #     atol=1e-7,
+        # )
+        assert_ranks_are_close(
+            fast_proxy_splits['ss_proxy_improvement'],
+            fast_proxy_splits['ss_improvement'],
+            msg_prefix=f'(proxy vs sup) ',
+            rtol=1e-7,
+            atol=1e-7,
+        )
+    except AssertionError:
+        if allow_fast_proxy:
+            raise
+    else:
+        if not allow_fast_proxy:
+            raise AssertionError(
+                'Fast proxy is possible but the contrary was stated.'
+            )
+
+@pytest.mark.parametrize(
+    'sup_criterion, unsup_criterion, allow_fast_proxy',
+    [
+        (AxisSquaredError, UnsupervisedSquaredError, True),
+        (AxisSquaredError, PairwiseSquaredError, True),
+        (AxisSquaredErrorGSO, PairwiseSquaredError, True),
+        (AxisFriedmanGSO, UnsupervisedFriedman, True),
+        (AxisFriedmanGSO, PairwiseFriedman, True),
+        (AxisFriedmanGSO, UnsupervisedSquaredError, True),
+    ],
+    ids=[
+        'mse',
+        'mse_gso',
+        'pairwise_mse',
+        'friedman',
+        'pairwise_friedman',
+        'pairwise_friedman+mse',
+    ]
+)
+def test_bipartite_criterion_pairs_with_fast_proxy(
+    data,
+    n_samples,
+    supervision,
+    sup_criterion,
+    unsup_criterion,
+    allow_fast_proxy,
+):
+    X, Y, *_ = data
+    X[0] = (X[0] @ X[0].T).astype('float64')  # Make it square
+    X[1] = (X[1] @ X[1].T).astype('float64')  # Make it square
+
+    ss_criterion_slow_proxy = make_2dss_criterion(
+        criterion_wrapper_class=GMOSA,
+        supervised_criteria=sup_criterion,
+        unsupervised_criteria=unsup_criterion,
+        ss_criteria=SSCompositeCriterion,
+        supervision=supervision,
+        n_samples=n_samples,
+        n_features=n_samples,
+        n_outputs=n_samples[::-1],
+    )
+    ss_criterion_fast_proxy = make_2dss_criterion(
+        criterion_wrapper_class=GMOSA,
+        supervised_criteria=sup_criterion,
+        unsupervised_criteria=unsup_criterion,
+        ss_criteria=HomogeneousCompositeSS,
+        supervision=supervision,
+        n_samples=n_samples,
+        n_features=n_samples,
+        n_outputs=n_samples[::-1],
+    )
+
+    ss_criterion_slow_proxy.set_X(X[0], X[1])
+    ss_criterion_fast_proxy.set_X(X[0], X[1])
+
+    slow_proxy_splits = apply_bipartite_ss_criterion(
+        ss_criterion_slow_proxy,
+        X[0], X[1], Y,
+    )
+    fast_proxy_splits = apply_bipartite_ss_criterion(
+        ss_criterion_fast_proxy,
+        X[0], X[1], Y,
+    )
+
+    ignore = {
+        'ss_improvement',
+        'ss_proxy_improvement',
+        'proxy_improvement',
+        'supervised_proxy_improvement',
+        'unsupervised_proxy_improvement',
+    }
+
+    try:
+        for ax in range(2):
+            assert_equal_dicts(
+                slow_proxy_splits[ax],
+                fast_proxy_splits[ax],
+                ignore=ignore,
+            )
+            assert_ranks_are_close(
+                slow_proxy_splits[ax]['proxy_improvement'],
+                fast_proxy_splits[ax]['proxy_improvement'],
+                msg_prefix=f'(proxy {ax=}) ',
+                rtol=1e-7,
+                atol=1e-7,
+            )
+    except AssertionError:
+        if allow_fast_proxy:
+            raise
+    else:
+        if not allow_fast_proxy:
+            raise AssertionError(
+                'Fast proxy is possible but the contrary was stated.'
+            )
