@@ -18,13 +18,10 @@ from numbers import Integral, Real
 import numpy as np
 from scipy.sparse import issparse
 
-from sklearn.base import BaseEstimator
 from sklearn.base import ClassifierMixin
 from sklearn.base import RegressorMixin
 from sklearn.base import is_classifier
-from sklearn.base import MultiOutputMixin
 from sklearn.utils import check_random_state
-from sklearn.utils import check_scalar
 from sklearn.utils.validation import _check_sample_weight
 from sklearn.utils import compute_sample_weight
 from sklearn.utils.multiclass import check_classification_targets
@@ -47,29 +44,26 @@ from sklearn.tree import (
 )
 # Hypertree-specific:
 from ._nd_splitter import BipartiteSplitter
-from ._splitter_factory import (
-    make_2dss_splitter,
-    make_semisupervised_criterion
-)
 from ..melter import row_cartesian_product
 
 # Semi-supervision-specific:
 from sklearn.tree._classes import (
-    check_is_fitted, BaseDecisionTree, CRITERIA_CLF, CRITERIA_REG,
-    DENSE_SPLITTERS, SPARSE_SPLITTERS,
+    check_is_fitted,
+    BaseDecisionTree,
+    DENSE_SPLITTERS,
+    SPARSE_SPLITTERS,
 )
 from ._nd_classes import (
     BaseBipartiteDecisionTree,
     BipartiteDecisionTreeRegressor,
     BipartiteExtraTreeRegressor,
-    AXIS_CRITERIA,
     _get_criterion_classes,
 )
 from . import (
     _semisupervised_splitter,
     _semisupervised_criterion,
     _unsupervised_criterion,
-    _axis_criterion,
+    _splitter_factory,
 )
 
 
@@ -93,24 +87,33 @@ SINGLE_FEATURE_SPLITTERS = {
     "best": _semisupervised_splitter.BestSplitterSFSS,
     "random": _semisupervised_splitter.RandomSplitterSFSS,
 }
-CRITERIA_SS = {
+SS_CRITERIA = {
     "default": _semisupervised_criterion.SSCompositeCriterion,
-    "homogeneous": _semisupervised_criterion.HomogeneousCompositeSS,
-    "homogeneous_axis": _semisupervised_criterion.AxisHomogeneousCompositeSS,
 }
-PAIRWISE_CRITERIA_REG = {
+
+# Unuspervised criteria for numeric X (based on regression criteria).
+U_NUMERIC_CRITERIA = {
+    "squared_error": _unsupervised_criterion.UnsupervisedSquaredError,
+    "friedman": _unsupervised_criterion.UnsupervisedFriedman,
     "pairwise_squared_error": _unsupervised_criterion.PairwiseSquaredError,
     "pairwise_friedman": _unsupervised_criterion.PairwiseFriedman,
 }
-PAIRWISE_CRITERIA_CLF = {
+
+# Unuspervised criteria for categoric X (based on classification criteria).
+U_CATEGORIC_CRITERIA = {
+    "gini": _unsupervised_criterion.UnsupervisedGini,
+    "entropy": _unsupervised_criterion.UnsupervisedEntropy,
     "pairwise_gini": _unsupervised_criterion.PairwiseGini,
     "pairwise_entropy": _unsupervised_criterion.PairwiseEntropy,
 }
-PAIRWISE_CRITERIA = PAIRWISE_CRITERIA_CLF | PAIRWISE_CRITERIA_REG
+UNSUPERVISED_CRITERIA = U_CATEGORIC_CRITERIA | U_NUMERIC_CRITERIA
 
-UNSUPERVISED_CRITERIA = (
-    CRITERIA_REG | CRITERIA_CLF | PAIRWISE_CRITERIA
-)
+PAIRWISE_CRITERION_OPTIONS = {
+    "pairwise_gini",
+    "pairwise_entropy",
+    "pairwise_squared_error",
+    "pairwise_friedman",
+}
 
 
 def _encode_classes(y, class_weight=None):
@@ -135,23 +138,91 @@ def _encode_classes(y, class_weight=None):
 
 
 @validate_params({
-    "criterion": [str, Criterion, Type[Criterion]]
+    "criterion": [str, Criterion, type(Criterion)]
 })
-def _is_classification_criterion(criterion: str | Criterion | Type[Criterion]):
+def _is_categoric_criterion(criterion: str | Criterion | Type[Criterion]):
+    # TODO: different base classes for categoric (classification) and
+    # regression (numeric) unsupervised criteria.
     if isinstance(criterion, str):
-        return criterion in CRITERIA_CLF or criterion in PAIRWISE_CRITERIA_CLF
+        return criterion in U_CATEGORIC_CRITERIA
     if isinstance(criterion, type):
-        return issubclass(criterion, (
-            _axis_criterion.AxisClassificationCriterion,
-            *CRITERIA_CLF.values(),  # ClassificationCriterion not available
-            *PAIRWISE_CRITERIA_CLF.values(),
-        ))
+        return issubclass(criterion, tuple(U_CATEGORIC_CRITERIA.values())),
     if isinstance(criterion, Criterion):
-        return isinstance(criterion, (
-            *CRITERIA_CLF.values(),  # ClassificationCriterion not available
-            *PAIRWISE_CRITERIA_CLF.values(),
-        ))
+        return issubclass(criterion, tuple(U_CATEGORIC_CRITERIA.values())),
     raise TypeError
+
+
+def _is_pairwise_criterion(unsupervised_criterion):
+    return (
+        unsupervised_criterion in PAIRWISE_CRITERION_OPTIONS
+        or isinstance(
+            unsupervised_criterion,
+            _unsupervised_criterion.PairwiseCriterion
+        )
+    )
+
+
+def _validate_X_double(
+    *,
+    X,
+    X_double,
+    is_categoric,
+    is_pairwise,
+):
+    if is_pairwise:
+        check_pairwise_arrays(X, precomputed=True)
+
+    if X_double is None:
+        # _X_double will be the target matrix for unsupervised criteria,
+        # and thus must be formatted like y usually is, double-valued and
+        # C contiguous.
+        X_double = X.toarray() if issparse(X) else X
+
+        if is_categoric:
+            # TODO: class weights for X.
+            X_double, *_ = _encode_classes(X_double)
+
+        if (
+            getattr(X_double, "dtype", None) != DOUBLE
+            or not X_double.flags.contiguous
+        ):
+            X_double = np.ascontiguousarray(X_double, dtype=DOUBLE)
+
+    elif (
+            getattr(X_double, "dtype", None) != DOUBLE
+            or not X_double.flags.contiguous
+        ):
+        raise TypeError(
+            "If provided, _X_double must be a C contiguous array of float64"
+        )
+    
+    return X_double
+
+
+def _validate_bipartite_X_double(
+    *,
+    X,
+    X_double,
+    is_categoric_rows,
+    is_categoric_cols,
+    is_pairwise_rows,
+    is_pairwise_cols,
+):
+    if X_double is None:
+        X_double = [None, None]
+
+    for axis, (is_categoric, is_pairwise) in enumerate((
+        (is_categoric_rows, is_categoric_cols),
+        (is_pairwise_rows, is_pairwise_cols),
+    )):
+        X_double[axis] = _validate_X_double(
+            X=X[axis],
+            X_double=X_double[axis],
+            is_categoric=is_categoric,
+            is_pairwise=is_pairwise,
+        )
+
+    return X_double
 
 
 # =============================================================================
@@ -175,24 +246,16 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         "update_supervision": [callable, None],
         "ss_adapter": [
             None,
-            Hidden(StrOptions(set(CRITERIA_SS.keys()))),
-            Hidden(_semisupervised_criterion.SemisupervisedCriterion),
+            Hidden(StrOptions(set(SS_CRITERIA.keys()))),
+            Hidden(_semisupervised_criterion.SSCompositeCriterion),
         ],
     }
 
     def _more_tags(self):
         # For cross-validation routines to split data correctly
-        return {"pairwise": self._is_pairwise}
-
-    @property
-    def _is_pairwise(self):
-        return (
-            self.unsupervised_criterion in PAIRWISE_CRITERIA
-            or isinstance(
-                self.criterion,
-                _unsupervised_criterion.PairwiseCriterion
-            )
-        )
+        return {
+            "pairwise": _is_pairwise_criterion(self.unsupervised_criterion)
+        }
 
     @abstractmethod
     def __init__(
@@ -236,17 +299,34 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
             ccp_alpha=ccp_alpha,
         )
 
-    # TODO: Avoid copying the whole BaseDecisionTree.fit(). We need to
-    # validate X and y separately, since unsupervised_criterion could be
-    # different from criterion. We also need to set n_outputs as y.shape[1].
-    # These both small changes require copying the entire fit() function from
-    # sklearn.tree._classes.BaseDecisionTree, while a simple
-    # super().fit(X, np.hstack((X, y))) would be ideal.
-    def fit(self, X, y, sample_weight=None, check_input=True):
+    def _check_X_double(self, X, _X_double=None):
+        return _validate_X_double(
+            X=X,
+            X_double=_X_double, 
+            is_categoric=_is_categoric_criterion(
+                self.unsupervised_criterion,
+            ),
+            is_pairwise=_is_pairwise_criterion(
+                self.unsupervised_criterion,
+            ),
+        )
+
+    # FIXME: Avoid copying the whole BaseDecisionTree.fit(). We currently do it
+    # just so we can build the Splitter object our own way.
+    def fit(self, X, y, sample_weight=None, check_input=True, _X_double=None):
         self._validate_params()
         random_state = check_random_state(self.random_state)
 
         if check_input:
+            # TODO: Since we cannot pass _X_double to trees in an ensemble,
+            # inside sklearn.ensemble._forest._parallel_build_trees(), 
+            # we add _X_double as a parameter in the forest.estimator_params
+            # list, that will be reused by the individual trees without copying
+            # the array for each tree and consuming a large amount of memory.
+            # In forests, check_input is set to false, in which case we do not
+            # override self._X_double below.
+            self._X_double = self._check_X_double(X, _X_double)
+
             # Need to validate separately here.
             # We can't pass multi_output=True because that would allow y to be
             # csr.
@@ -267,21 +347,6 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
                         "Sum of y is not positive which is "
                         "necessary for Poisson regression."
                     )
-
-            if self.unsupervised_criterion == "poisson":
-                if np.any(X < 0):
-                    raise ValueError(
-                        "Some value(s) of X are negative which is"
-                        " not allowed for Poisson regression."
-                    )
-                if np.sum(X) <= 0:
-                    raise ValueError(
-                        "Sum of X is not positive which is "
-                        "necessary for Poisson regression."
-                    )
-
-        if self._is_pairwise:
-            check_pairwise_arrays(X, precomputed=True)
 
         # Determine output settings
         n_samples, self.n_features_in_ = X.shape
@@ -307,17 +372,6 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         if is_classification:
             y, self.classes_, self.n_classes_, expanded_class_weight = \
                 _encode_classes(y, self.class_weight)
-
-        X_targets = X.toarray() if issparse(X) else np.copy(X)
-
-        if _is_classification_criterion(self.unsupervised_criterion):
-            # TODO: class weights for X.
-            X_targets, *_ = _encode_classes(X_targets)
-
-        Xy = np.hstack((X_targets, y))
-
-        if getattr(Xy, "dtype", None) != DOUBLE or not Xy.flags.contiguous:
-            Xy = np.ascontiguousarray(Xy, dtype=DOUBLE)
 
         max_depth = np.iinfo(
             np.int32).max if self.max_depth is None else self.max_depth
@@ -374,6 +428,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         # Build tree
         splitter = self._make_splitter(
             X=X,
+            X_double=self._X_double,
             min_samples_leaf=min_samples_leaf,
             min_weight_leaf=min_weight_leaf,
             random_state=random_state,
@@ -414,8 +469,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
                 self.min_impurity_decrease,
             )
 
-        # Main difference from super().fit()
-        builder.build(self.tree_, X, Xy, sample_weight)
+        builder.build(self.tree_, X, y, sample_weight)
 
         if self.n_outputs_ == 1 and is_classifier(self):
             self.n_classes_ = self.n_classes_[0]
@@ -427,6 +481,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
 
     def _check_criterion(
         self,
+        X_double,
         *,
         n_samples,
         n_outputs=None,
@@ -447,14 +502,17 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         update_supervision = update_supervision or self.update_supervision
 
         if isinstance(ss_adapter, str):
-            ss_adapter = CRITERIA_SS[ss_adapter]
-        elif ss_adapter is not None:  # SemisupervisedCriterion:
+            ss_adapter = SS_CRITERIA[ss_adapter]
+        elif ss_adapter is not None:  # SSCompositeCriterion:
             # Make a deepcopy in case the splitter has mutable attributes that
             # might be shared and modified concurrently during parallel fitting
             return deepcopy(ss_adapter)
 
         if isinstance(criterion, str):
-            CRITERIA = CRITERIA_CLF if is_classifier(self) else CRITERIA_REG
+            if is_classifier(self):
+                CRITERIA = U_CATEGORIC_CRITERIA 
+            else:
+                CRITERIA = U_NUMERIC_CRITERIA
             criterion = CRITERIA[criterion]
         else:
             criterion = deepcopy(criterion)
@@ -464,7 +522,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         else:
             unsupervised_criterion = deepcopy(unsupervised_criterion)
 
-        return make_semisupervised_criterion(
+        final_criterion = _splitter_factory.make_semisupervised_criterion(
             ss_class=ss_adapter,
             supervision=supervision,
             supervised_criterion=criterion,
@@ -475,10 +533,17 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
             update_supervision=update_supervision,
         )
 
+        if X_double is None:
+            raise RuntimeError("_X_double was not set.")
+
+        final_criterion.set_X(X_double)
+        return final_criterion
+
     def _make_splitter(
         self,
         *,
         X,
+        X_double,
         min_samples_leaf,
         min_weight_leaf,
         random_state,
@@ -488,7 +553,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         if isinstance(self.splitter, Splitter):
             return deepcopy(self.splitter)
         else:
-            criterion = self._check_criterion(n_samples=X.shape[0])
+            criterion = self._check_criterion(X_double, n_samples=X.shape[0])
 
             return SPLITTERS[self.splitter](
                 criterion,
@@ -1776,7 +1841,7 @@ class BaseBipartiteDecisionTreeSS(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="gso",
+        bipartite_adapter="gmosa",
         prediction_weights=None,
         # Semi-supervised parameters:
         supervision=0.5,
@@ -1819,12 +1884,36 @@ class BaseBipartiteDecisionTreeSS(
             prediction_weights=prediction_weights,
         )
     
-    def fit(self, X, y, sample_weight=None, check_input=True):
-        if self._is_pairwise:
-            for Xi in X:
-                check_pairwise_arrays(Xi, precomputed=True)
-        return super().fit(X, y, sample_weight, check_input)
+    def fit(self, X, y, sample_weight=None, check_input=True, _X_double=None):
+        if check_input:
+            # TODO: Since we cannot pass _X_double to trees in an ensemble,
+            # inside sklearn.ensemble._forest._parallel_build_trees(), 
+            # we add _X_double as a parameter in the forest.estimator_params
+            # list, that will be reused by the individual trees without copying
+            # the array for each tree and consuming a large amount of memory.
+            # In forests, check_input is set to false, in which case we do not
+            # override self._X_double below.
+            self._X_double = self._check_X_double(X, _X_double)
 
+        return super().fit(X, y, sample_weight, check_input)
+    
+    def _check_X_double(self, X, _X_double=None):
+        return _validate_bipartite_X_double(
+            X=X,
+            X_double=_X_double,
+            is_categoric_rows=_is_categoric_criterion(
+                self.unsupervised_criterion_rows,
+            ),
+            is_categoric_cols=_is_categoric_criterion(
+                self.unsupervised_criterion_cols,
+            ),
+            is_pairwise_rows=_is_pairwise_criterion(
+                self.unsupervised_criterion_rows,
+            ),
+            is_pairwise_cols=_is_pairwise_criterion(
+                self.unsupervised_criterion_cols,
+            ),
+        )
 
     def _make_splitter(
         self,
@@ -1848,20 +1937,14 @@ class BaseBipartiteDecisionTreeSS(
         # NOTE: It is possible to use diferent ss_adapter for rows and columns,
         #       but the user needs to pass an already built BipartiteSplitter instance
         #       if they want to do so.
-        if isinstance(self.ss_adapter, _semisupervised_criterion.SemisupervisedCriterion):
+        if isinstance(self.ss_adapter, _semisupervised_criterion.SSCompositeCriterion):
             ss_adapter = deepcopy(self.ss_adapter)
         elif isinstance(self.ss_adapter, str):
-            ss_adapter = CRITERIA_SS[self.ss_adapter]
+            ss_adapter = SS_CRITERIA[self.ss_adapter]
         elif self.ss_adapter is None:
             ss_adapter = None
         else:
             raise ValueError  # validate_params will not allow this to run
-
-        # TODO: specify if classifier or regression unsupervised criterion
-        if self.bipartite_adapter == "gso":
-            CRITERIA = CRITERIA_CLF | CRITERIA_REG
-        else:
-            CRITERIA = AXIS_CRITERIA
 
         if isinstance(self.unsupervised_criterion_rows, str):
             unsup_criterion_rows = \
@@ -1906,7 +1989,7 @@ class BaseBipartiteDecisionTreeSS(
             else:  # is a Splitter instance
                 splitter[ax] = deepcopy(splitter[ax])
 
-        splitter = make_2dss_splitter(
+        splitter = _splitter_factory.make_bipartite_ss_splitter(
             splitters=splitter,
             supervised_criteria=criterion,
             unsupervised_criteria=[
@@ -1933,6 +2016,13 @@ class BaseBipartiteDecisionTreeSS(
             axis_decision_only=self.axis_decision_only,
         )
 
+        if self._X_double is None:
+            raise RuntimeError("_X_double was not set.")
+
+        splitter.criterion_wrapper.set_X(
+            self._X_double[0],
+            self._X_double[1],
+        )
         return splitter
 
 
@@ -1969,7 +2059,7 @@ class BipartiteDecisionTreeRegressorSS(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="gso",
+        bipartite_adapter="gmosa",
         prediction_weights=None,
         # Semi-supervised parameters:
         supervision=0.5,
@@ -2045,7 +2135,7 @@ class BipartiteExtraTreeRegressorSS(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="gso",
+        bipartite_adapter="gmosa",
         prediction_weights=None,
         # Semi-supervised parameters:
         supervision=0.5,

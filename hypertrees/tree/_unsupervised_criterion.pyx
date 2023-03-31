@@ -16,6 +16,19 @@ cdef class BaseUnsupervisedCriterion(BaseComposableCriterion):
     """
 
 
+# TODO
+# cdef class UnsupervisedNumericCriterion(BaseUnsupervisedCriterion):
+#     """ABC for unsupervised criteria that work on real-valued features.
+#     Based on supervised regression criteria.
+#     """
+
+
+# cdef class UnsupervisedCategoricCriterion(BaseUnsupervisedCriterion):
+#     """ABC for unsupervised criteria that work on categoric features.
+#     Based on supervised classification criteria.
+#     """
+
+
 cdef class UnsupervisedWrapperCriterion(BaseUnsupervisedCriterion):
     """ABC for extending existing criteria with composition."""
     def __cinit__(self, *args, **kwargs):
@@ -111,7 +124,7 @@ cdef class UnsupervisedWrapperCriterion(BaseUnsupervisedCriterion):
         This is useful when defining proxy impurity improvements for
         compositions of Criterion objects.
         """
-        return self.criterion.n_outputs * self.criterion.weighted_n_samples
+        return self.criterion.weighted_n_samples
 
 
 cdef class PairwiseCriterion(UnsupervisedWrapperCriterion):
@@ -213,6 +226,9 @@ cdef class UnsupervisedSquaredError(UnsupervisedWrapperCriterion):
             n_outputs=n_outputs,
             n_samples=n_samples,
         )
+
+    cdef double _proxy_improvement_factor(self) noexcept nogil:
+        return self.n_outputs * self.weighted_n_samples
 
 
 cdef class UnsupervisedFriedman(UnsupervisedWrapperCriterion):

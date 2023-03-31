@@ -1,4 +1,4 @@
-hypertrees.base
+﻿hypertrees.base
 ===============
 
 .. automodule:: hypertrees.base
@@ -23,7 +23,6 @@ hypertrees.base
       BaseMultipartiteEstimator
       BaseMultipartiteSampler
       InputDataND
-      MultipartiteRegressorMixin
       MultipartiteSamplerMixin
       MultipartiteTransformerMixin
       PairwiseInputData

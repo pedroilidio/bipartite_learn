@@ -11,7 +11,7 @@ from sklearn.utils import check_random_state
 
 from hypertrees.tree import BipartiteDecisionTreeRegressor
 from hypertrees.tree._splitter_factory import (
-    make_2dss_splitter,
+    make_bipartite_ss_splitter,
     make_semisupervised_criterion,
 ) 
 from hypertrees.tree._semisupervised_criterion import (
@@ -243,7 +243,7 @@ def test_single_feature_semisupervision_1d2d(supervision=None, **params):
         random_state=check_random_state(params['random_state']),
     )
 
-    ss2d_splitter = make_2dss_splitter(
+    ss2d_splitter = make_bipartite_ss_splitter(
         splitters=BestSplitterSFSS,
         supervised_criteria=MSE,
         unsupervised_criteria=MSE,

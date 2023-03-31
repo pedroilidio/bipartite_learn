@@ -824,7 +824,7 @@ class BipartiteRandomForestRegressor(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="gso",
+        bipartite_adapter="gmosa",
         prediction_weights=None,
     ):
         super().__init__(
@@ -1181,7 +1181,7 @@ class BipartiteExtraTreesRegressor(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="gso",
+        bipartite_adapter="gmosa",
         prediction_weights=None,
     ):
         super().__init__(

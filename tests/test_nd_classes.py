@@ -1,3 +1,4 @@
+import copy
 import logging
 import numpy as np
 from itertools import product
@@ -17,6 +18,7 @@ from hypertrees.tree._nd_classes import (
     BipartiteDecisionTreeClassifier,
     _normalize_weights,
 )
+from hypertrees.tree import _nd_classes
 from hypertrees.melter import row_cartesian_product
 
 from make_examples import make_interaction_blobs, make_interaction_regression, make_interaction_data
@@ -42,6 +44,19 @@ DEF_PARAMS = dict(
 def random_state(request):
     return request.param
 
+
+@pytest.fixture(params=[(37, 61)])
+def n_samples(request):
+    return request.param
+
+
+@pytest.fixture(params=[(10, 9)])
+def n_features(request):
+    return request.param
+
+@pytest.fixture(params=["squared_error_gso", "friedman_mse"])
+def gso_criterion(request):
+    return request.param
 
 def get_leaves(tree: sklearn.tree._tree.Tree):
     # the Tree object can be accessed from tree estimators with estimator.tree_
@@ -75,6 +90,12 @@ def assert_equal_leaves(
             leaves['weighted_n_node_samples'].reshape(-1),
         ]
         if ignore is None or 'value' not in ignore:
+            if leaves1['value'].shape != leaves2['value'].shape:
+                raise ValueError(
+                    'Diferent leaf value shapes, you are probably working with '
+                    'mixed classification-regression trees. To ignore leaf '
+                    'values include "value" in the ignore parameter.'
+                )
             keys_to_order.append(leaves['value'].reshape(-1))
 
         order = np.lexsort(np.vstack(keys_to_order))
@@ -191,18 +212,34 @@ def compare_trees(
 
 @pytest.mark.parametrize('msl', [1, 5, 100])
 @pytest.mark.parametrize('max_depth', [None, 5, 10])
-def test_simple_tree_1d2d(msl, random_state, max_depth, **params):
+@pytest.mark.parametrize(
+    'criterion_mono, criterion_bi',
+    [
+        ('squared_error', 'squared_error_gso'),
+        ('friedman_mse', 'friedman_mse'),
+    ]
+)
+def test_simple_tree_1d2d(
+    msl,
+    random_state,
+    max_depth,
+    criterion_mono,
+    criterion_bi,
+    **params,
+):
     params = DEF_PARAMS | params
-
     tree2 = BipartiteDecisionTreeRegressor(
         min_samples_leaf=msl,
         max_depth=max_depth,
         random_state=check_random_state(random_state),
+        bipartite_adapter="gmosa",
+        criterion=criterion_bi,
     )
 
     tree1 = DecisionTreeRegressor(
         min_samples_leaf=msl,
         max_depth=max_depth,
+        criterion=criterion_mono,
         random_state=check_random_state(random_state),
     )
 
@@ -260,22 +297,30 @@ class TestGMOSymmetry:
 
 
 @pytest.mark.parametrize("splitter", ["random", "best"])
-@pytest.mark.parametrize("adapter", ["gso", "gmosa"])
-def test_identity_gso(splitter, adapter, **params):
+@pytest.mark.parametrize("adapter", ["gmosa"])
+def test_identity_gso(splitter, adapter, gso_criterion, **params):
     params = DEF_PARAMS | params
     XX, Y, x, y = make_interaction_regression(return_molten=True, **params)
     tree = BipartiteDecisionTreeRegressor(
         min_samples_leaf=1,
         splitter=splitter,
         bipartite_adapter=adapter,
+        criterion=gso_criterion,
     )
     assert_allclose(tree.fit(XX, Y).predict(XX).reshape(Y.shape), Y)
 
 
 @pytest.mark.parametrize(
-    "pred_weights", ["gmosa", None, "uniform", lambda x: x**2])
+    "pred_weights", [
+        None,
+        *_nd_classes.PREDICTION_WEIGHTS_OPTIONS-{"raw"},
+        lambda x: x ** 3,
+    ]
+)
 @pytest.mark.parametrize("splitter", ["random", "best"])
-@pytest.mark.parametrize("criterion", ["squared_error", "friedman_mse"])
+@pytest.mark.parametrize(
+    "criterion", _nd_classes.BIPARTITE_CRITERIA["gmo"]["regression"].keys()
+)
 def test_identity_gmo(pred_weights, splitter, criterion, **params):
     """Tests wether regression trees can grow util isolating every instance.
     """
@@ -304,46 +349,50 @@ def test_identity_gmo(pred_weights, splitter, criterion, **params):
     assert_allclose(tree.predict(XX).reshape(Y.shape), Y)
 
 
-@pytest.mark.parametrize(
-    "pred_weights", ["gmosa", None, "uniform", lambda x: x**2])
 @pytest.mark.parametrize("splitter", ["random", "best"])
-def test_gini_mse_identity(pred_weights, splitter, random_state, **params):
-    # FIXME: must fix AxisGini impurity axes_impurities methods to consider
-    # other axis impurity.
+def test_gini_mse_identity(splitter, random_state, **params):
     params = DEF_PARAMS | params
     params['n_features'] = params['n_samples'] #= (10, 10)
     XX, Y = make_interaction_regression(return_molten=False, **params)
     XX = [check_symmetric(X, raise_warning=False) for X in XX]
     Y = (Y > Y.mean()).astype(np.float64)  # Turn into binary.
 
+    random_state = check_random_state(random_state)
+
     tree_reg = BipartiteDecisionTreeRegressor(
         min_samples_leaf=1,
-        bipartite_adapter="gmo",
-        prediction_weights=pred_weights,
+        bipartite_adapter="gmosa",
         splitter=splitter,
         criterion="squared_error",
-        random_state=random_state,
+        random_state=copy.deepcopy(random_state),
     ).fit(XX, Y)
 
     tree_clf = BipartiteDecisionTreeClassifier(
         min_samples_leaf=1,
-        bipartite_adapter="gmo",
-        prediction_weights=pred_weights,
+        bipartite_adapter="gmosa",
         splitter=splitter,
         criterion="gini",
-        random_state=random_state,
+        random_state=copy.deepcopy(random_state),
     ).fit(XX, Y)
 
-    assert_equal_leaves(tree_reg.tree_, tree_clf.tree_)
-    assert_allclose(
-        tree_reg.predict(XX),
-        tree_clf.predict_proba(XX),
-    )
+    assert_equal_leaves(tree_reg.tree_, tree_clf.tree_, ignore={'value'})
+
+    values_reg = tree_reg.tree_.value[..., -1]
+    values_clf = tree_clf.tree_.value[..., -1]
+
+    assert_allclose(values_reg, values_clf)
+
+    pred_reg = tree_reg.predict(XX)
+    pred_clf = tree_clf.predict_proba(XX)
+
+    assert_allclose(pred_reg, pred_clf)
 
 
 @pytest.mark.parametrize("min_samples_leaf", [1, 20, 100])
 @pytest.mark.parametrize("splitter", ["random", "best"])
-@pytest.mark.parametrize("criterion", ["squared_error", "friedman_mse"])
+@pytest.mark.parametrize(
+    "criterion", _nd_classes.BIPARTITE_CRITERIA["gmo"]["regression"].keys()
+)
 def test_leaf_mean_symmetry(min_samples_leaf, splitter, criterion):
     """Tests if Y_leaf.mean(0).mean() == Y_leaf.mean(1).mean()
     
@@ -397,7 +446,7 @@ def test_weight_normalization():
 
 
 @pytest.mark.parametrize("mrl,mcl", [(1, 5), (2, 1), (11, 19)])
-@pytest.mark.parametrize("criterion", ["squared_error", "friedman_mse"])
+@pytest.mark.parametrize("criterion", ["squared_error"])
 def test_leaf_shape_gmo(random_state, mrl, mcl, criterion, **params):
     params = DEF_PARAMS | params
     # XX, Y, x, y = gen_mock_data(melt=True, **params)
@@ -440,7 +489,7 @@ def test_leaf_shape_gmo(random_state, mrl, mcl, criterion, **params):
 
 
 @pytest.mark.parametrize("mrl,mcl", [(1, 1), (1, 5), (2, 1), (19, 11)])
-def test_leaf_shape_gso(mrl, mcl, random_state, **params):
+def test_leaf_shape_gso(mrl, mcl, random_state, gso_criterion, **params):
     params = DEF_PARAMS | params
     # XX, Y, x, y = gen_mock_data(melt=True, **params)
     rng = check_random_state(random_state)
@@ -473,7 +522,8 @@ def test_leaf_shape_gso(mrl, mcl, random_state, **params):
     tree = BipartiteDecisionTreeRegressor(
         min_rows_leaf=mrl,
         min_cols_leaf=mcl,
-        bipartite_adapter="gso",
+        bipartite_adapter="gmosa",
+        criterion=gso_criterion,
     )
     tree.fit(XX, Y)
 

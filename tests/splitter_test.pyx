@@ -200,6 +200,16 @@ cpdef get_ss_criterion_status(
             'ss_' + k: v for k, v in
             get_criterion_status(criterion).items()
         }
+        | {
+            'root_supervised_impurity': criterion._root_supervised_impurity,
+            'root_unsupervised_impurity': criterion._root_unsupervised_impurity,
+            'proxy_supervision': criterion._proxy_supervision,
+            'proxy_factor': criterion._proxy_improvement_factor(),
+            'supervised_proxy_factor':
+                criterion.supervised_criterion._proxy_improvement_factor(),
+            'unsupervised_proxy_factor':
+                criterion.unsupervised_criterion._proxy_improvement_factor(),
+        }
     )
 
 

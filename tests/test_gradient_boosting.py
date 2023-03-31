@@ -21,17 +21,30 @@ def random_state(request):
 
 
 @pytest.mark.parametrize("subsample", (1.0, 0.1))
-@pytest.mark.parametrize("criterion", ("squared_error", "friedman_mse"))
-def test_gradient_boosting(random_state, subsample, criterion):
+@pytest.mark.parametrize(
+    "mono_criterion, bi_criterion",
+    [
+        ("squared_error", "squared_error_gso"),
+        ("friedman_mse", "friedman_mse"),
+    ],
+    ids=['mse', 'friedman'],
+)
+def test_gradient_boosting(
+    random_state,
+    subsample,
+    mono_criterion,
+    bi_criterion,
+):
     estimator1 = GradientBoostingRegressor(
-        criterion=criterion,
+        criterion=mono_criterion,
         random_state=random_state,
         subsample=subsample,
     )
     estimator = BipartiteGradientBoostingRegressor(
-        criterion=criterion,
+        criterion=bi_criterion,
         random_state=random_state,
         subsample=subsample,
+        bipartite_adapter="gmosa",
     )
 
     XX, Y, X, y = make_interaction_regression(
@@ -39,6 +52,7 @@ def test_gradient_boosting(random_state, subsample, criterion):
         random_state=random_state,
         return_molten=True,
     )
+    y = y.reshape(-1, 1)
 
     logging.info(f"{random_state=}, {subsample=}")
     with stopwatch("Fitting bipartite..."):

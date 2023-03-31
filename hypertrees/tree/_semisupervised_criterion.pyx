@@ -168,6 +168,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
             self.set_root_impurities()
         
         self._copy_position_wise_attributes()  # Because criteria were reset
+        self._set_proxy_supervision()
 
         return 0
 
@@ -203,7 +204,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         self.n_node_cols = end_col - start_col
         self.weighted_n_samples = weighted_n_samples
 
-        # We do not call init_columns()
+        # We do not call init_columns(), so we make these attributions here
         self.col_weights = col_weights
         self.weighted_n_cols = weighted_n_cols
         self.col_indices = col_indices
@@ -226,7 +227,8 @@ cdef class SSCompositeCriterion(AxisCriterion):
 
         self._columns_are_set = True  # Otherwise error would have been raised
 
-        # Copy attributes instead of calling init_columns()
+        # We do not call self.init_columns(), but instead copy attributes from
+        # the child criterion.
         self._node_col_indices = \
             (<AxisCriterion>self.supervised_criterion)._node_col_indices
         self.weighted_n_cols = \
@@ -252,6 +254,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
             self.set_root_impurities()
         
         self._copy_position_wise_attributes()  # Because criteria were reset
+        self._set_proxy_supervision()
 
         return 0
 
@@ -291,7 +294,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         """
         # FIXME: init is called before node_impurity by the TreeBuilder, where
         # root impurities are also set. We will redundantly calculate the root
-        # impurity here as a consequence.
+        # impurity here as a consequence, divind it by itself to get 1 again.
         if self._root_supervised_impurity == 0.0:
             # Root unupervised impurities == 0.0 as well
             self.set_root_impurities()
@@ -383,37 +386,6 @@ cdef class SSCompositeCriterion(AxisCriterion):
         """
         self.supervised_criterion.node_value(dest)
 
-    cdef double proxy_impurity_improvement(self) nogil:
-        cdef:
-            double sup = self._curr_supervision
-            double u_imp_left
-            double u_imp_right
-            double s_imp_left
-            double s_imp_right
-
-        self.ss_children_impurities(
-            &u_imp_left,
-            &u_imp_right,
-            &s_imp_left,
-            &s_imp_right,
-        )
-
-        return (
-            - sup * (
-                self.supervised_criterion.weighted_n_left * s_imp_left
-                + self.supervised_criterion.weighted_n_right * s_imp_right
-            )
-            / self.supervised_criterion.weighted_n_node_samples
-            / self._root_supervised_impurity
-
-            - (1.0 - sup) * (
-                self.unsupervised_criterion.weighted_n_left * u_imp_left
-                + self.unsupervised_criterion.weighted_n_right * u_imp_right
-            )
-            / self.unsupervised_criterion.weighted_n_node_samples
-            / self._root_unsupervised_impurity
-
-        )
 
     cdef double impurity_improvement(
         self,
@@ -423,17 +395,28 @@ cdef class SSCompositeCriterion(AxisCriterion):
     ) nogil:
         """Compute the improvement in impurity.
 
-            sup * supervised_improvement + (1 - sup) * unsupervised_improvement
+        impurity_improvement = (
+            self._curr_supervision
+            * self.supervised_criterion.node_impurity()
+            / self._root_supervised_impurity
+
+            + (1 - self._curr_supervision)
+            * self.unsupervised_criterion.node_impurity()
+            / self._root_unsupervised_impurity
+        )
         """
         # FIXME: Since we cannot access s_impurity and u_impurity
         # separately, we have to discard this method's input and calculate
         # them again. To mitigate this problem, self.ss_children_impurities()
         # caches the previous values it calculated and reuses them if
-        # self.pos == self._cached_pos.
-        # FIXME: The FIXME above is not valid if the impurity improvement is
-        # a linear combination of sup impurity and unsup impurity. It's then
-        # only makes sense for Friedman criterion? Friedman already discards
-        # the input by its own.
+        # self.pos == self._cached_pos. If both criteria's impurity improvement
+        # were the same linear combination of children impurities this would
+        # not be a problem (as is the case with almost all sklearn Criterion
+        # classes), but criteria such as FriedmanMSE would behave differently,
+        # and we try to be as general as possible. Receiving a custom split
+        # record instead of each impurity seems the ideal solution, since we
+        # would be able to store and pass along the supervised and unsupervised
+        # impurities separately.
         # NOTE: self._cached_pos must be reset at Criterion.init() to
         # ensure it always corresponds to the current tree node.
         cdef:
@@ -465,11 +448,31 @@ cdef class SSCompositeCriterion(AxisCriterion):
 
         return sup * s_improvement + (1.0 - sup) * u_improvement
 
+    cdef double proxy_impurity_improvement(self) nogil:
+        """Compute a proxy of the impurity reduction.
 
-cdef class HomogeneousCompositeSS(SSCompositeCriterion):
-    """Composite SS Criterion for sup and unsup criteria of the same type.
-    """
+        This method is used to speed up the search for the best split.
+        It is a proxy quantity such that the split that maximizes this value
+        also maximizes the impurity improvement. It neglects all constant terms
+        of the impurity decrease for a given split.
+
+        The absolute impurity improvement is only computed by the
+        impurity_improvement method once the best split has been found.
+        """
+        return (
+            self._proxy_supervision
+            * self.supervised_criterion.proxy_impurity_improvement()
+            + (1.0 - self._curr_supervision)  # here to avoid div by 0
+            * self.unsupervised_criterion.proxy_impurity_improvement()
+        )
+
     cdef int _set_proxy_supervision(self) except -1 nogil:
+        """Combine all constants weighting the proxy impurities.
+
+        Avoids performing these operations at every split position in
+        the method proxy_impurity_improvement, performing them only once in
+        init or axis_init.
+        """
         self._proxy_supervision = (
             self._curr_supervision
             * self.unsupervised_criterion._proxy_improvement_factor()
@@ -478,75 +481,16 @@ cdef class HomogeneousCompositeSS(SSCompositeCriterion):
             / self._root_supervised_impurity
         )
 
-    cdef int init(
-        self,
-        const DOUBLE_t[:, ::1] y,
-        DOUBLE_t[:] sample_weight,
-        double weighted_n_samples,
-        SIZE_t[:] sample_indices,
-        SIZE_t start,
-        SIZE_t end,
-    ) nogil except -1:
-        SSCompositeCriterion.init(
-            self,
-            y,
-            sample_weight,
-            weighted_n_samples,
-            sample_indices,
-            start,
-            end,
-        )
-        self._set_proxy_supervision()
+    cdef double _proxy_improvement_factor(self) noexcept nogil:
+        """If improvement = proxy_improvement / a + b, this method returns a.
 
-    cdef int axis_init(
-        self,
-        const DOUBLE_t[:, :] y,
-        const DOUBLE_t[:] sample_weight,
-        const DOUBLE_t[:] col_weights,
-        const SIZE_t[:] sample_indices,
-        const SIZE_t[:] col_indices,
-        double weighted_n_samples,
-        double weighted_n_cols,
-        SIZE_t start,
-        SIZE_t end,
-        SIZE_t start_col,
-        SIZE_t end_col,
-    ) except -1 nogil:
-        SSCompositeCriterion.axis_init(
-            self,
-            y=y,
-            sample_weight=sample_weight,
-            col_weights=col_weights,
-            sample_indices=sample_indices,
-            col_indices=col_indices,
-            weighted_n_samples=weighted_n_samples,
-            weighted_n_cols=weighted_n_cols,
-            start=start,
-            end=end,
-            start_col=start_col,
-            end_col=end_col,
-        )
-        self._set_proxy_supervision()
-
-    cdef double proxy_impurity_improvement(self) nogil:
+        This is useful when defining proxy impurity improvements for
+        compositions of Criterion objects.
+        """
         return (
-            self._proxy_supervision
-            * self.supervised_criterion.proxy_impurity_improvement()
-            + (1.0 - self._curr_supervision)  # here to avoid div by 0
-            * self.unsupervised_criterion.proxy_impurity_improvement()
+            self.unsupervised_criterion._proxy_improvement_factor()
+            * self._root_unsupervised_impurity
         )
-
-    # cdef double impurity_improvement(
-    #     self,
-    #     double impurity_parent,
-    #     double impurity_left,
-    #     double impurity_right,
-    # ) nogil:
-    #     return self.supervised_criterion.impurity_improvement(
-    #         impurity_parent,
-    #         impurity_left,
-    #         impurity_right,
-    #     )
 
 
 # FIXME
@@ -678,6 +622,9 @@ cdef class BipartiteSemisupervisedCriterion(GMO):
             total_sup / (self._curr_supervision_cols + 1)
         (<SSCompositeCriterion>self.criterion_cols)._curr_supervision = \
             total_sup / (self._curr_supervision_rows + 1)
+
+        (<SSCompositeCriterion>self.criterion_rows)._set_proxy_supervision()
+        (<SSCompositeCriterion>self.criterion_cols)._set_proxy_supervision()
 
     cdef void node_value(self, double* dest) nogil:
         self.bipartite_criterion.node_value(dest)

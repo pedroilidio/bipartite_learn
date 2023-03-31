@@ -2,11 +2,12 @@
 from typing import Callable, Dict
 import numpy as np
 import pytest
+import scipy.stats
+
 from collections import defaultdict
 from numbers import Real, Integral
 from sklearn.utils.validation import check_random_state
 from sklearn.utils._param_validation import validate_params, Interval
-from sklearn.tree._criterion import MSE, MAE, FriedmanMSE, Poisson
 from hypertrees.tree._splitter_factory import (
     make_semisupervised_criterion,
     make_bipartite_criterion,
@@ -16,19 +17,22 @@ from hypertrees.tree._axis_criterion import (
     AxisSquaredError,
     AxisSquaredErrorGSO,
     AxisFriedmanGSO,
+    AxisGini,
+    AxisEntropy,
 )
 from hypertrees.tree._unsupervised_criterion import (
     PairwiseFriedman,
     PairwiseSquaredError,
     PairwiseSquaredErrorGSO,
     UnsupervisedSquaredError,
+    UnsupervisedGini,
+    UnsupervisedEntropy,
     # UnsupervisedSquaredErrorGSO,  # TODO
     UnsupervisedFriedman,
 )
 from hypertrees.tree._nd_criterion import GMO, GMOSA
 from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
-    HomogeneousCompositeSS,
 )
 
 from hypertrees.melter import row_cartesian_product
@@ -40,6 +44,13 @@ from splitter_test import (
     apply_bipartite_criterion,
     apply_bipartite_ss_criterion,
 )
+
+CLASSIFICATION_CRITERIA = {
+    AxisGini,
+    AxisEntropy,
+    UnsupervisedGini,
+    UnsupervisedEntropy,
+}
 
 
 # =============================================================================
@@ -59,10 +70,18 @@ def random_state(request):
 
 @pytest.fixture
 def n_samples(request):
-    return (10, 9)
+    return (11, 7)
 
 
-@pytest.fixture(params=[(3, 3), (2, 3)])
+@pytest.fixture
+def n_classes(n_samples):
+    return (
+        np.repeat(6, n_samples[1]),
+        np.repeat(6, n_samples[0]),
+    )
+
+
+@pytest.fixture(params=[(3, 5), (2, 3)])
 def n_features(request):
     return request.param
 
@@ -86,6 +105,23 @@ def data(n_samples, n_features, random_state):
 # =============================================================================
 
 
+def gini_impurity(y):
+    sq_sums = 0
+    for col in y.T:
+        _, counts = np.unique(col, return_counts=True)
+        sq_sums += np.square(counts / y.shape[0]).sum()
+    return 1 - sq_sums / y.shape[1]
+
+
+def entropy_impurity(y):
+    col_entropies = 0
+    for col in y.T:
+        _, counts = np.unique(col, return_counts=True)
+        p = counts / y.shape[0]
+        col_entropies -= (p * np.log2(p)).sum()
+    return col_entropies / y.shape[1]
+
+
 def mse_impurity(y):
     return y.var(0).mean()
 
@@ -104,29 +140,40 @@ def global_mse_impurity(y):
         (
             make_semisupervised_criterion,
             {
-                'supervised_criterion': MSE,
-                'unsupervised_criterion': MSE,
+                'supervised_criterion': UnsupervisedGini,
+                'unsupervised_criterion': UnsupervisedSquaredError,
                 'ss_class': SSCompositeCriterion,
             },
-            mse_impurity,
+            gini_impurity,
             mse_impurity,
         ),
         (
             make_semisupervised_criterion,
             {
-                'supervised_criterion': MSE,
-                'unsupervised_criterion': MSE,
+                'supervised_criterion': UnsupervisedEntropy,
+                'unsupervised_criterion': UnsupervisedSquaredError,
+                'ss_class': SSCompositeCriterion,
+            },
+            entropy_impurity,
+            mse_impurity,
+        ),
+        (
+            make_semisupervised_criterion,
+            {
+                'supervised_criterion': UnsupervisedSquaredError,
+                'unsupervised_criterion': UnsupervisedSquaredError,
             },
             mse_impurity,
             mse_impurity,
         ),
     ],
-    ids=['ss', 'ss_homogeneous'],
+    ids=['gini_mse', 'entropy_mse', 'mse'],
 )
 def semisupervised_criterion(
     request,
     n_samples,
     n_features,
+    n_classes,
     supervision,
 ):
     factory, args, supervised_impurity, unsupervised_impurity = request.param
@@ -134,6 +181,7 @@ def semisupervised_criterion(
     default_criterion_args = dict(
         n_features=n_features[0],
         n_samples=n_samples[0],
+        n_classes=n_classes[0],
         n_outputs=n_samples[1],
         supervision=supervision,
     )
@@ -150,8 +198,30 @@ def semisupervised_criterion(
         (
             make_2dss_criterion,
             {
+                'supervised_criteria': AxisGini,
+                'unsupervised_criteria': UnsupervisedSquaredError,
+                'ss_criteria': SSCompositeCriterion,
+                'criterion_wrapper_class': GMOSA,
+            },
+            gini_impurity,
+            mse_impurity,
+        ),
+        (
+            make_2dss_criterion,
+            {
+                'supervised_criteria': AxisEntropy,
+                'unsupervised_criteria': UnsupervisedSquaredError,
+                'ss_criteria': SSCompositeCriterion,
+                'criterion_wrapper_class': GMOSA,
+            },
+            entropy_impurity,
+            mse_impurity,
+        ),
+        (
+            make_2dss_criterion,
+            {
                 'supervised_criteria': AxisSquaredErrorGSO,
-                'unsupervised_criteria': MSE,
+                'unsupervised_criteria': UnsupervisedSquaredError,
                 'ss_criteria': SSCompositeCriterion,
                 'criterion_wrapper_class': GMOSA,
             },
@@ -162,7 +232,7 @@ def semisupervised_criterion(
             make_2dss_criterion,
             {
                 'supervised_criteria': AxisSquaredError,
-                'unsupervised_criteria': MSE,
+                'unsupervised_criteria': UnsupervisedSquaredError,
                 'ss_criteria': SSCompositeCriterion,
                 'criterion_wrapper_class': GMOSA,
             },
@@ -170,19 +240,21 @@ def semisupervised_criterion(
             mse_impurity,
         ),
     ],
-    ids=['mse_gso', 'mse_gmo'],
+    ids=['gini_mse', 'entropy_mse', 'mse_gso', 'mse_gmo'],
 )
 def ss_bipartite_criterion(
     request,
     n_samples,
     n_features,
     supervision,
+    n_classes,
 ):
     factory, args, supervised_impurity, unsupervised_impurity = request.param
 
     default_criterion_args = dict(
         n_features=n_features,
         n_samples=n_samples,
+        n_classes=n_classes,
         n_outputs=n_samples[::-1],
         supervision=supervision,
     )
@@ -196,6 +268,22 @@ def ss_bipartite_criterion(
 
 @pytest.fixture(
     params=[
+        (
+            make_bipartite_criterion,
+            {
+                'criteria': AxisGini,
+                'criterion_wrapper_class': GMOSA,
+            },
+            gini_impurity,
+        ),
+        (
+            make_bipartite_criterion,
+            {
+                'criteria': AxisEntropy,
+                'criterion_wrapper_class': GMOSA,
+            },
+            entropy_impurity,
+        ),
         (
             make_bipartite_criterion,
             {
@@ -213,24 +301,217 @@ def ss_bipartite_criterion(
             mse_impurity,
         ),
     ],
-    ids=['mse_gso', 'mse_gmo'],
+    ids=['gini', 'entropy', 'mse_gso', 'mse_gmo'],
 )
-def supervised_bipartite_criterion(request, n_samples):
+def supervised_bipartite_criterion(request, n_samples, n_classes):
     factory, args, impurity = request.param
 
     default_criterion_args = dict(
         n_samples=n_samples,
         n_outputs=n_samples[::-1],
+        n_classes=n_classes,
     )
     return {
         'criterion': factory(**default_criterion_args | args),
-        'impurity': impurity,
+        'supervised_impurity': impurity,
+        'unsupervised_impurity': None,
     }
+
+
+@pytest.fixture
+def semisupervised_splits(
+    semisupervised_criterion,
+    data,
+    supervision,
+):
+    return get_ss_splits(
+        ss_criterion_data=semisupervised_criterion,
+        data=data,
+        supervision=supervision,
+        apply_criterion=apply_ss_criterion,
+    )
+
+
+@pytest.fixture
+def supervised_splits(
+    criterion,
+    data,
+    n_samples,
+):
+    return get_ss_splits(
+        ss_criterion_data=criterion,
+        data=data,
+        supervision=None,
+        apply_criterion=apply_criterion,
+    )
+
+
+@pytest.fixture
+def ss_bipartite_splits(
+    ss_bipartite_criterion,
+    data,
+    n_samples,
+    supervision,
+):
+    return get_ss_bipartite_splits(
+        ss_bipartite_criterion=ss_bipartite_criterion,
+        data=data,
+        n_samples=n_samples,
+        supervision=supervision,
+        apply_criterion=apply_bipartite_ss_criterion,
+    )
+
+
+@pytest.fixture
+def supervised_bipartite_splits(
+    supervised_bipartite_criterion,
+    n_samples,
+    data,
+):
+    return get_ss_bipartite_splits(
+        ss_bipartite_criterion=supervised_bipartite_criterion,
+        data=data,
+        n_samples=n_samples,
+        supervision=None,
+        apply_criterion=apply_bipartite_criterion,
+    )
 
 
 # =============================================================================
 # Utility functions
 # =============================================================================
+
+
+def turn_into_classification(y):
+    n_bins = 5
+    y = np.digitize(y, np.linspace(y.min(), y.max(), n_bins))
+    return y.astype('float64')
+
+
+def get_ss_splits(
+    *,
+    ss_criterion_data,
+    data,
+    supervision,
+    apply_criterion,
+):
+    XX, Y, *_ = data
+    X = XX[0].astype('float64')
+
+    criterion = ss_criterion_data['criterion']
+    supervised_impurity = ss_criterion_data['supervised_impurity']
+    unsupervised_impurity = ss_criterion_data['unsupervised_impurity']
+
+    if (
+        type(criterion) in CLASSIFICATION_CRITERIA
+        or supervision is not None
+        and type(criterion.supervised_criterion) in CLASSIFICATION_CRITERIA
+    ):
+        Y = turn_into_classification(Y)
+
+    criterion.set_X(X)
+
+    split_data = apply_criterion(criterion, Y)
+
+    manual_split_data = manually_eval_all_splits(
+        X, Y,
+        supervision=supervision,
+        impurity=supervised_impurity,
+        unsupervised_impurity=unsupervised_impurity,
+    )
+
+    return {'splits': split_data, 'reference_splits': manual_split_data}
+
+
+def get_ss_bipartite_splits(
+    *,
+    ss_bipartite_criterion,
+    data,
+    n_samples,
+    supervision,
+    apply_criterion,
+):
+    X, Y, *_ = data
+
+    start_row, start_col = 0, 0
+    end_row, end_col = n_samples
+
+    criterion = ss_bipartite_criterion['criterion']
+    supervised_impurity = ss_bipartite_criterion['supervised_impurity']
+    unsupervised_impurity = ss_bipartite_criterion['unsupervised_impurity']
+
+    if (
+        type(criterion.criterion_rows) in CLASSIFICATION_CRITERIA
+        or supervision is not None
+        and type(criterion.criterion_rows.supervised_criterion)
+        in CLASSIFICATION_CRITERIA
+    ):
+        Y = turn_into_classification(Y)
+
+    row_splits, col_splits = apply_criterion(
+        criterion,
+        X[0],
+        X[1],
+        Y,
+        start=[start_row, start_col],
+        end=[end_row, end_col],
+    )
+
+    ref_row_splits = manually_eval_all_splits(
+        x=X[0], y=Y,
+        supervision=supervision,
+        start=start_row,
+        end=end_row,
+        average_both_axes=True,
+        impurity=supervised_impurity,
+        unsupervised_impurity=unsupervised_impurity,
+    )
+    ref_col_splits = manually_eval_all_splits(
+        x=X[1], y=Y.T,
+        supervision=supervision,
+        start=start_col,
+        end=end_col,
+        average_both_axes=True,
+        impurity=supervised_impurity,
+        unsupervised_impurity=unsupervised_impurity,
+    )
+
+    return {
+        'splits': (row_splits, col_splits),
+        'reference_splits': (ref_row_splits, ref_col_splits),
+    }
+
+
+def assert_correct_proxy_factors(ss_splits, **kwargs):
+    sup_data = scipy.stats.linregress(
+        ss_splits['supervised_improvement'],
+        ss_splits['supervised_proxy_improvement'],
+    )
+    unsup_data = scipy.stats.linregress(
+        ss_splits['unsupervised_improvement'],
+        ss_splits['unsupervised_proxy_improvement'],
+    )
+
+    assert sup_data.pvalue < 1e-3, "Uncorrelated supervised proxies."
+    assert unsup_data.pvalue < 1e-3, "Uncorrelated unsupervised proxies."
+    assert np.unique(ss_splits['supervised_proxy_factor']).shape[0] == 1, (
+        "Supervised proxy factor is not constant!"
+    )
+    assert np.unique(ss_splits['unsupervised_proxy_factor']).shape[0] == 1, (
+        "Unsupervised proxy factor is not constant!"
+    )
+
+    assert_equal_dicts(
+        {
+            'sup_proxy_factor': ss_splits['supervised_proxy_factor'][0],
+            'unsup_proxy_factor': ss_splits['unsupervised_proxy_factor'][0],
+        },
+        {
+            'sup_proxy_factor': sup_data.slope,
+            'unsup_proxy_factor': unsup_data.slope,
+        },
+        **kwargs,
+    )
 
 
 def assert_ranks_are_close(a, b, **kwargs):
@@ -515,62 +796,13 @@ def test_no_axis_criterion_as_unsupervised():
         )
 
 
-@pytest.mark.parametrize(
-    'supervised_criterion, unsupervised_criterion, provided_type, target_type',
-    [
-        (MSE, MSE, None, HomogeneousCompositeSS),
-        (MSE, FriedmanMSE, None, SSCompositeCriterion),
-        (MSE, FriedmanMSE, HomogeneousCompositeSS, HomogeneousCompositeSS),
-    ],
-)
-def test_ss_criterion_factory_adapter_type_inference(
-    supervised_criterion,
-    unsupervised_criterion,
-    provided_type,
-    target_type,
-):
-    criterion = make_semisupervised_criterion(
-        supervised_criterion=supervised_criterion,
-        unsupervised_criterion=unsupervised_criterion,
-        ss_class=provided_type,
-        n_features=100,
-        n_samples=200,
-        n_outputs=10,
-        supervision=0.5,
-    )
-    assert type(criterion) == target_type
-
-
-def test_semisupervised_criterion(
-    supervision,
-    data,
-    semisupervised_criterion,
-):
-    XX, Y, *_ = data
-    X = XX[0].astype('float64')
-
-    # Because x is converted from float32
-    rtol = 1e-7 if supervision is None else 1e-4
+def test_ss_criterion(semisupervised_splits):
+    rtol = 1e-7
     atol = 1e-7
 
-    criterion = semisupervised_criterion['criterion']
-    supervised_impurity = semisupervised_criterion['supervised_impurity']
-    unsupervised_impurity = semisupervised_criterion['unsupervised_impurity']
-
-    criterion.set_X(X)
-
-    split_data = apply_criterion(criterion, Y)
-
-    manual_split_data = manually_eval_all_splits(
-        X, Y,
-        supervision=supervision,
-        impurity=supervised_impurity,
-        unsupervised_impurity=unsupervised_impurity,
-    )
-
     assert_equal_dicts(
-        split_data,
-        manual_split_data,
+        semisupervised_splits['splits'],
+        semisupervised_splits['reference_splits'],
         rtol=rtol,
         atol=atol,
         ignore={
@@ -587,15 +819,48 @@ def test_semisupervised_criterion(
             'end',
             'start',
         },
+        subset=semisupervised_splits.keys(),
         differing_keys='raise',
     )
 
-    # Test that the order of the proxy improvement values matches the order of
-    # the final improvement values.
+
+def test_ss_criterion_proxies(semisupervised_splits):
+    """Test semi-supervised proxy_impurities.
+
+    Test that the order of the proxy improvement values matches the order of
+    the final improvement values.
+    """
+    rtol = 1e-7
+    atol = 1e-7
+
+    splits = semisupervised_splits['splits']
+    ref_splits = semisupervised_splits['reference_splits']
+
     assert_ranks_are_close(
-        split_data['proxy_improvement'],
-        manual_split_data['improvement'],
-        msg_prefix='(rows proxy) ',
+        splits['supervised_proxy_improvement'],
+        splits['supervised_improvement'],
+        msg_prefix='(supervised proxy) ',
+        rtol=rtol,
+        atol=atol,
+    )
+    assert_ranks_are_close(
+        splits['unsupervised_proxy_improvement'],
+        splits['unsupervised_improvement'],
+        msg_prefix='(unsupervised proxy) ',
+        rtol=rtol,
+        atol=atol,
+    )
+    assert_ranks_are_close(
+        splits['ss_proxy_improvement'],
+        splits['ss_improvement'],
+        msg_prefix='(proxy vs. improvement) ',
+        rtol=rtol,
+        atol=atol,
+    )
+    assert_ranks_are_close(
+        splits['ss_proxy_improvement'],
+        ref_splits['improvement'],
+        msg_prefix='(proxy vs. reference) ',
         rtol=rtol,
         atol=atol,
     )
@@ -605,7 +870,7 @@ def test_supervised_criterion(data):
     XX, Y, *_ = data
     X = XX[0]
 
-    criterion = MSE(
+    criterion = UnsupervisedSquaredError(
         n_samples=Y.shape[0],
         n_outputs=Y.shape[1],
     )
@@ -637,70 +902,29 @@ def test_supervised_criterion(data):
     )
 
 
-def test_semisupervised_bipartite_criterion(
-    data,
-    n_samples,
-    supervision,
-    ss_bipartite_criterion,
-    apply_criterion=apply_bipartite_ss_criterion,
-):
-    start_row, start_col = 0, 0
-    end_row, end_col = n_samples
-
-    # Because x is converted from float32
-    rtol = 1e-7 if supervision is None else 1e-4
+def test_ss_bipartite_criterion(ss_bipartite_splits):
+    rtol = 1e-7
     atol = 1e-7
 
-    X, Y, *_ = data
+    row_splits, col_splits = ss_bipartite_splits['splits']
+    ref_row_splits, ref_col_splits = ss_bipartite_splits['reference_splits']
 
-    criterion = ss_bipartite_criterion['criterion']
-    supervised_impurity = ss_bipartite_criterion['supervised_impurity']
-    unsupervised_impurity = ss_bipartite_criterion['unsupervised_impurity']
-
-    row_splits, col_splits = apply_criterion(
-        criterion,
-        X[0],
-        X[1],
-        Y,
-        start=[start_row, start_col],
-        end=[end_row, end_col],
-    )
-
-    row_manual_splits = manually_eval_all_splits(
-        x=X[0], y=Y,
-        supervision=supervision,
-        start=start_row,
-        end=end_row,
-        average_both_axes=True,
-        impurity=supervised_impurity,
-        unsupervised_impurity=unsupervised_impurity,
-    )
-    col_manual_splits = manually_eval_all_splits(
-        x=X[1], y=Y.T,
-        supervision=supervision,
-        start=start_col,
-        end=end_col,
-        average_both_axes=True,
-        impurity=supervised_impurity,
-        unsupervised_impurity=unsupervised_impurity,
-    )
-
-    row_manual_splits['axis_weighted_n_samples'] = \
-        row_manual_splits['weighted_n_samples']
-    col_manual_splits['axis_weighted_n_samples'] = \
-        col_manual_splits['weighted_n_samples']
-    row_manual_splits['axis_weighted_n_node_samples'] = \
-        row_manual_splits['weighted_n_node_samples']
-    col_manual_splits['axis_weighted_n_node_samples'] = \
-        col_manual_splits['weighted_n_node_samples']
+    ref_row_splits['axis_weighted_n_samples'] = \
+        ref_row_splits['weighted_n_samples']
+    ref_col_splits['axis_weighted_n_samples'] = \
+        ref_col_splits['weighted_n_samples']
+    ref_row_splits['axis_weighted_n_node_samples'] = \
+        ref_row_splits['weighted_n_node_samples']
+    ref_col_splits['axis_weighted_n_node_samples'] = \
+        ref_col_splits['weighted_n_node_samples']
 
     ignore = {'weighted_n_samples', 'weighted_n_node_samples'}
 
     assert_equal_dicts(
         row_splits,
-        row_manual_splits,
+        ref_row_splits,
         msg_prefix='(rows) ',
-        subset=row_manual_splits.keys(),
+        subset=ref_row_splits.keys(),
         ignore=ignore,
         rtol=rtol,
         atol=atol,
@@ -708,52 +932,98 @@ def test_semisupervised_bipartite_criterion(
     )
     assert_equal_dicts(
         col_splits,
-        col_manual_splits,
+        ref_col_splits,
         msg_prefix='(cols) ',
-        subset=row_manual_splits.keys(),
+        subset=ref_row_splits.keys(),
         ignore=ignore,
         rtol=rtol,
         atol=atol,
         differing_keys='raise',
     )
 
+
+def test_ss_bipartite_proxy_improvement(ss_bipartite_splits):
+    """Test bipartite semi-supervised proxy_impurities.
+
+    Test that the order of the proxy improvement values matches the order of
+    the final improvement values.
+    """
     # Test that the order of the proxy improvement values matches the order of
     # the final improvement values.
-    assert_ranks_are_close(
-        row_splits['proxy_improvement'],
-        row_manual_splits['improvement'],
-        msg_prefix='(rows proxy) ',
-        rtol=rtol,
-        atol=atol,
-    )
-    assert_ranks_are_close(
-        col_splits['proxy_improvement'],
-        col_manual_splits['improvement'],
-        msg_prefix='(cols proxy) ',
-        rtol=rtol,
-        atol=atol,
-    )
+    rtol = 1e-7
+    atol = 1e-7
+
+    for axis, (splits, ref_splits) in enumerate(zip(
+        ss_bipartite_splits['splits'],
+        ss_bipartite_splits['reference_splits'],
+    )):
+        # Perform control test asserting that the impurity improvement matches
+        # the manually calculated reference values.
+        assert_ranks_are_close(
+            splits['improvement'],
+            ref_splits['improvement'],
+            msg_prefix=f'({axis=}, bipartite vs reference) ',
+            rtol=rtol,
+            atol=atol,
+        )
+
+        # Additional tests for better inspection of semisupervised splits.
+        if 'ss_improvement' in splits:
+            assert_ranks_are_close(
+                splits['ss_improvement'],
+                splits['improvement'],
+                msg_prefix=f'({axis=}, axis vs bipartite) ',
+                rtol=rtol,
+                atol=atol,
+            )
+            assert_ranks_are_close(
+                splits['supervised_proxy_improvement'],
+                splits['supervised_improvement'],
+                msg_prefix=f'({axis=}, sup proxy vs axis) ',
+                rtol=rtol,
+                atol=atol,
+            )
+            assert_ranks_are_close(
+                splits['unsupervised_proxy_improvement'],
+                splits['unsupervised_improvement'],
+                msg_prefix=f'({axis=}, unsup proxy vs axis) ',
+                rtol=rtol,
+                atol=atol,
+            )
+            assert_ranks_are_close(
+                splits['ss_proxy_improvement'],
+                splits['ss_improvement'],
+                msg_prefix=f'({axis=}, proxy vs axis) ',
+                rtol=rtol,
+                atol=atol,
+            )
+
+        # Final main assertion.
+        assert_ranks_are_close(
+            splits['proxy_improvement'],
+            ref_splits['improvement'],
+            msg_prefix=f'({axis=}, proxy vs reference) ',
+            rtol=rtol,
+            atol=atol,
+        )
 
 
-def test_supervised_bipartite_criterion(
-    data,
-    n_samples,
-    supervised_bipartite_criterion,
-):
-    criterion = supervised_bipartite_criterion['criterion']
-    impurity = supervised_bipartite_criterion['impurity']
+def test_supervised_bipartite_criterion(supervised_bipartite_splits):
+    test_ss_bipartite_criterion(supervised_bipartite_splits)
 
-    test_semisupervised_bipartite_criterion(
-        data=data,
-        n_samples=n_samples,
-        supervision=None,
-        ss_bipartite_criterion={
-            'criterion': criterion,
-            'supervised_impurity': impurity,
-            'unsupervised_impurity': None,
-        },
-        apply_criterion=apply_bipartite_criterion,
-    )
+
+def test_supervised_bipartite_proxy_improvement(supervised_bipartite_splits):
+    test_ss_bipartite_proxy_improvement(supervised_bipartite_splits)
+
+
+def test_monopartite_proxy_factors(semisupervised_splits):
+    assert_correct_proxy_factors(semisupervised_splits['splits'])
+
+
+def test_bipartite_proxy_factors(ss_bipartite_splits):
+    row_splits, col_splits = ss_bipartite_splits['splits']
+    assert_correct_proxy_factors(row_splits, msg_prefix='(rows) ')
+    assert_correct_proxy_factors(col_splits, msg_prefix='(cols) ')
 
 
 @pytest.mark.parametrize(
@@ -791,7 +1061,7 @@ def test_gso_gmo_equivalence(
                 X = np.repeat(X[1], n_rows, axis=0)
                 Y = Y.reshape(-1, 1))
 
-    An example of single-output impurity is the MSE defined as Y.var() instead
+    An example of single-output impurity is the UnsupervisedSquaredError defined as Y.var() instead
     of its more usual multioutput form Y.var(0).mean().
 
     If the metric passes this test, we can employ it in testing bipartite
@@ -833,7 +1103,7 @@ def test_gso_gmo_equivalence(
         impurity=multioutput_impurity,
         unsupervised_impurity=multioutput_impurity,
     )
-    
+
     mo_row_splits = manually_eval_all_splits(
         x=X[0], y=Y,
         supervision=supervision,
@@ -878,183 +1148,3 @@ def test_gso_gmo_equivalence(
         atol=atol,
         differing_keys='raise',
     )
-
-
-@pytest.mark.parametrize(
-    'sup_criterion, unsup_criterion, allow_fast_proxy',
-    [
-        (UnsupervisedSquaredError, UnsupervisedSquaredError, True),
-        (UnsupervisedSquaredError, PairwiseSquaredError, True),
-        (UnsupervisedFriedman, UnsupervisedFriedman, True),
-        (UnsupervisedFriedman, PairwiseFriedman, True),
-    ],
-    ids=[
-        'mse',
-        'pairwise_mse',
-        'friedman',
-        'pairwise_friedman',
-    ]
-)
-def test_criterion_pairs_with_fast_proxy(
-    data,
-    n_samples,
-    supervision,
-    sup_criterion,
-    unsup_criterion,
-    allow_fast_proxy,
-):
-    X, Y, *_ = data
-    X = (X[0] @ X[0].T).astype('float64')  # Make it square
-
-    ss_criterion_slow_proxy = make_semisupervised_criterion(
-        supervised_criterion=sup_criterion,
-        unsupervised_criterion=unsup_criterion,
-        ss_class=SSCompositeCriterion,
-        supervision=supervision,
-        n_samples=n_samples[0],
-        n_outputs=n_samples[1],
-        n_features=n_samples[0],
-    )
-    ss_criterion_fast_proxy = make_semisupervised_criterion(
-        supervised_criterion=sup_criterion,
-        unsupervised_criterion=unsup_criterion,
-        ss_class=HomogeneousCompositeSS,
-        supervision=supervision,
-        n_samples=n_samples[0],
-        n_outputs=n_samples[1],
-        n_features=n_samples[0],
-    )
-
-    ss_criterion_slow_proxy.set_X(X)
-    ss_criterion_fast_proxy.set_X(X)
-
-    slow_proxy_splits = apply_ss_criterion(ss_criterion_slow_proxy, Y)
-    fast_proxy_splits = apply_ss_criterion(ss_criterion_fast_proxy, Y)
-
-    try:
-        assert_equal_dicts(
-            slow_proxy_splits,
-            fast_proxy_splits,
-            ignore={
-                'ss_proxy_improvement',
-                'supervised_proxy_improvement',
-                'unsupervised_proxy_improvement',
-            },
-        )
-        # assert_ranks_are_close(
-        #     fast_proxy_splits['ss_proxy_improvement'],
-        #     slow_proxy_splits['ss_improvement'],
-        #     msg_prefix=f'(proxy vs proxy) ',
-        #     rtol=1e-7,
-        #     atol=1e-7,
-        # )
-        assert_ranks_are_close(
-            fast_proxy_splits['ss_proxy_improvement'],
-            fast_proxy_splits['ss_improvement'],
-            msg_prefix=f'(proxy vs sup) ',
-            rtol=1e-7,
-            atol=1e-7,
-        )
-    except AssertionError:
-        if allow_fast_proxy:
-            raise
-    else:
-        if not allow_fast_proxy:
-            raise AssertionError(
-                'Fast proxy is possible but the contrary was stated.'
-            )
-
-@pytest.mark.parametrize(
-    'sup_criterion, unsup_criterion, allow_fast_proxy',
-    [
-        (AxisSquaredError, UnsupervisedSquaredError, True),
-        (AxisSquaredError, PairwiseSquaredError, True),
-        (AxisSquaredErrorGSO, PairwiseSquaredError, True),
-        (AxisFriedmanGSO, UnsupervisedFriedman, True),
-        (AxisFriedmanGSO, PairwiseFriedman, True),
-        (AxisFriedmanGSO, UnsupervisedSquaredError, True),
-    ],
-    ids=[
-        'mse',
-        'mse_gso',
-        'pairwise_mse',
-        'friedman',
-        'pairwise_friedman',
-        'pairwise_friedman+mse',
-    ]
-)
-def test_bipartite_criterion_pairs_with_fast_proxy(
-    data,
-    n_samples,
-    supervision,
-    sup_criterion,
-    unsup_criterion,
-    allow_fast_proxy,
-):
-    X, Y, *_ = data
-    X[0] = (X[0] @ X[0].T).astype('float64')  # Make it square
-    X[1] = (X[1] @ X[1].T).astype('float64')  # Make it square
-
-    ss_criterion_slow_proxy = make_2dss_criterion(
-        criterion_wrapper_class=GMOSA,
-        supervised_criteria=sup_criterion,
-        unsupervised_criteria=unsup_criterion,
-        ss_criteria=SSCompositeCriterion,
-        supervision=supervision,
-        n_samples=n_samples,
-        n_features=n_samples,
-        n_outputs=n_samples[::-1],
-    )
-    ss_criterion_fast_proxy = make_2dss_criterion(
-        criterion_wrapper_class=GMOSA,
-        supervised_criteria=sup_criterion,
-        unsupervised_criteria=unsup_criterion,
-        ss_criteria=HomogeneousCompositeSS,
-        supervision=supervision,
-        n_samples=n_samples,
-        n_features=n_samples,
-        n_outputs=n_samples[::-1],
-    )
-
-    ss_criterion_slow_proxy.set_X(X[0], X[1])
-    ss_criterion_fast_proxy.set_X(X[0], X[1])
-
-    slow_proxy_splits = apply_bipartite_ss_criterion(
-        ss_criterion_slow_proxy,
-        X[0], X[1], Y,
-    )
-    fast_proxy_splits = apply_bipartite_ss_criterion(
-        ss_criterion_fast_proxy,
-        X[0], X[1], Y,
-    )
-
-    ignore = {
-        'ss_improvement',
-        'ss_proxy_improvement',
-        'proxy_improvement',
-        'supervised_proxy_improvement',
-        'unsupervised_proxy_improvement',
-    }
-
-    try:
-        for ax in range(2):
-            assert_equal_dicts(
-                slow_proxy_splits[ax],
-                fast_proxy_splits[ax],
-                ignore=ignore,
-            )
-            assert_ranks_are_close(
-                slow_proxy_splits[ax]['proxy_improvement'],
-                fast_proxy_splits[ax]['proxy_improvement'],
-                msg_prefix=f'(proxy {ax=}) ',
-                rtol=1e-7,
-                atol=1e-7,
-            )
-    except AssertionError:
-        if allow_fast_proxy:
-            raise
-    else:
-        if not allow_fast_proxy:
-            raise AssertionError(
-                'Fast proxy is possible but the contrary was stated.'
-            )

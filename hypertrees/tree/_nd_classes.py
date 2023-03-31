@@ -34,7 +34,7 @@ from sklearn.utils._param_validation import Interval, StrOptions, Hidden
 from sklearn.tree._criterion import Criterion
 from sklearn.tree._tree import Tree
 from sklearn.tree._classes import (
-    DENSE_SPLITTERS, CRITERIA_CLF, CRITERIA_REG, DecisionTreeRegressor,
+    DENSE_SPLITTERS, DecisionTreeRegressor,
     DecisionTreeClassifier,
 )
 from sklearn.tree._tree import DTYPE, DOUBLE
@@ -52,12 +52,12 @@ from ..melter import row_cartesian_product
 from ..utils import check_similarity_matrix, _X_is_multipartite
 from ._axis_criterion import (
     AxisSquaredError,
-    AxisGini,
-    AxisEntropy,
     AxisSquaredErrorGSO,
     AxisFriedmanGSO,
+    AxisGini,
+    AxisEntropy,
 )
-from ._splitter_factory import make_bipartite_splitter
+from . import _splitter_factory
 
 
 __all__ = [
@@ -73,12 +73,20 @@ __all__ = [
 # =============================================================================
 
 SPARSE_SPLITTERS = {}
+PREDICTION_WEIGHTS_OPTIONS = {
+    "precomputed",
+    "uniform",
+    "raw",
+    "square",
+    "softmax",
+}
 
-
-AXIS_CRITERIA = {
+AXIS_CRITERIA_REG = {
     "squared_error": AxisSquaredError,
     "friedman_mse": AxisFriedmanGSO,
     "squared_error_gso": AxisSquaredErrorGSO,
+}
+AXIS_CRITERIA_CLF = {
     "gini": AxisGini,
     "entropy": AxisEntropy,
     "log_loss": AxisEntropy,
@@ -131,14 +139,15 @@ def _get_criterion_classes(
 
     if result is None:
         criterion_options = (
-            CRITERIA_CLF.keys() if is_classification else CRITERIA_REG.keys()
+            AXIS_CRITERIA_CLF.keys() if is_classification
+            else AXIS_CRITERIA_REG.keys()
         )
         if criterion in criterion_options:
             raise NotImplementedError(
                 f"Bipartite adapter {adapter!r} does not support "
-                f"{criterion!r} criterion yet (PRs are welcome). Implemented "
+                f"{criterion!r} criterion. Implemented "
                 f"{clf_or_reg} criterion options for {adapter!r} are: "
-                + ', '.join(map(repr, adapter_options.keys()))
+                + ', '.join(map(repr, adapter_options[clf_or_reg].keys()))
             )
         raise ValueError(
             f"Unrecognized {criterion!r} criterion for {clf_or_reg}. Valid "
@@ -230,13 +239,7 @@ class BaseBipartiteDecisionTree(
         ],
         "prediction_weights": [
             "array-like",
-            StrOptions({
-                "precomputed",
-                "uniform",
-                "raw",
-                "square",
-                "softmax",
-            }),
+            StrOptions(PREDICTION_WEIGHTS_OPTIONS),
             callable,
             None,
         ],
@@ -388,13 +391,10 @@ class BaseBipartiteDecisionTree(
             classes, y = np.unique(y, return_inverse=True)
             y = y.reshape(n_rows, n_cols)
             self.classes_ = np.tile(classes, (self._n_raw_outputs, 1))
-            self.n_classes_ = np.repeat(classes.shape[0], self._n_raw_outputs)
 
-            if self._n_raw_outputs == 1:
-                self.n_row_classes_ = self.n_col_classes_ = self.n_classes_
-            else:
-                self.n_row_classes_ = self.n_classes_[:n_rows]
-                self.n_col_classes_ = self.n_classes_[n_rows:]
+            self.n_classes_ = np.repeat(classes.shape[0], self._n_raw_outputs)
+            self.n_row_classes_ = np.repeat(classes.shape[0], n_rows)
+            self.n_col_classes_ = np.repeat(classes.shape[0], n_cols)
 
             if self.class_weight is not None:
                 expanded_class_weight_rows = compute_sample_weight(
@@ -572,13 +572,13 @@ class BaseBipartiteDecisionTree(
                     check_similarity_matrix(Xi, symmetry_exception=True)
 
         elif self.bipartite_adapter == "gmosa":
-            if is_classifier(self):
-                raise NotImplementedError(  # TODO
-                    f"{self.bipartite_adapter=!r} currently only "
-                    f"supports regression. Received {self.criterion=!r}. "
-                    "Notice, however, that the 'squared_error' criterion "
-                    "corresponds to the Gini impurity when targets are binary."
-                )
+            # if is_classifier(self):
+            #     raise NotImplementedError(  # TODO
+            #         f"{self.bipartite_adapter=!r} currently only "
+            #         f"supports regression. Received {self.criterion=!r}. "
+            #         "Notice, however, that the 'squared_error' criterion "
+            #         "corresponds to the Gini impurity when targets are binary."
+            #     )
             if self.prediction_weights is not None:
                 raise NotImplementedError(  # TODO
                     "prediction_weights are only implemented for "
@@ -705,7 +705,7 @@ class BaseBipartiteDecisionTree(
             else:  # is a Splitter instance
                 splitter[ax] = copy.deepcopy(splitter[ax])
 
-        splitter = make_bipartite_splitter(
+        splitter = _splitter_factory.make_bipartite_splitter(
             splitters=splitter,
             criteria=criterion,
             n_outputs=n_outputs,
@@ -1099,13 +1099,7 @@ class BipartiteDecisionTreeRegressor(
     _parameter_constraints: dict = {
         **BaseBipartiteDecisionTree._parameter_constraints,
         "criterion": [
-            StrOptions({
-                "squared_error",
-                "friedman",
-                "squared_error_gso",
-                "friedman_gso",
-            }),
-            Hidden(StrOptions({"absolute_error", "poisson"})),
+            StrOptions(set(AXIS_CRITERIA_REG.keys())),
             Hidden(Criterion),
         ],
     }
@@ -1814,7 +1808,7 @@ class BipartiteDecisionTreeClassifier(
     _parameter_constraints: dict = {
         **BaseBipartiteDecisionTree._parameter_constraints,
         "criterion": [
-            StrOptions({"gini", "entropy", "log_loss"}),
+            StrOptions(set(AXIS_CRITERIA_CLF.keys())),
             Hidden(Criterion),
         ],
         "class_weight": [dict, list, StrOptions({"balanced"}), None],

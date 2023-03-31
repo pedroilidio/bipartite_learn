@@ -45,8 +45,9 @@ cdef class SSCompositeCriterion(AxisCriterion):
     cdef double _root_supervised_impurity
     cdef double _root_unsupervised_impurity
 
-    cdef double _curr_supervision     # Current supervision amount
     cdef double supervision           # first supervision value received
+    cdef double _curr_supervision     # Current supervision amount
+    cdef double _proxy_supervision    # Combined constants of proxy impurities
     cdef object update_supervision    # callable to update supervision
 
     cdef double _cached_u_impurity_left
@@ -70,12 +71,6 @@ cdef class SSCompositeCriterion(AxisCriterion):
     ) nogil
     cdef inline void _copy_position_wise_attributes(self) noexcept nogil
     cdef int _update_supervision(self) except -1 nogil
-
-
-cdef class HomogeneousCompositeSS(SSCompositeCriterion):
-    """Composite SS Criterion for sup and unsup criteria of the same type.
-    """
-    cdef double _proxy_supervision
     cdef int _set_proxy_supervision(self) except -1 nogil
 
 

@@ -13,11 +13,24 @@ from ._nd_splitter import BipartiteSplitter
 from ._nd_criterion import GMOSA
 from ._semisupervised_criterion import (
     SSCompositeCriterion,
-    HomogeneousCompositeSS,
     BipartiteSemisupervisedCriterion,
 )
-from ._axis_criterion import AxisCriterion, AxisClassificationCriterion
-from ._unsupervised_criterion import PairwiseCriterion
+from ._axis_criterion import AxisCriterion
+from . import _axis_criterion
+from . import _unsupervised_criterion
+
+
+AXIS_CRITERIA_CLF = {
+    "gini": _axis_criterion.AxisGini,
+    "entropy": _axis_criterion.AxisEntropy,
+    "log_loss": _axis_criterion.AxisEntropy,
+}
+U_CATEGORIC_CRITERIA = {
+    "gini": _unsupervised_criterion.UnsupervisedGini,
+    "entropy": _unsupervised_criterion.UnsupervisedEntropy,
+    "pairwise_gini": _unsupervised_criterion.PairwiseGini,
+    "pairwise_entropy": _unsupervised_criterion.PairwiseEntropy,
+}
 
 
 def _duplicate_single_parameters(*params, ndim=2):
@@ -36,24 +49,12 @@ def _duplicate_single_parameters(*params, ndim=2):
     return result
 
 
-@validate_params(dict(
-    criterion=[type(Criterion)],
-    unsupervised_criterion=[type(Criterion)],
-))
-def _infer_ss_adapter_type(
-    *,
-    criterion: Type,
-    unsupervised_criterion: Type,
-) -> Type[SSCompositeCriterion]:
-    if not issubclass(criterion, Criterion):
-        raise TypeError(f"{criterion=!r} must be a subclass of Criterion")
-    if not issubclass(criterion, Criterion):
-        raise TypeError(
-            f"{unsupervised_criterion=!r} must be a subclass of Criterion"
-        )
-    if unsupervised_criterion == criterion:
-        return HomogeneousCompositeSS
-    return SSCompositeCriterion
+def _is_classification_criterion_type(criterion: Type[Criterion]):
+    return (
+        criterion in AXIS_CRITERIA_CLF.values()
+        or criterion in U_CATEGORIC_CRITERIA.values()
+        or issubclass(criterion, ClassificationCriterion)
+    )
 
 
 def check_criterion(
@@ -63,7 +64,7 @@ def check_criterion(
     n_outputs: int | None = None,
     n_classes: int | None = None,
     kind: str | None = None,
-    is_classification: bool = False,
+    is_classification: bool | None = None,
     axis: bool = False,  # Useful only if isinstance(criterion, str)
 ) -> Criterion:
 
@@ -79,11 +80,8 @@ def check_criterion(
                 " or AxisCriterion."
             )
 
-        is_classification = (
-            is_classification
-            or issubclass(criterion, ClassificationCriterion)
-            or issubclass(criterion, AxisClassificationCriterion)
-        )
+        if is_classification is None:
+            is_classification = _is_classification_criterion_type(criterion)
 
         if is_classification:
             if n_outputs is None or n_classes is None:
@@ -153,7 +151,7 @@ def make_bipartite_splitter(
     splitters,
     criteria,
     *,
-    is_classification=False,
+    is_classification=None,
     n_samples=None,
     n_classes=None,
     n_outputs=1,
@@ -240,7 +238,7 @@ def make_bipartite_criterion(
     criteria,
     criterion_wrapper_class,
     *,
-    is_classification=False,
+    is_classification=None,
     n_samples=None,
     n_classes=None,
     n_outputs=1,
@@ -281,7 +279,7 @@ def make_bipartite_criterion(
 #     impurity is semisupervised as in GMOSA, but the proxy improvement
 #     only uses supervised data.
 #     """
-def make_2dss_splitter(
+def make_bipartite_ss_splitter(
     splitters: list[Type[Splitter]],
     supervised_criteria=None,  # FIXME: validate, cannot pass None
     unsupervised_criteria=None,
@@ -291,7 +289,7 @@ def make_2dss_splitter(
     n_features=None,
     n_samples=None,
     n_classes=None,
-    is_classification=False,
+    is_classification=None,
     max_features=None,
     n_outputs=1,
     min_samples_leaf=1,
@@ -380,9 +378,10 @@ def make_2dss_splitter(
 
 
 @validate_params(dict(
+    supervision=[Interval(Real, 0.0, 1.0, closed="both")],
     supervised_criterion=[Criterion, type(Criterion)],
     unsupervised_criterion=[Criterion, type(Criterion)],
-    supervision=[Interval(Real, 0.0, 1.0, closed="both")],
+    is_classification=["boolean", None],
     n_outputs=[Interval(Integral, 1, None, closed="left"), None],
     n_features=[Interval(Integral, 1, None, closed="left"), None],
     n_samples=[Interval(Integral, 1, None, closed="left"), None],
@@ -395,7 +394,7 @@ def make_semisupervised_criterion(
     supervision,
     supervised_criterion,
     unsupervised_criterion,
-    is_classification=False,
+    is_classification=None,
     n_classes=None,
     n_outputs=None,
     n_features=None,
@@ -431,10 +430,7 @@ def make_semisupervised_criterion(
         )
 
     if ss_class is None:
-        ss_class = _infer_ss_adapter_type(
-            criterion=type(supervised_criterion),
-            unsupervised_criterion=type(unsupervised_criterion),
-        )
+        ss_class = SSCompositeCriterion
 
     return ss_class(
         supervision=supervision,
@@ -455,7 +451,7 @@ def make_2dss_criterion(
     n_samples=None,
     n_classes=None,
     n_outputs=1,
-    is_classification=False,
+    is_classification=None,
     ss_criterion_wrapper_class=BipartiteSemisupervisedCriterion,
 ):
     """Factory function of BipartiteSplitter instances with semisupervised criteria.

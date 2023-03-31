@@ -1,4 +1,4 @@
-hypertrees.wrappers
+﻿hypertrees.wrappers
 ===================
 
 .. automodule:: hypertrees.wrappers
@@ -19,6 +19,7 @@ hypertrees.wrappers
    
       BipartiteLocalWrapper
       GlobalSingleOutputWrapper
+      MultipartiteSamplerWrapper
       MultipartiteTransformerWrapper
    
    

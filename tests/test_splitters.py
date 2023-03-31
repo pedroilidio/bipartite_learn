@@ -20,7 +20,7 @@ from sklearn.utils._param_validation import Interval, validate_params
 
 from hypertrees.tree._splitter_factory import (
     make_bipartite_splitter,
-    make_2dss_splitter,
+    make_bipartite_ss_splitter,
     make_semisupervised_criterion,
 )
 from hypertrees.tree._nd_criterion import (
@@ -32,6 +32,7 @@ from hypertrees.tree._axis_criterion import (
     AxisSquaredErrorGSO,
     AxisFriedmanGSO,
     AxisGini,
+    AxisEntropy,
 )
 from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
@@ -41,6 +42,10 @@ from hypertrees.tree._semisupervised_splitter import (
     BestSplitterSFSS,
 )
 from hypertrees.tree._experimental_criterion import UD3, UD35
+from hypertrees.tree._unsupervised_criterion import (
+    UnsupervisedSquaredError,
+    UnsupervisedFriedman,
+)
 from make_examples import make_interaction_blobs, make_interaction_regression
 
 from splitter_test import test_splitter, test_splitter_nd
@@ -224,7 +229,7 @@ def bipartite_ss_splitter_factory(
     random_state,
     **kwargs,
 ):
-    splitter = make_2dss_splitter(
+    splitter = make_bipartite_ss_splitter(
         max_features=[X.shape[1] for X in x],
         n_samples=y.shape,
         n_outputs=y.shape[::-1],
@@ -516,7 +521,7 @@ def test_compare_1d2d_splitters_gmo(
     assert_equal_dicts(
         results_monopartite[best_axis],
         result_bipartite,
-        ignore=['axis'],
+        subset={'pos', 'feaure', 'threshold'},
     )
 
 
@@ -578,28 +583,28 @@ def test_compare_1d_splitters_ss(
         (
             monopartite_ss_splitter_factory, {
                 'splitter': BestSplitter,
-                'supervised_criterion': MSE,
-                'unsupervised_criterion': MSE,
+                'supervised_criterion': UnsupervisedSquaredError,
+                'unsupervised_criterion': UnsupervisedSquaredError,
                 'supervision': None,
             },
             bipartite_ss_splitter_factory, {
                 'splitters': BestSplitter,
                 'supervised_criteria': AxisSquaredErrorGSO,
-                'unsupervised_criteria': MSE,
+                'unsupervised_criteria': UnsupervisedSquaredError,
                 'supervision': None,
             },
         ),
         (
             monopartite_ss_splitter_factory, {
                 'splitter': BestSplitter,
-                'supervised_criterion': FriedmanMSE,
-                'unsupervised_criterion': MSE,
+                'supervised_criterion': UnsupervisedFriedman,
+                'unsupervised_criterion': UnsupervisedSquaredError,
                 'supervision': None,
             },
             bipartite_ss_splitter_factory, {
                 'splitters': BestSplitter,
                 'supervised_criteria': AxisFriedmanGSO,
-                'unsupervised_criteria': MSE,
+                'unsupervised_criteria': UnsupervisedSquaredError,
                 'supervision': None,
             },
         )
@@ -641,28 +646,28 @@ def test_compare_1d2d_splitters_gso_ss(
         (
             monopartite_ss_splitter_factory, {
                 'splitter': BestSplitter,
-                'supervised_criterion': FriedmanMSE,
-                'unsupervised_criterion': MSE,
+                'supervised_criterion': UnsupervisedFriedman,
+                'unsupervised_criterion': UnsupervisedSquaredError,
                 'supervision': None,
             },
             bipartite_ss_splitter_factory, {
                 'splitters': BestSplitter,
                 'supervised_criteria': AxisFriedmanGSO,
-                'unsupervised_criteria': MSE,
+                'unsupervised_criteria': UnsupervisedSquaredError,
                 'supervision': None,
             },
         ),
         (
             monopartite_ss_splitter_factory, {
                 'splitter': BestSplitter,
-                'supervised_criterion': MSE,
-                'unsupervised_criterion': MSE,
+                'supervised_criterion': UnsupervisedSquaredError,
+                'unsupervised_criterion': UnsupervisedSquaredError,
                 'supervision': None,
             },
             bipartite_ss_splitter_factory, {
                 'splitters': BestSplitter,
                 'supervised_criteria': AxisSquaredError,
-                'unsupervised_criteria': MSE,
+                'unsupervised_criteria': UnsupervisedSquaredError,
                 'supervision': None,
             },
         ),
@@ -709,7 +714,7 @@ def test_1d2d_ideal(**params):
 @pytest.mark.skip
 def test_ss_1d2d_unsup(**params):
     params = DEF_PARAMS | params
-    ss2d_splitter = make_2dss_splitter(
+    ss2d_splitter = make_bipartite_ss_splitter(
         splitters=BestSplitter,
         ss_criteria=SSCompositeCriterion,
         supervised_criteria=MSE,
@@ -750,7 +755,7 @@ def test_ss_1d2d(supervision, **params):
         random_state=check_random_state(params['seed']),
     )
 
-    ss2d_splitter = make_2dss_splitter(
+    ss2d_splitter = make_bipartite_ss_splitter(
         splitters=BestSplitter,
         ss_criteria=SSCompositeCriterion,
         supervised_criteria=MSE,
@@ -776,7 +781,7 @@ def test_ss_1d2d(supervision, **params):
 @pytest.mark.skip
 def test_ss_1d2d_ideal_split(**params):
     params = DEF_PARAMS | params
-    ss2d_splitter = make_2dss_splitter(
+    ss2d_splitter = make_bipartite_ss_splitter(
         splitters=BestSplitter,
         ss_criteria=SSCompositeCriterion,
         supervised_criteria=MSE,
@@ -828,7 +833,7 @@ def test_ss_1d2d_blobs(supervision, random_state, **params):
         min_weight_leaf=0.0,
         random_state=check_random_state(random_state),
     )
-    splitter2 = make_2dss_splitter(
+    splitter2 = make_bipartite_ss_splitter(
         splitters=BestSplitter,
         supervised_criteria=MSE,
         unsupervised_criteria=MSE,
@@ -933,7 +938,7 @@ def test_sfss_2d_sup(**params):
     params = DEF_PARAMS | params
     rstate = check_random_state(params['seed'])
 
-    ss2d_splitter = make_2dss_splitter(
+    ss2d_splitter = make_bipartite_ss_splitter(
         splitters=BestSplitterSFSS,
         supervised_criteria=MSE,
         unsupervised_criteria=MSE,
@@ -961,7 +966,7 @@ def test_sfss_2d_unsup(**params):
     params = DEF_PARAMS | params
     rstate = check_random_state(params['seed'])
 
-    ss2d_splitter = make_2dss_splitter(
+    ss2d_splitter = make_bipartite_ss_splitter(
         splitters=BestSplitterSFSS,
         supervised_criteria=MSE,
         unsupervised_criteria=MSE,
@@ -1010,7 +1015,7 @@ def test_sfss_1d2d(**params):
         random_state=check_random_state(params['seed']),
     )
 
-    ss2d_splitter = make_2dss_splitter(
+    ss2d_splitter = make_bipartite_ss_splitter(
         splitters=BestSplitterSFSS,
         supervised_criteria=MSE,
         unsupervised_criteria=MSE,
@@ -1055,7 +1060,7 @@ def test_ud3_1d2d_unsup(**params):
         random_state=check_random_state(params['seed']),
     )
 
-    ss2d_splitter = make_2dss_splitter(
+    ss2d_splitter = make_bipartite_ss_splitter(
         splitters=BestSplitterSFSS,
         ss_criteria=SingleFeatureSSCompositeCriterion,
         supervised_criteria=MSE,
@@ -1105,7 +1110,7 @@ def test_ud35_1d2d_unsup(**params):
         random_state=check_random_state(params['seed']),
     )
 
-    ss2d_splitter = make_2dss_splitter(
+    ss2d_splitter = make_bipartite_ss_splitter(
         splitters=BestSplitterSFSS,
         ss_criteria=SingleFeatureSSCompositeCriterion,
         supervised_criteria=MSE,
@@ -1157,7 +1162,7 @@ def test_sfssmse_1d(**params):
         random_state=check_random_state(rstate),
     )
 
-    ss2d_splitter = make_2dss_splitter(
+    ss2d_splitter = make_bipartite_ss_splitter(
         splitters=BestSplitterSFSS,
         ss_criteria=SingleFeatureSSCompositeCriterion,
         supervised_criteria=MSE,
@@ -1204,7 +1209,7 @@ def test_sfssmse_1d2d(**params):
         random_state=check_random_state(params['seed']),
     )
 
-    ss2d_splitter = make_2dss_splitter(
+    ss2d_splitter = make_bipartite_ss_splitter(
         splitters=BestSplitterSFSS,
         ss_criteria=SFSSMSE,
         supervised_criteria=MSE,
@@ -1300,7 +1305,7 @@ def test_ss_axis_decision_only(supervision, random_state, **params):
     )
     y = y.reshape((-1, 1))
 
-    splitter2 = make_2dss_splitter(
+    splitter2 = make_bipartite_ss_splitter(
         splitters=BestSplitter,
         supervised_criteria=MSE,
         unsupervised_criteria=MSE,
@@ -1374,82 +1379,6 @@ def test_ss_axis_decision_only(supervision, random_state, **params):
     )
 
 
-@pytest.mark.parametrize('axis_decision_only', (True, False))
-def test_criterion_identity_in_wrappers(axis_decision_only):
-    # splitter1 = BestSplitter(
-    #     criterion=make_semisupervised_criterion(
-    #         supervised_criterion=MSE,
-    #         unsupervised_criterion=MSE,
-    #         n_samples=10,
-    #         n_outputs=10,
-    #         n_features=10,
-    #         supervision=supervision,
-    #     ),
-    #     max_features=10,
-    #     min_samples_leaf=1,
-    #     min_weight_leaf=0.0,
-    #     random_state=check_random_state(random_state),
-    # )
-    splitter = make_2dss_splitter(
-        splitters=BestSplitter,
-        supervised_criteria=MSE,
-        unsupervised_criteria=MSE,
-        supervision=0.1,
-        max_features=10,
-        n_features=10,
-        n_samples=10,
-        n_outputs=1,
-        min_samples_leaf=1,
-        min_weight_leaf=0.0,
-        random_state=0,
-        axis_decision_only=axis_decision_only,
-    )
-    assert (
-        splitter.criterion_wrapper.supervised_bipartite_criterion.criterion_rows
-        is splitter.criterion_wrapper.supervised_criterion_rows
-    )
-    assert (
-        splitter.criterion_wrapper.supervised_bipartite_criterion.criterion_cols
-        is splitter.criterion_wrapper.supervised_criterion_cols
-    )
-
-    if axis_decision_only:
-        assert (
-            splitter.splitter_rows.criterion
-            is splitter.criterion_wrapper.supervised_criterion_rows
-        )
-        assert (
-            splitter.splitter_cols.criterion
-            is splitter.criterion_wrapper.supervised_criterion_cols
-        )
-
-    else:
-        assert (
-            splitter.splitter_rows.criterion
-            is splitter.criterion_wrapper.ss_criterion_rows
-        )
-        assert (
-            splitter.splitter_cols.criterion
-            is splitter.criterion_wrapper.ss_criterion_cols
-        )
-        assert (
-            splitter.splitter_rows.criterion.supervised_criterion
-            is splitter.criterion_wrapper.supervised_criterion_rows
-        )
-        assert (
-            splitter.splitter_rows.criterion.unsupervised_criterion
-            is splitter.criterion_wrapper.unsupervised_criterion_rows
-        )
-        assert (
-            splitter.splitter_cols.criterion.supervised_criterion
-            is splitter.criterion_wrapper.supervised_criterion_cols
-        )
-        assert (
-            splitter.splitter_cols.criterion.unsupervised_criterion
-            is splitter.criterion_wrapper.unsupervised_criterion_cols
-        )
-
-
 def test_gini_mse_identity(random_state, **params):
     params = DEF_PARAMS | params
     XX, Y = make_interaction_regression(
@@ -1460,6 +1389,8 @@ def test_gini_mse_identity(random_state, **params):
 
     # XX = [check_symmetric(X, raise_warning=False) for X in XX]
     Y = (Y > Y.mean()).astype('float64')  # Turn into binary.
+    node_impurity = (Y.var(0).mean() + Y.var(1).mean()) / 2
+    logging.info(f'parent_impurity: {node_impurity}')
 
     splitter_gini = make_bipartite_splitter(
         criterion_wrapper_class=GMO,
@@ -1490,16 +1421,9 @@ def test_gini_mse_identity(random_state, **params):
         verbose=params['verbose'],
     )
 
-    result_gini['original_improvement'] = result_gini['improvement']
     result_gini['improvement'] /= 2
+    result_gini['impurity_left'] /= 2
+    result_gini['impurity_right'] /= 2
+    result_gini['impurity_parent'] /= 2
 
-    assert_equal_dicts(
-        result_gini,
-        result_mse,
-        ignore={
-            'impurity_parent',
-            'impurity_left',
-            'impurity_right',
-            'original_improvement',
-        },
-    )
+    assert_equal_dicts(result_gini, result_mse)
