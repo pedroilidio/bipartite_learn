@@ -1,6 +1,6 @@
 # TODO: Documentation.
 # TODO: Classifiers.
-from sklearn.base import RegressorMixin
+from abc import ABCMeta
 from sklearn.ensemble._forest import ForestRegressor, ForestClassifier
 from sklearn.utils._param_validation import StrOptions
 from ..tree._semisupervised_classes import (
@@ -8,6 +8,7 @@ from ..tree._semisupervised_classes import (
     DecisionTreeClassifierSS,
     DecisionTreeRegressorSS,
     ExtraTreeRegressorSS,
+    BaseBipartiteDecisionTreeSS,
     BipartiteDecisionTreeRegressorSS,
     BipartiteExtraTreeRegressorSS,
     _is_pairwise_criterion,
@@ -23,10 +24,12 @@ __all__ = [
 ]
 
 
-class SemisupervisedForestMixin:
+class BaseSemisupervisedForest(
+    metaclass=ABCMeta,
+):
     def fit(self, X, y, sample_weight=None, _X_double=None):
         # TODO: Since we cannot pass _X_double to trees in an ensemble,
-        # inside sklearn.ensemble._forest._parallel_build_trees(), 
+        # inside sklearn.ensemble._forest._parallel_build_trees(),
         # we add _X_double as a parameter in the forest.estimator_params
         # list, that will be reused by the individual trees without copying
         # the array for each tree and consuming a large amount of memory.
@@ -35,14 +38,14 @@ class SemisupervisedForestMixin:
         self._X_double = self._check_X_double(X, _X_double)
 
         return super().fit(X, y, sample_weight)
-    
+
     def _check_X_double(self, X, _X_double=None):
         return self.estimator._check_X_double(X, _X_double)
 
 
 class RandomForestClassifierSS(
+    BaseSemisupervisedForest,
     ForestClassifier,
-    SemisupervisedForestMixin,
 ):
 
     _parameter_constraints: dict = {
@@ -55,7 +58,6 @@ class RandomForestClassifierSS(
             None,
         ],
     }
-    _parameter_constraints.pop("splitter")
 
     def __init__(
         self,
@@ -133,12 +135,12 @@ class RandomForestClassifierSS(
 
 
 class ExtraTreesClassifierSS(
+    BaseSemisupervisedForest,
     ForestClassifier,
-    SemisupervisedForestMixin,
 ):
     _parameter_constraints: dict = {
         **ForestClassifier._parameter_constraints,
-        **DecisionTreeClassifierSS._parameter_constraints,
+        **ExtraTreeClassifierSS._parameter_constraints,
         "class_weight": [
             StrOptions({"balanced_subsample", "balanced"}),
             dict,
@@ -146,7 +148,6 @@ class ExtraTreesClassifierSS(
             None,
         ],
     }
-    _parameter_constraints.pop("splitter")
 
     def __init__(
         self,
@@ -190,11 +191,11 @@ class ExtraTreesClassifierSS(
                 "random_state",
                 "ccp_alpha",
                 # Semi-supervised parameters:
-                "_X_double",
                 "supervision",
                 "unsupervised_criterion",
                 "update_supervision",
                 "ss_adapter",
+                "_X_double",
             ),
             bootstrap=bootstrap,
             oob_score=oob_score,
@@ -224,14 +225,13 @@ class ExtraTreesClassifierSS(
 
 
 class ExtraTreesRegressorSS(
+    BaseSemisupervisedForest,
     ForestRegressor,
-    SemisupervisedForestMixin,
 ):
     _parameter_constraints: dict = {
         **ForestRegressor._parameter_constraints,
-        **DecisionTreeRegressorSS._parameter_constraints,
+        **ExtraTreeRegressorSS._parameter_constraints,
     }
-    _parameter_constraints.pop("splitter")
 
     def __init__(
         self,
@@ -260,7 +260,7 @@ class ExtraTreesRegressorSS(
         ss_adapter=None,
     ):
         super().__init__(
-            estimator=ExtraTreeRegressorSS(),  # NOTE
+            estimator=ExtraTreeRegressorSS(),
             n_estimators=n_estimators,
             estimator_params=(
                 "criterion",
@@ -274,11 +274,11 @@ class ExtraTreesRegressorSS(
                 "random_state",
                 "ccp_alpha",
                 # Semi-supervised parameters:
-                "_X_double",
                 "supervision",
                 "unsupervised_criterion",
                 "update_supervision",
                 "ss_adapter",
+                "_X_double",
             ),
             bootstrap=bootstrap,
             oob_score=oob_score,
@@ -307,15 +307,13 @@ class ExtraTreesRegressorSS(
 
 
 class RandomForestRegressorSS(
+    BaseSemisupervisedForest,
     ForestRegressor,
-    SemisupervisedForestMixin,
 ):
-
     _parameter_constraints: dict = {
         **ForestRegressor._parameter_constraints,
         **DecisionTreeRegressorSS._parameter_constraints,
     }
-    _parameter_constraints.pop("splitter")
 
     def __init__(
         self,
@@ -344,7 +342,7 @@ class RandomForestRegressorSS(
         ss_adapter=None,
     ):
         super().__init__(
-            estimator=DecisionTreeRegressorSS(),  # NOTE
+            estimator=DecisionTreeRegressorSS(),
             n_estimators=n_estimators,
             estimator_params=(
                 "criterion",
@@ -358,11 +356,11 @@ class RandomForestRegressorSS(
                 "random_state",
                 "ccp_alpha",
                 # Semi-supervised parameters:
-                "_X_double",
                 "supervision",
                 "unsupervised_criterion",
                 "update_supervision",
                 "ss_adapter",
+                "_X_double",
             ),
             bootstrap=bootstrap,
             oob_score=oob_score,
@@ -391,15 +389,13 @@ class RandomForestRegressorSS(
 
 
 class ExtraTreesRegressorSS(
+    BaseSemisupervisedForest,
     ForestRegressor,
-    SemisupervisedForestMixin,
 ):
-
     _parameter_constraints: dict = {
         **ForestRegressor._parameter_constraints,
-        **DecisionTreeRegressorSS._parameter_constraints,
+        **ExtraTreeRegressorSS._parameter_constraints,
     }
-    _parameter_constraints.pop("splitter")
 
     def __init__(
         self,
@@ -428,7 +424,7 @@ class ExtraTreesRegressorSS(
         ss_adapter=None,
     ):
         super().__init__(
-            estimator=ExtraTreeRegressorSS(),  # NOTE
+            estimator=ExtraTreeRegressorSS(),
             n_estimators=n_estimators,
             estimator_params=(
                 "criterion",
@@ -442,11 +438,11 @@ class ExtraTreesRegressorSS(
                 "random_state",
                 "ccp_alpha",
                 # Semi-supervised parameters:
-                "_X_double",
                 "supervision",
                 "unsupervised_criterion",
                 "update_supervision",
                 "ss_adapter",
+                "_X_double",
             ),
             bootstrap=bootstrap,
             oob_score=oob_score,
@@ -474,16 +470,37 @@ class ExtraTreesRegressorSS(
         self.ss_adapter = ss_adapter
 
 
+class BaseSemisupervisedBipartiteForest(
+    BaseMultipartiteForest,
+    metaclass=ABCMeta,
+):
+    def fit(self, X, y, sample_weight=None, check_input=True, _X_double=None):
+        if check_input:
+            # _X_double will be reused by the individual trees without copying
+            # the array in each of them and consuming a large amount of memory.
+            _X_double = self._check_X_double(X, _X_double)
+        
+        self._X_double = _X_double  # TODO: Keep it?
+
+        return super().fit(
+            X, y,
+            sample_weight=sample_weight,
+            tree_fit_params={'_X_double': _X_double},
+        )
+
+    def _check_X_double(self, X, _X_double=None):
+        return self.estimator._check_X_double(X, _X_double)
+
+
 class BipartiteRandomForestRegressorSS(
-    RegressorMixin,
-    SemisupervisedForestMixin,
+    BaseSemisupervisedBipartiteForest,
+    ForestRegressor,
 ):
 
     _parameter_constraints: dict = {
-        **ForestRegressor._parameter_constraints,
+        **BaseSemisupervisedBipartiteForest._parameter_constraints,
         **BipartiteDecisionTreeRegressorSS._parameter_constraints,
     }
-    _parameter_constraints.pop("splitter")
 
     def __init__(
         self,
@@ -508,10 +525,7 @@ class BipartiteRandomForestRegressorSS(
         # Semi-supervised parameters:
         supervision=0.5,
         ss_adapter=None,
-        unsupervised_criterion_rows="squared_error",
-        unsupervised_criterion_cols="squared_error",
         update_supervision=None,
-        axis_decision_only=False,
         # Bipartite parameters:
         min_rows_split=1,  # Not 2, to still allow splitting on the other axis
         min_cols_split=1,
@@ -521,8 +535,12 @@ class BipartiteRandomForestRegressorSS(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="gso",
+        bipartite_adapter="gmosa",
         prediction_weights=None,
+        # Biaprtite and semisupervised parameters:
+        unsupervised_criterion_rows="squared_error",
+        unsupervised_criterion_cols="squared_error",
+        axis_decision_only=False,
     ):
         super().__init__(
             estimator=BipartiteDecisionTreeRegressorSS(),
@@ -539,7 +557,6 @@ class BipartiteRandomForestRegressorSS(
                 "random_state",
                 "ccp_alpha",
                 # Semi-supervised parameters:
-                "_X_double",
                 "supervision",
                 "unsupervised_criterion_rows",
                 "unsupervised_criterion_cols",
@@ -599,17 +616,14 @@ class BipartiteRandomForestRegressorSS(
 
 
 class BipartiteExtraTreesRegressorSS(
-    BaseMultipartiteForest,
+    BaseSemisupervisedBipartiteForest,
     ForestRegressor,
-    RegressorMixin,
-    SemisupervisedForestMixin,
 ):
 
     _parameter_constraints: dict = {
-        **ForestRegressor._parameter_constraints,
-        **BipartiteDecisionTreeRegressorSS._parameter_constraints,
+        **BaseSemisupervisedBipartiteForest._parameter_constraints,
+        **BipartiteExtraTreeRegressorSS._parameter_constraints,
     }
-    _parameter_constraints.pop("splitter")
 
     def __init__(
         self,
@@ -647,7 +661,7 @@ class BipartiteExtraTreesRegressorSS(
         min_col_weight_fraction_leaf=0.0,
         max_row_features=None,
         max_col_features=None,
-        bipartite_adapter="gso",
+        bipartite_adapter="gmosa",
         prediction_weights=None,
     ):
         super().__init__(
@@ -665,7 +679,6 @@ class BipartiteExtraTreesRegressorSS(
                 "random_state",
                 "ccp_alpha",
                 # Semi-supervised parameters:
-                "_X_double",
                 "supervision",
                 "unsupervised_criterion_rows",
                 "unsupervised_criterion_cols",

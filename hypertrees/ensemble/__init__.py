@@ -6,6 +6,8 @@ from ._forest import (
     BipartiteRandomForestRegressor,
     BipartiteExtraTreesRegressor,
 )
+from ._semisupervised_forest import *
+from ._gb import *
 
 __all__ = [
     "BipartiteRandomForestRegressor"

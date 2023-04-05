@@ -25,7 +25,7 @@ def random_state(request):
     "mono_criterion, bi_criterion",
     [
         ("squared_error", "squared_error_gso"),
-        ("friedman_mse", "friedman_mse"),
+        ("friedman_mse", "friedman_gso"),
     ],
     ids=['mse', 'friedman'],
 )

@@ -176,11 +176,14 @@ def _parallel_build_trees_nd(
     verbose=0,
     class_weight=None,
     n_samples_bootstrap=None,
+    tree_fit_params=None,
 ):
     """
     Private function used to fit a single tree in parallel."""
     if verbose > 1:
         print("building tree %d of %d" % (tree_idx + 1, n_trees))
+    
+    tree_fit_params = tree_fit_params or {}
 
     if bootstrap:
         n_samples = y.shape  # FIXME: not valid for multi-output.
@@ -204,9 +207,19 @@ def _parallel_build_trees_nd(
                 indices=indices,
             )
 
-        tree.fit(X, y, sample_weight=curr_sample_weight, check_input=False)
+        tree.fit(
+            X, y,
+            sample_weight=curr_sample_weight,
+            check_input=False,
+            **tree_fit_params,
+        )
     else:
-        tree.fit(X, y, sample_weight=sample_weight, check_input=False)
+        tree.fit(
+            X, y,
+            sample_weight=sample_weight,
+            check_input=False,
+            **tree_fit_params,
+        )
 
     return tree
 
@@ -227,7 +240,7 @@ class BaseMultipartiteForest(
         **BaseForest._parameter_constraints,
     }
 
-    def fit(self, X, y, sample_weight=None):
+    def fit(self, X, y, sample_weight=None, tree_fit_params=None):
         """
         Build a forest of trees from the training set (X, y).
 
@@ -402,6 +415,7 @@ class BaseMultipartiteForest(
                     verbose=self.verbose,
                     class_weight=self.class_weight,
                     n_samples_bootstrap=n_samples_bootstrap,
+                    tree_fit_params=tree_fit_params,
                 )
                 for i, t in enumerate(trees)
             )
@@ -513,7 +527,6 @@ class BaseMultipartiteForest(
 class BipartiteRandomForestRegressor(
     BaseMultipartiteForest,
     ForestRegressor,
-    RegressorMixin,
 ):
     """
     A random forest regressor.
@@ -887,7 +900,6 @@ class BipartiteRandomForestRegressor(
 class BipartiteExtraTreesRegressor(
     BaseMultipartiteForest,
     ForestRegressor,
-    RegressorMixin,
 ):
     """
     An extra-trees regressor.

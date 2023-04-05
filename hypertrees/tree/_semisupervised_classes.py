@@ -18,8 +18,6 @@ from numbers import Integral, Real
 import numpy as np
 from scipy.sparse import issparse
 
-from sklearn.base import ClassifierMixin
-from sklearn.base import RegressorMixin
 from sklearn.base import is_classifier
 from sklearn.utils import check_random_state
 from sklearn.utils.validation import _check_sample_weight
@@ -35,13 +33,7 @@ from sklearn.tree._splitter import Splitter
 from sklearn.tree._tree import (
     Tree, DepthFirstTreeBuilder, BestFirstTreeBuilder
 )
-from sklearn.tree import (
-    _tree,
-    DecisionTreeRegressor,
-    DecisionTreeClassifier,
-    ExtraTreeRegressor,
-    ExtraTreeClassifier,
-)
+from sklearn.tree import _tree
 # Hypertree-specific:
 from ._nd_splitter import BipartiteSplitter
 from ..melter import row_cartesian_product
@@ -50,6 +42,10 @@ from ..melter import row_cartesian_product
 from sklearn.tree._classes import (
     check_is_fitted,
     BaseDecisionTree,
+    DecisionTreeRegressor,
+    DecisionTreeClassifier,
+    ExtraTreeRegressor,
+    ExtraTreeClassifier,
     DENSE_SPLITTERS,
     SPARSE_SPLITTERS,
 )
@@ -64,6 +60,7 @@ from . import (
     _semisupervised_criterion,
     _unsupervised_criterion,
     _splitter_factory,
+    _axis_criterion,
 )
 
 
@@ -97,6 +94,7 @@ U_NUMERIC_CRITERIA = {
     "friedman": _unsupervised_criterion.UnsupervisedFriedman,
     "pairwise_squared_error": _unsupervised_criterion.PairwiseSquaredError,
     "pairwise_friedman": _unsupervised_criterion.PairwiseFriedman,
+    "mean_distance": _unsupervised_criterion.MeanDistance
 }
 
 # Unuspervised criteria for categoric X (based on classification criteria).
@@ -109,6 +107,7 @@ U_CATEGORIC_CRITERIA = {
 UNSUPERVISED_CRITERIA = U_CATEGORIC_CRITERIA | U_NUMERIC_CRITERIA
 
 PAIRWISE_CRITERION_OPTIONS = {
+    "mean_distance",
     "pairwise_gini",
     "pairwise_entropy",
     "pairwise_squared_error",
@@ -195,7 +194,7 @@ def _validate_X_double(
         raise TypeError(
             "If provided, _X_double must be a C contiguous array of float64"
         )
-    
+
     return X_double
 
 
@@ -261,48 +260,25 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
     def __init__(
         self,
         *,
-        splitter,
-        criterion,
-        max_depth,
-        min_samples_split,
-        min_samples_leaf,
-        min_weight_fraction_leaf,
-        max_features,
-        max_leaf_nodes,
-        random_state,
-        min_impurity_decrease,
-        class_weight=None,
-        ccp_alpha=0.0,
-        # Semi-supervised parameters:
         supervision=0.5,
         unsupervised_criterion="squared_error",
         update_supervision=None,
         ss_adapter=None,
+        _X_double=None,
+        **kwargs,
     ):
         self.supervision = supervision
         self.ss_adapter = ss_adapter
         self.unsupervised_criterion = unsupervised_criterion
         self.update_supervision = update_supervision
+        self._X_double = _X_double
 
-        super().__init__(
-            splitter=splitter,
-            criterion=criterion,
-            max_depth=max_depth,
-            min_samples_split=min_samples_split,
-            min_samples_leaf=min_samples_leaf,
-            min_weight_fraction_leaf=min_weight_fraction_leaf,
-            max_features=max_features,
-            max_leaf_nodes=max_leaf_nodes,
-            random_state=random_state,
-            min_impurity_decrease=min_impurity_decrease,
-            class_weight=class_weight,
-            ccp_alpha=ccp_alpha,
-        )
+        super().__init__(**kwargs)
 
     def _check_X_double(self, X, _X_double=None):
         return _validate_X_double(
             X=X,
-            X_double=_X_double, 
+            X_double=_X_double,
             is_categoric=_is_categoric_criterion(
                 self.unsupervised_criterion,
             ),
@@ -319,12 +295,13 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
 
         if check_input:
             # TODO: Since we cannot pass _X_double to trees in an ensemble,
-            # inside sklearn.ensemble._forest._parallel_build_trees(), 
-            # we add _X_double as a parameter in the forest.estimator_params
-            # list, that will be reused by the individual trees without copying
-            # the array for each tree and consuming a large amount of memory.
-            # In forests, check_input is set to false, in which case we do not
-            # override self._X_double below.
+            # inside sklearn.ensemble._forest._parallel_build_trees(),
+            # we add _X_double as a parameter in self.__init__ and in the
+            # forest.estimator_params list, that will be reused by the
+            # individual trees without copying the array for each tree
+            # and consuming a large amount of memory.  In forests, check_inpu
+            # is set to false, in which case we do not override self._X_double
+            # below.
             self._X_double = self._check_X_double(X, _X_double)
 
             # Need to validate separately here.
@@ -510,7 +487,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
 
         if isinstance(criterion, str):
             if is_classifier(self):
-                CRITERIA = U_CATEGORIC_CRITERIA 
+                CRITERIA = U_CATEGORIC_CRITERIA
             else:
                 CRITERIA = U_NUMERIC_CRITERIA
             criterion = CRITERIA[criterion]
@@ -565,12 +542,11 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
 
 
 # =============================================================================
-# Public estimators (Only changed the the base class, the rest is pure sklearn)
+# Public estimators
 # =============================================================================
-# TODO: avoid copying code from sklearn.
 
 
-class DecisionTreeClassifierSS(ClassifierMixin, BaseDecisionTreeSS):
+class DecisionTreeClassifierSS(BaseDecisionTreeSS, DecisionTreeClassifier):
     """A decision tree classifier (semi-supervised version).
 
     Read more in the :ref:`User Guide <tree>`.
@@ -801,6 +777,14 @@ class DecisionTreeClassifierSS(ClassifierMixin, BaseDecisionTreeSS):
         **BaseDecisionTreeSS._parameter_constraints,
         **DecisionTreeClassifier._parameter_constraints,
     }
+    _parameter_constraints["criterion"] = [
+        StrOptions(
+            set(U_CATEGORIC_CRITERIA.keys())
+            - PAIRWISE_CRITERION_OPTIONS,
+        ),
+        Hidden(_axis_criterion.BaseComposableCriterion),
+    ]
+    _parameter_constraints.pop("splitter")
 
     def __init__(
         self,
@@ -822,6 +806,7 @@ class DecisionTreeClassifierSS(ClassifierMixin, BaseDecisionTreeSS):
         ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
+        _X_double=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -841,127 +826,11 @@ class DecisionTreeClassifierSS(ClassifierMixin, BaseDecisionTreeSS):
             ss_adapter=ss_adapter,
             unsupervised_criterion=unsupervised_criterion,
             update_supervision=update_supervision,
+            _X_double=_X_double,
         )
 
-    def fit(self, X, y, sample_weight=None, check_input=True):
-        """Build a decision tree classifier from the training set (X, y).
 
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The training input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csc_matrix``.
-
-        y : array-like of shape (n_samples,) or (n_samples, n_outputs)
-            The target values (class labels) as integers or strings.
-
-        sample_weight : array-like of shape (n_samples,), default=None
-            Sample weights. If None, then samples are equally weighted. Splits
-            that would create child nodes with net zero or negative weight are
-            ignored while searching for a split in each node. Splits are also
-            ignored if they would result in any single class carrying a
-            negative weight in either child node.
-
-        check_input : bool, default=True
-            Allow to bypass several input checking.
-            Don't use this parameter unless you know what you do.
-
-        Returns
-        -------
-        self : DecisionTreeClassifier
-            Fitted estimator.
-        """
-
-        super().fit(
-            X,
-            y,
-            sample_weight=sample_weight,
-            check_input=check_input,
-        )
-        return self
-
-    def predict_proba(self, X, check_input=True):
-        """Predict class probabilities of the input samples X.
-
-        The predicted class probability is the fraction of samples of the same
-        class in a leaf.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
-
-        check_input : bool, default=True
-            Allow to bypass several input checking.
-            Don't use this parameter unless you know what you do.
-
-        Returns
-        -------
-        proba : ndarray of shape (n_samples, n_classes) or list of n_outputs \
-            such arrays if n_outputs > 1
-            The class probabilities of the input samples. The order of the
-            classes corresponds to that in the attribute :term:`classes_`.
-        """
-        check_is_fitted(self)
-        X = self._validate_X_predict(X, check_input)
-        proba = self.tree_.predict(X)
-
-        if self.n_outputs_ == 1:
-            proba = proba[:, : self.n_classes_]
-            normalizer = proba.sum(axis=1)[:, np.newaxis]
-            normalizer[normalizer == 0.0] = 1.0
-            proba /= normalizer
-
-            return proba
-
-        else:
-            all_proba = []
-
-            for k in range(self.n_outputs_):
-                proba_k = proba[:, k, : self.n_classes_[k]]
-                normalizer = proba_k.sum(axis=1)[:, np.newaxis]
-                normalizer[normalizer == 0.0] = 1.0
-                proba_k /= normalizer
-                all_proba.append(proba_k)
-
-            return all_proba
-
-    def predict_log_proba(self, X):
-        """Predict class log-probabilities of the input samples X.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
-
-        Returns
-        -------
-        proba : ndarray of shape (n_samples, n_classes) or list of n_outputs \
-            such arrays if n_outputs > 1
-            The class log-probabilities of the input samples. The order of the
-            classes corresponds to that in the attribute :term:`classes_`.
-        """
-        proba = self.predict_proba(X)
-
-        if self.n_outputs_ == 1:
-            return np.log(proba)
-
-        else:
-            for k in range(self.n_outputs_):
-                proba[k] = np.log(proba[k])
-
-            return proba
-
-    def _more_tags(self):
-        return {"multilabel": True}
-
-
-class DecisionTreeRegressorSS(RegressorMixin, BaseDecisionTreeSS):
+class DecisionTreeRegressorSS(BaseDecisionTreeSS, DecisionTreeRegressor):
     """A decision tree regressor (semi-supervised version).
 
     Read more in the :ref:`User Guide <tree>`.
@@ -1173,6 +1042,14 @@ class DecisionTreeRegressorSS(RegressorMixin, BaseDecisionTreeSS):
         **BaseDecisionTreeSS._parameter_constraints,
         **DecisionTreeRegressor._parameter_constraints,
     }
+    _parameter_constraints["criterion"] = [
+        StrOptions(
+            set(U_NUMERIC_CRITERIA.keys())
+            - PAIRWISE_CRITERION_OPTIONS,
+        ),
+        Hidden(_axis_criterion.BaseComposableCriterion),
+    ]
+    _parameter_constraints.pop("splitter")
 
     def __init__(
         self,
@@ -1193,6 +1070,7 @@ class DecisionTreeRegressorSS(RegressorMixin, BaseDecisionTreeSS):
         ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
+        _X_double=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -1211,71 +1089,8 @@ class DecisionTreeRegressorSS(RegressorMixin, BaseDecisionTreeSS):
             ss_adapter=ss_adapter,
             unsupervised_criterion=unsupervised_criterion,
             update_supervision=update_supervision,
+            _X_double=_X_double,
         )
-
-    def fit(self, X, y, sample_weight=None, check_input=True):
-        """Build a decision tree regressor from the training set (X, y).
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The training input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csc_matrix``.
-
-        y : array-like of shape (n_samples,) or (n_samples, n_outputs)
-            The target values (real numbers). Use ``dtype=np.float64`` and
-            ``order='C'`` for maximum efficiency.
-
-        sample_weight : array-like of shape (n_samples,), default=None
-            Sample weights. If None, then samples are equally weighted. Splits
-            that would create child nodes with net zero or negative weight are
-            ignored while searching for a split in each node.
-
-        check_input : bool, default=True
-            Allow to bypass several input checking.
-            Don't use this parameter unless you know what you do.
-
-        Returns
-        -------
-        self : DecisionTreeRegressor
-            Fitted estimator.
-        """
-
-        super().fit(
-            X,
-            y,
-            sample_weight=sample_weight,
-            check_input=check_input,
-        )
-        return self
-
-    def _compute_partial_dependence_recursion(self, grid, target_features):
-        """Fast partial dependence computation.
-
-        Parameters
-        ----------
-        grid : ndarray of shape (n_samples, n_target_features)
-            The grid points on which the partial dependence should be
-            evaluated.
-        target_features : ndarray of shape (n_target_features)
-            The set of target features for which the partial dependence
-            should be evaluated.
-
-        Returns
-        -------
-        averaged_predictions : ndarray of shape (n_samples,)
-            The value of the partial dependence function on each grid point.
-        """
-        grid = np.asarray(grid, dtype=DTYPE, order="C")
-        averaged_predictions = np.zeros(
-            shape=grid.shape[0], dtype=np.float64, order="C"
-        )
-
-        self.tree_.compute_partial_dependence(
-            grid, target_features, averaged_predictions
-        )
-        return averaged_predictions
 
 
 class ExtraTreeClassifierSS(DecisionTreeClassifierSS):
@@ -1500,11 +1315,6 @@ class ExtraTreeClassifierSS(DecisionTreeClassifierSS):
     0.8947...
     """
 
-    _parameter_constraints: dict = {
-        **BaseDecisionTreeSS._parameter_constraints,
-        **ExtraTreeClassifier._parameter_constraints,
-    }
-
     def __init__(
         self,
         *,
@@ -1525,6 +1335,7 @@ class ExtraTreeClassifierSS(DecisionTreeClassifierSS):
         ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
+        _X_double=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -1544,6 +1355,7 @@ class ExtraTreeClassifierSS(DecisionTreeClassifierSS):
             criterion=criterion,
             unsupervised_criterion=unsupervised_criterion,
             update_supervision=update_supervision,
+            _X_double=_X_double,
         )
 
 
@@ -1747,11 +1559,6 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
     0.33...
     """
 
-    _parameter_constraints: dict = {
-        **BaseDecisionTreeSS._parameter_constraints,
-        **ExtraTreeRegressor._parameter_constraints,
-    }
-
     def __init__(
         self,
         *,
@@ -1771,6 +1578,7 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
         ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
+        _X_double=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -1789,6 +1597,7 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
             criterion=criterion,
             unsupervised_criterion=unsupervised_criterion,
             update_supervision=update_supervision,
+            _X_double=_X_double,
         )
 
 
@@ -1799,7 +1608,6 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
 
 class BaseBipartiteDecisionTreeSS(
     BaseBipartiteDecisionTree,
-    BaseDecisionTreeSS,
     metaclass=ABCMeta,
 ):
     _parameter_constraints: dict = {
@@ -1883,20 +1691,30 @@ class BaseBipartiteDecisionTreeSS(
             bipartite_adapter=bipartite_adapter,
             prediction_weights=prediction_weights,
         )
-    
+
+    def _more_tags(self):
+        # For cross-validation routines to split data correctly
+        tags = {
+            "pairwise_rows": (
+                _is_pairwise_criterion(self.unsupervised_criterion_rows)
+                or self.prediction_weights is not None
+            ),
+            "pairwise_cols": (
+                _is_pairwise_criterion(self.unsupervised_criterion_cols)
+                or self.prediction_weights is not None
+            )
+        }
+        tags["pairwise"] = tags["pairwise_rows"] and tags["pairwise_cols"]
+        return tags
+
     def fit(self, X, y, sample_weight=None, check_input=True, _X_double=None):
         if check_input:
-            # TODO: Since we cannot pass _X_double to trees in an ensemble,
-            # inside sklearn.ensemble._forest._parallel_build_trees(), 
-            # we add _X_double as a parameter in the forest.estimator_params
-            # list, that will be reused by the individual trees without copying
-            # the array for each tree and consuming a large amount of memory.
-            # In forests, check_input is set to false, in which case we do not
-            # override self._X_double below.
-            self._X_double = self._check_X_double(X, _X_double)
+            _X_double = self._check_X_double(X, _X_double)
+
+        self._X_double = _X_double  # TODO: Keep it?
 
         return super().fit(X, y, sample_weight, check_input)
-    
+
     def _check_X_double(self, X, _X_double=None):
         return _validate_bipartite_X_double(
             X=X,
@@ -2033,8 +1851,9 @@ class BipartiteDecisionTreeRegressorSS(
 
     _parameter_constraints: dict = {
         **BaseBipartiteDecisionTreeSS._parameter_constraints,
-        **DecisionTreeRegressor._parameter_constraints,
+        **BipartiteDecisionTreeRegressor._parameter_constraints,
     }
+    _parameter_constraints.pop("splitter")
 
     def __init__(
         self,
@@ -2109,8 +1928,9 @@ class BipartiteExtraTreeRegressorSS(
 
     _parameter_constraints: dict = {
         **BaseBipartiteDecisionTreeSS._parameter_constraints,
-        **ExtraTreeRegressor._parameter_constraints,
+        **BipartiteExtraTreeRegressor._parameter_constraints,
     }
+    _parameter_constraints.pop("splitter")
 
     def __init__(
         self,

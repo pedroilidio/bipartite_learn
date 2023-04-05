@@ -11,3 +11,8 @@ cdef class UnsupervisedWrapperCriterion(BaseUnsupervisedCriterion):
 
 cdef class PairwiseCriterion(UnsupervisedWrapperCriterion):
     pass
+
+cdef class BaseKernelCriterion(BaseUnsupervisedCriterion):
+    cdef double sum_total
+    cdef double sum_left
+    cdef double sum_right

@@ -1,4 +1,5 @@
 # TODO: test Friedman Criterion
+from abc import ABCMeta, abstractmethod
 from typing import Callable, Dict
 import numpy as np
 import pytest
@@ -6,6 +7,7 @@ import scipy.stats
 
 from collections import defaultdict
 from numbers import Real, Integral
+from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.utils.validation import check_random_state
 from sklearn.utils._param_validation import validate_params, Interval
 from hypertrees.tree._splitter_factory import (
@@ -29,6 +31,7 @@ from hypertrees.tree._unsupervised_criterion import (
     UnsupervisedEntropy,
     # UnsupervisedSquaredErrorGSO,  # TODO
     UnsupervisedFriedman,
+    MeanDistance,
 )
 from hypertrees.tree._nd_criterion import GMO, GMOSA
 from hypertrees.tree._semisupervised_criterion import (
@@ -52,6 +55,9 @@ CLASSIFICATION_CRITERIA = {
     UnsupervisedEntropy,
 }
 
+PAIRWISE_CRITERIA = {
+    MeanDistance,
+}
 
 # =============================================================================
 # General fixtures
@@ -101,33 +107,424 @@ def data(n_samples, n_features, random_state):
 
 
 # =============================================================================
-# Manually defined impurity functions
+# Criterion objects to compare against
 # =============================================================================
 
 
-def gini_impurity(y):
-    sq_sums = 0
-    for col in y.T:
-        _, counts = np.unique(col, return_counts=True)
-        sq_sums += np.square(counts / y.shape[0]).sum()
-    return 1 - sq_sums / y.shape[1]
+class BaseReferenceCriterion(metaclass=ABCMeta):
+    def __init__(self, average_both_axes=False):
+        self.average_both_axes = average_both_axes
+
+    def set_data(self, X, y, sample_weight=None, **kwargs):
+        self.X = X
+        self.y = y
+        self.sample_weight = sample_weight
+
+    @abstractmethod
+    def impurity(self, y):
+        ...
+
+    def impurity_improvement(self, split_data: dict):
+        return (
+            split_data['weighted_n_node_samples'] /
+            split_data['weighted_n_samples']
+            * (
+                split_data['impurity_parent']
+
+                - split_data['impurity_left']
+                * split_data['weighted_n_left']
+                / split_data['weighted_n_node_samples']
+
+                - split_data['impurity_right']
+                * split_data['weighted_n_right']
+                / split_data['weighted_n_node_samples']
+            )
+        )
+    
+    def children_impurity(self, y_region, rel_pos):
+        return (
+            self.impurity(y_region[:rel_pos]),
+            self.impurity(y_region[rel_pos:]),
+        )
+
+    @validate_params({
+        'start': [Integral],
+        'end': [Integral],
+        'feature': [Interval(Integral, 0, None, closed='left'), None],
+    })
+    def evaluate_split(
+        self,
+        pos: int,
+        start: int = 0,
+        end: int = 0,
+        *,
+        feature: int | None = None,
+        weighted_n_samples: float | None = None,
+        weighted_n_node_samples: float | None = None,
+    ) -> Dict[str, int | float]:
+        """Evaluate impurities and improvements of a split position.
+
+        Calculate the impurities and impurity improvement of a given split
+        position in a dataset, simulating split evaluation by the Criterion
+        objects of decision trees.
+
+        Parameters
+        ----------
+        pos : int, optional (default=0)
+            The split position to evaluate. The absolute index must be provided,
+            relative to the beginning of the dataset, NOT relative to `start`.
+        start : int, optional (default=0)
+            The starting position of the data to evaluate, representing the start
+            index of the current node, by default 0.
+        end : int, optional (default=0)
+            The ending position of the data to evaluate, representing the final
+            index of the current node, by default 0.
+        feature : int, optional (default=None)
+            The feature index representing the column of X to sort the data by. If
+            None, no sorting is performed. By default None.
+        weighted_n_samples : float, optional (default=None)
+            The total weighted number of samples in the dataset, taken as
+            `sample_weight.sum()` if None.
+        weighted_n_node_samples : float, optional (default=None)
+            The total weighted number of samples in the current node, taken to be
+            `sample_weight[start:end].sum()` if None.
+
+        Returns
+        -------
+        Dict[str, Number]
+            A dictionary with at least the following keys and values:
+            - 'pos': the split position.
+            - 'impurity_parent': the impurity of the parent (current) node.
+            - 'weighted_n_left': the weighted number of samples in the left node.
+            - 'weighted_n_right': the weighted number of samples in the right node.
+            - 'impurity_left': the impurity of the left node.
+            - 'impurity_right': the impurity of the right node.
+            - 'improvement': the impurity improvement gained by the split.
+        """
+        start = start if start >= 0 else self.y.shape[0] + start
+        end = end if end > 0 else self.y.shape[0] + end
+
+        if not (start < pos <= end):
+            raise ValueError(
+                f'Provided index {pos} is not between {start=} and {end=}.'
+            )
+
+        x_ = self.X[start:end].copy()
+        y_ = self.y[start:end].copy()
+        rel_pos = pos - start
+
+        if feature is not None:
+            x_, y_ = sort_by_feature(x_, y_, feature)
+
+        n_samples = self.y.shape[0]
+        n_node_samples = y_.shape[0]
+
+        result = {
+            'pos': pos,
+            'impurity_parent': self.impurity(y_),
+            'start': start,
+            'end': end,
+        }
+
+        if self.sample_weight is None:
+            result['weighted_n_left'] = float(rel_pos)
+            weighted_n_samples = float(n_samples)
+            weighted_n_node_samples = float(n_node_samples)
+        else:
+            result['weighted_n_left'] = self.sample_weight[start:pos].sum()
+            if weighted_n_samples is None:
+                weighted_n_samples = self.sample_weight.sum()
+            if weighted_n_node_samples is None:
+                weighted_n_node_samples = self.sample_weight[start:end].sum()
+
+        result['weighted_n_right'] = (
+            weighted_n_node_samples - result['weighted_n_left']
+        )
+
+        result['n_samples'] = n_samples
+        result['n_node_samples'] = n_node_samples
+        result['weighted_n_samples'] = weighted_n_samples
+        result['weighted_n_node_samples'] = weighted_n_node_samples
+
+        result['impurity_left'], result['impurity_right'] = (
+            self.children_impurity(y_, rel_pos)
+        )
+
+        if self.average_both_axes:
+            result['impurity_parent'] += self.impurity(y_.T)
+            result['impurity_parent'] /= 2
+            result['impurity_left'] += self.impurity(y_[:rel_pos].T)
+            result['impurity_left'] /= 2
+            result['impurity_right'] += self.impurity(y_[rel_pos:].T)
+            result['impurity_right'] /= 2
+
+        result['improvement'] = self.impurity_improvement(result)
+
+        return result
+
+    def eval_all_splits(
+        self,
+        start=0,
+        end=0,
+        indices=None,
+    ):
+        """Evaluate splits for all positions in a given range of indices.
+
+        Parameters
+        ----------
+        start : int, optional (default=0)
+            The starting index for the range of indices to evaluate splits for.
+            If negative, it is considered as counting from the end of the
+            samples.
+
+        end : int, optional (default=0)
+            The ending index for the range of indices to evaluate splits for.
+            If negative, it is considered as counting from the end of the
+            samples.
+
+        indices : iterable of int, optional (default=None)
+            The indices to evaluate splits for. If None, the range of indices
+            from `start + 1` to `end` will be used.
+
+        Returns
+        -------
+        dict[str, Number | np.ndarray]
+            A dictionary containing the result of evaluating splits for all
+            positions in the specified range of indices. The keys of the
+            dictionary are the names of the criterion measures, and the values
+            are scalars for node-wise info or arrays for results in each
+            position.
+        """
+        start = start if start >= 0 else self.y.shape[0] + start
+        end = end if end > 0 else self.y.shape[0] + end
+
+        if self.sample_weight is None:
+            weighted_n_samples = float(self.y.shape[0])
+            weighted_n_node_samples = float(end - start)
+        else:
+            weighted_n_samples = self.sample_weight.sum()
+            weighted_n_node_samples = self.sample_weight[start:end].sum()
+
+        if indices is None:
+            indices = range(start + 1, end)
+
+        result = defaultdict(list)
+
+        for pos in indices:
+            split = self.evaluate_split(
+                pos=pos,
+                start=start,
+                end=end,
+                weighted_n_samples=weighted_n_samples,
+                weighted_n_node_samples=weighted_n_node_samples,
+            )
+            for k, v in split.items():
+                result[k].append(v)
+
+        result = {k: np.array(v) for k, v in result.items()}
+        result['weighted_n_samples'] = weighted_n_samples
+        result['weighted_n_node_samples'] = weighted_n_node_samples
+
+        return result
 
 
-def entropy_impurity(y):
-    col_entropies = 0
-    for col in y.T:
-        _, counts = np.unique(col, return_counts=True)
-        p = counts / y.shape[0]
-        col_entropies -= (p * np.log2(p)).sum()
-    return col_entropies / y.shape[1]
+class ReferenceGini(BaseReferenceCriterion):
+    def impurity(self, y):
+        sq_sums = 0
+        for col in y.T:
+            _, counts = np.unique(col, return_counts=True)
+            sq_sums += np.square(counts / y.shape[0]).sum()
+        return 1 - sq_sums / y.shape[1]
 
 
-def mse_impurity(y):
-    return y.var(0).mean()
+class ReferenceEntropy(BaseReferenceCriterion):
+    def impurity(self, y):
+        col_entropies = 0
+        for col in y.T:
+            _, counts = np.unique(col, return_counts=True)
+            p = counts / y.shape[0]
+            col_entropies -= (p * np.log2(p)).sum()
+        return col_entropies / y.shape[1]
 
 
-def global_mse_impurity(y):
-    return y.var()
+class ReferenceSquaredError(BaseReferenceCriterion):
+    def impurity(self, y):
+        return y.var(0).mean()
+
+
+class ReferenceSquaredErrorGSO(BaseReferenceCriterion):
+    def impurity(self, y):
+        return y.var()
+
+
+class ReferenceFriedman(ReferenceSquaredError):
+    def impurity_improvement(self, split_data):
+        total_sum_left = self.y[:split_data['pos']].sum()
+        total_sum_right = self.y[split_data['pos']:].sum()
+
+        diff = (
+            split_data['weighted_n_right'] * total_sum_left
+            - split_data['weighted_n_left'] * total_sum_right
+        )
+
+        return diff ** 2 / (
+            split_data['weighted_n_right']
+            * split_data['weighted_n_left']
+            * split_data['weighted_n_node_samples']
+            * self.y.shape[1] ** 2
+        )
+
+
+class ReferenceFriedmanGSO(ReferenceSquaredErrorGSO):
+    def impurity_improvement(self, split_data):
+        total_sum_left = self.y[split_data['start']:split_data['pos']].sum()
+        total_sum_right = self.y[split_data['pos']:split_data['end']].sum()
+
+        diff = (
+            split_data['weighted_n_right'] * total_sum_left
+            - split_data['weighted_n_left'] * total_sum_right
+        )
+
+        return diff ** 2 / (
+            split_data['weighted_n_right']
+            * split_data['weighted_n_left']
+            * split_data['weighted_n_node_samples']
+            * self.y.shape[1]  # weighted_n_node_cols
+        )
+
+
+class ReferenceMeanDistance(BaseReferenceCriterion):
+    def impurity(self, y):
+        if y.shape[0] != y.shape[1]:
+            raise ValueError(f'y must be square. Received {y.shape=}')
+        if y.shape[0] <= 1:
+            return 0.0
+        return y[np.triu_indices(y.shape[0], 1)].mean()
+
+    def children_impurity(self, y_region, rel_pos):
+        y_left = y_region[:rel_pos, :rel_pos]
+        y_right = y_region[rel_pos:, rel_pos:]
+        return (
+            self.impurity(y_left),
+            self.impurity(y_right),
+        )
+    
+    def evaluate_split(self, *args, **kwargs):
+        split = super().evaluate_split(*args, **kwargs)
+
+        if self.sample_weight is None:
+            split['weighted_n_left'] = (
+                (split['weighted_n_left'] - 1)
+                * split['weighted_n_left'] / 2
+            )
+            split['weighted_n_right'] = (
+                (split['weighted_n_right'] - 1)
+                * split['weighted_n_right'] / 2
+            )
+            split['weighted_n_samples'] = (
+                (split['weighted_n_samples'] - 1)
+                * split['weighted_n_samples'] / 2
+            )
+            split['weighted_n_node_samples'] = (
+                (split['weighted_n_node_samples'] - 1)
+                * split['weighted_n_node_samples'] / 2
+            )
+        else:
+            raise NotImplementedError
+        
+        return split
+
+
+
+class ReferenceCompositeSS(BaseReferenceCriterion):
+    def __init__(
+        self,
+        sup_criterion,
+        unsup_criterion,
+        average_both_axes=False,
+    ):
+        self.sup_criterion = sup_criterion
+        self.unsup_criterion = unsup_criterion
+        self.average_both_axes = average_both_axes
+        self.sup_criterion.average_both_axes = average_both_axes
+
+    def set_data(self, X, y, supervision, sample_weight=None):
+        self.X = X
+        self.y = y
+        self.sample_weight = sample_weight
+        self.supervision = supervision
+        self.sup_criterion.set_data(X, y, sample_weight)
+        self.unsup_criterion.set_data(X, X, sample_weight)
+
+    def evaluate_split(
+        self,
+        *args,
+        **kwargs,
+    ) -> Dict[str, int | float]:
+
+        sup_split = self.sup_criterion.evaluate_split(*args, **kwargs)
+        unsup_split = self.unsup_criterion.evaluate_split(*args, **kwargs)
+
+        # sup_split['root_impurity'] = sup_split['impurity_parent']
+        # unsup_split['root_impurity'] = unsup_split['impurity_parent']
+
+        unsup_split['improvement'] = \
+            self.unsup_criterion.impurity_improvement(unsup_split)
+        sup_split['improvement'] = \
+            self.sup_criterion.impurity_improvement(sup_split)
+
+        result = {
+            **{'supervised_' + k: v for k, v in sup_split.items()},
+            **{'unsupervised_' + k: v for k, v in unsup_split.items()},
+        }
+
+        result['impurity_parent'] = 1.0
+
+        result['impurity_left'] = self.combine_impurities(
+            sup_split['impurity_left'] / sup_split['impurity_parent'],
+            unsup_split['impurity_left'] / unsup_split['impurity_parent'],
+        )
+        result['impurity_right'] = self.combine_impurities(
+            sup_split['impurity_right'] / sup_split['impurity_parent'],
+            unsup_split['impurity_right'] / unsup_split['impurity_parent'],
+        )
+
+        result['improvement'] = self.impurity_improvement(result)
+        result['pos'] = sup_split['pos']
+
+        return result
+
+    def combine_impurities(self, sup_impurity, unsup_impurity):
+        if self.average_both_axes:
+            # unsupervised impurity of the other axis is 1.0, since it does
+            # not change.
+            #  imp = imp + imp_other_axis
+            unsup_impurity += 1
+            unsup_impurity /= 2
+
+        return (
+            self.supervision * sup_impurity
+            + (1 - self.supervision) * unsup_impurity
+        )
+
+    def impurity_improvement(self, split_data: dict):
+        sup_improvement = (
+            self.supervision
+            * split_data['supervised_improvement']
+            / split_data['supervised_impurity_parent']
+        )
+        unsup_improvement = (
+            + (1 - self.supervision)
+            * split_data['unsupervised_improvement']
+            / split_data['unsupervised_impurity_parent']
+        )
+        if self.average_both_axes:  # The improvement on the other axis is zero
+            unsup_improvement /= 2
+
+        return sup_improvement + unsup_improvement
+
+    def impurity(self):
+        return None
 
 
 # =============================================================================
@@ -144,8 +541,7 @@ def global_mse_impurity(y):
                 'unsupervised_criterion': UnsupervisedSquaredError,
                 'ss_class': SSCompositeCriterion,
             },
-            gini_impurity,
-            mse_impurity,
+            ReferenceCompositeSS(ReferenceGini(), ReferenceSquaredError()),
         ),
         (
             make_semisupervised_criterion,
@@ -154,8 +550,7 @@ def global_mse_impurity(y):
                 'unsupervised_criterion': UnsupervisedSquaredError,
                 'ss_class': SSCompositeCriterion,
             },
-            entropy_impurity,
-            mse_impurity,
+            ReferenceCompositeSS(ReferenceEntropy(), ReferenceSquaredError()),
         ),
         (
             make_semisupervised_criterion,
@@ -163,11 +558,53 @@ def global_mse_impurity(y):
                 'supervised_criterion': UnsupervisedSquaredError,
                 'unsupervised_criterion': UnsupervisedSquaredError,
             },
-            mse_impurity,
-            mse_impurity,
+            ReferenceCompositeSS(
+                ReferenceSquaredError(),
+                ReferenceSquaredError(),
+            ),
+        ),
+        (
+            make_semisupervised_criterion,
+            {
+                'supervised_criterion': UnsupervisedFriedman,
+                'unsupervised_criterion': UnsupervisedFriedman,
+            },
+            ReferenceCompositeSS(
+                ReferenceFriedman(),
+                ReferenceFriedman(),
+            ),
+        ),
+        (
+            make_semisupervised_criterion,
+            {
+                'supervised_criterion': UnsupervisedFriedman,
+                'unsupervised_criterion': UnsupervisedSquaredError,
+            },
+            ReferenceCompositeSS(
+                ReferenceFriedman(),
+                ReferenceSquaredError(),
+            ),
+        ),
+        (
+            make_semisupervised_criterion,
+            {
+                'supervised_criterion': UnsupervisedSquaredError,
+                'unsupervised_criterion': MeanDistance,
+            },
+            ReferenceCompositeSS(
+                ReferenceSquaredError(),
+                ReferenceMeanDistance(),
+            ),
         ),
     ],
-    ids=['gini_mse', 'entropy_mse', 'mse'],
+    ids=[
+        'gini|mse',
+        'entropy|mse',
+        'mse',
+        'friedman',
+        'friedman|mse',
+        'mse|mean_distance',
+    ],
 )
 def semisupervised_criterion(
     request,
@@ -176,7 +613,7 @@ def semisupervised_criterion(
     n_classes,
     supervision,
 ):
-    factory, args, supervised_impurity, unsupervised_impurity = request.param
+    factory, args, ref_criterion = request.param
 
     default_criterion_args = dict(
         n_features=n_features[0],
@@ -188,8 +625,7 @@ def semisupervised_criterion(
 
     return {
         'criterion': factory(**default_criterion_args | args),
-        'supervised_impurity': supervised_impurity,
-        'unsupervised_impurity': unsupervised_impurity,
+        'ref_criterion': ref_criterion,
     }
 
 
@@ -203,8 +639,11 @@ def semisupervised_criterion(
                 'ss_criteria': SSCompositeCriterion,
                 'criterion_wrapper_class': GMOSA,
             },
-            gini_impurity,
-            mse_impurity,
+            ReferenceCompositeSS(
+                ReferenceGini(),
+                ReferenceSquaredError(),
+                average_both_axes=True,
+            ),
         ),
         (
             make_2dss_criterion,
@@ -214,8 +653,11 @@ def semisupervised_criterion(
                 'ss_criteria': SSCompositeCriterion,
                 'criterion_wrapper_class': GMOSA,
             },
-            entropy_impurity,
-            mse_impurity,
+            ReferenceCompositeSS(
+                ReferenceEntropy(),
+                ReferenceSquaredError(),
+                average_both_axes=True,
+            ),
         ),
         (
             make_2dss_criterion,
@@ -225,8 +667,11 @@ def semisupervised_criterion(
                 'ss_criteria': SSCompositeCriterion,
                 'criterion_wrapper_class': GMOSA,
             },
-            global_mse_impurity,
-            mse_impurity,
+            ReferenceCompositeSS(
+                ReferenceSquaredErrorGSO(),
+                ReferenceSquaredError(),
+                average_both_axes=True,
+            ),
         ),
         (
             make_2dss_criterion,
@@ -236,11 +681,49 @@ def semisupervised_criterion(
                 'ss_criteria': SSCompositeCriterion,
                 'criterion_wrapper_class': GMOSA,
             },
-            mse_impurity,
-            mse_impurity,
+            ReferenceCompositeSS(
+                ReferenceSquaredError(),
+                ReferenceSquaredError(),
+                average_both_axes=True,
+            ),
+        ),
+        (
+            make_2dss_criterion,
+            {
+                'supervised_criteria': AxisFriedmanGSO,
+                'unsupervised_criteria': UnsupervisedSquaredError,
+                'ss_criteria': SSCompositeCriterion,
+                'criterion_wrapper_class': GMOSA,
+            },
+            ReferenceCompositeSS(
+                ReferenceFriedmanGSO(),
+                ReferenceSquaredError(),
+                average_both_axes=True,
+            ),
+        ),
+        (
+            make_2dss_criterion,
+            {
+                'supervised_criteria': AxisSquaredErrorGSO,
+                'unsupervised_criteria': MeanDistance,
+                'ss_criteria': SSCompositeCriterion,
+                'criterion_wrapper_class': GMOSA,
+            },
+            ReferenceCompositeSS(
+                ReferenceSquaredErrorGSO(),
+                ReferenceMeanDistance(),
+                average_both_axes=True,
+            ),
         ),
     ],
-    ids=['gini_mse', 'entropy_mse', 'mse_gso', 'mse_gmo'],
+    ids=[
+        'gini|mse',
+        'entropy|mse',
+        'mse_gso',
+        'mse_gmo',
+        'friedman|mse',
+        'mse_gso|mean_distance',
+    ],
 )
 def ss_bipartite_criterion(
     request,
@@ -249,7 +732,7 @@ def ss_bipartite_criterion(
     supervision,
     n_classes,
 ):
-    factory, args, supervised_impurity, unsupervised_impurity = request.param
+    factory, args, ref_criterion = request.param
 
     default_criterion_args = dict(
         n_features=n_features,
@@ -261,8 +744,7 @@ def ss_bipartite_criterion(
 
     return {
         'criterion': factory(**default_criterion_args | args),
-        'supervised_impurity': supervised_impurity,
-        'unsupervised_impurity': unsupervised_impurity,
+        'ref_criterion': ref_criterion,
     }
 
 
@@ -274,7 +756,7 @@ def ss_bipartite_criterion(
                 'criteria': AxisGini,
                 'criterion_wrapper_class': GMOSA,
             },
-            gini_impurity,
+            ReferenceGini(average_both_axes=True),
         ),
         (
             make_bipartite_criterion,
@@ -282,7 +764,7 @@ def ss_bipartite_criterion(
                 'criteria': AxisEntropy,
                 'criterion_wrapper_class': GMOSA,
             },
-            entropy_impurity,
+            ReferenceEntropy(average_both_axes=True),
         ),
         (
             make_bipartite_criterion,
@@ -290,7 +772,7 @@ def ss_bipartite_criterion(
                 'criteria': AxisSquaredErrorGSO,
                 'criterion_wrapper_class': GMOSA,
             },
-            global_mse_impurity,
+            ReferenceSquaredErrorGSO(),
         ),
         (
             make_bipartite_criterion,
@@ -298,13 +780,21 @@ def ss_bipartite_criterion(
                 'criteria': AxisSquaredError,
                 'criterion_wrapper_class': GMOSA,
             },
-            mse_impurity,
+            ReferenceSquaredError(average_both_axes=True),
+        ),
+        (
+            make_bipartite_criterion,
+            {
+                'criteria': AxisFriedmanGSO,
+                'criterion_wrapper_class': GMOSA,
+            },
+            ReferenceFriedmanGSO(average_both_axes=True),
         ),
     ],
-    ids=['gini', 'entropy', 'mse_gso', 'mse_gmo'],
+    ids=['gini', 'entropy', 'mse_gso', 'mse_gmo', 'friedman'],
 )
 def supervised_bipartite_criterion(request, n_samples, n_classes):
-    factory, args, impurity = request.param
+    factory, args, ref_criterion = request.param
 
     default_criterion_args = dict(
         n_samples=n_samples,
@@ -313,8 +803,7 @@ def supervised_bipartite_criterion(request, n_samples, n_classes):
     )
     return {
         'criterion': factory(**default_criterion_args | args),
-        'supervised_impurity': impurity,
-        'unsupervised_impurity': None,
+        'ref_criterion': ref_criterion,
     }
 
 
@@ -388,6 +877,10 @@ def turn_into_classification(y):
     return y.astype('float64')
 
 
+def turn_into_pairwise(x):
+    return rbf_kernel(x)
+
+
 def get_ss_splits(
     *,
     ss_criterion_data,
@@ -399,8 +892,7 @@ def get_ss_splits(
     X = XX[0].astype('float64')
 
     criterion = ss_criterion_data['criterion']
-    supervised_impurity = ss_criterion_data['supervised_impurity']
-    unsupervised_impurity = ss_criterion_data['unsupervised_impurity']
+    ref_criterion = ss_criterion_data['ref_criterion']
 
     if (
         type(criterion) in CLASSIFICATION_CRITERIA
@@ -409,18 +901,19 @@ def get_ss_splits(
     ):
         Y = turn_into_classification(Y)
 
-    criterion.set_X(X)
+    if (
+        supervision is not None
+        and type(criterion.unsupervised_criterion) in PAIRWISE_CRITERIA
+    ):
+        X = turn_into_pairwise(X)
 
+    criterion.set_X(X)
     split_data = apply_criterion(criterion, Y)
 
-    manual_split_data = manually_eval_all_splits(
-        X, Y,
-        supervision=supervision,
-        impurity=supervised_impurity,
-        unsupervised_impurity=unsupervised_impurity,
-    )
+    ref_criterion.set_data(X, Y, supervision=supervision)
+    ref_split_data = ref_criterion.eval_all_splits()
 
-    return {'splits': split_data, 'reference_splits': manual_split_data}
+    return {'splits': split_data, 'reference_splits': ref_split_data}
 
 
 def get_ss_bipartite_splits(
@@ -437,8 +930,7 @@ def get_ss_bipartite_splits(
     end_row, end_col = n_samples
 
     criterion = ss_bipartite_criterion['criterion']
-    supervised_impurity = ss_bipartite_criterion['supervised_impurity']
-    unsupervised_impurity = ss_bipartite_criterion['unsupervised_impurity']
+    ref_criterion = ss_bipartite_criterion['ref_criterion']
 
     if (
         type(criterion.criterion_rows) in CLASSIFICATION_CRITERIA
@@ -447,6 +939,18 @@ def get_ss_bipartite_splits(
         in CLASSIFICATION_CRITERIA
     ):
         Y = turn_into_classification(Y)
+
+    if supervision is not None:
+        if (
+            type(criterion.criterion_rows.unsupervised_criterion)
+            in PAIRWISE_CRITERIA
+        ):
+            X[0] = turn_into_pairwise(X[0])
+        if (
+            type(criterion.criterion_cols.unsupervised_criterion)
+            in PAIRWISE_CRITERIA
+        ):
+            X[1] = turn_into_pairwise(X[1])
 
     row_splits, col_splits = apply_criterion(
         criterion,
@@ -457,23 +961,14 @@ def get_ss_bipartite_splits(
         end=[end_row, end_col],
     )
 
-    ref_row_splits = manually_eval_all_splits(
-        x=X[0], y=Y,
-        supervision=supervision,
-        start=start_row,
-        end=end_row,
-        average_both_axes=True,
-        impurity=supervised_impurity,
-        unsupervised_impurity=unsupervised_impurity,
+    ref_criterion.set_data(X[0], Y, supervision=supervision)
+    ref_row_splits = ref_criterion.eval_all_splits(
+        start=start_row, end=end_row,
     )
-    ref_col_splits = manually_eval_all_splits(
-        x=X[1], y=Y.T,
-        supervision=supervision,
-        start=start_col,
-        end=end_col,
-        average_both_axes=True,
-        impurity=supervised_impurity,
-        unsupervised_impurity=unsupervised_impurity,
+
+    ref_criterion.set_data(X[1], Y.T, supervision=supervision)
+    ref_col_splits = ref_criterion.eval_all_splits(
+        start=start_col, end=end_col,
     )
 
     return {
@@ -535,250 +1030,6 @@ def sort_by_feature(x, y, feature):
     return x[sorted_indices], y[sorted_indices]
 
 
-@validate_params({
-    'X': ['array-like'],
-    'y': ['array-like'],
-    'start': [Integral],
-    'end': [Integral],
-    'feature': [Interval(Integral, 0, None, closed='left'), None],
-    'supervision': [Interval(Real, 0.0, 1.0, closed='both'), None],
-    'average_both_axes': ['boolean'],
-    'impurity': [callable],
-})
-def evaluate_split(
-    X: np.ndarray,
-    y: np.ndarray,
-    pos: int,
-    start: int = 0,
-    end: int = 0,
-    *,
-    feature: int | None = None,
-    supervision: float | None = None,
-    average_both_axes: bool = False,
-    sample_weight: np.ndarray | None = None,
-    weighted_n_samples: float | None = None,
-    weighted_n_node_samples: float | None = None,
-    impurity: Callable[[np.ndarray], float] = mse_impurity,
-    unsupervised_impurity: Callable[[np.ndarray], float] | None = None,
-) -> Dict[str, int | float]:
-    """
-    Evaluates the impurities of a given split position in a dataset, simulating
-    split evaluation by the Criterion objects of decision trees.
-
-    Parameters
-    ----------
-    X : np.ndarray
-        The input data of shape (n_samples, n_features).
-    y : np.ndarray
-        The target values of shape (n_samples, n_outputs).
-    pos : int
-        The split position to evaluate. The absolute index must be provided,
-        relative to the begining of the dataset, NOT relative to `start`.
-    start : int, optional
-        The starting position of the data to evaluate, representing the start
-        index of the current node, by default 0.
-    end : int, optional
-        The ending position of the data to evaluate, representing the final
-        index of the current node, by default 0.
-    feature : int, optional
-        The feature index representing the column of X to sort the data by. If
-        None, no sorting is performed. By default None.
-    supervision : float between 0 and 1, optional
-        If not None, a semisupervised impurity is metric is considered instead,
-        calculated as follows:
-        ``
-            supervision \
-                * supervised_impurity(y) / root_supervised_impurity
-            + (1 - supervision) \
-                * unsupervised_impurity(x) / root_unsupervised_impurity
-        ``
-        The impurities at the root node are simply taken as to be the current
-        node impurity (i.e. the parent impurity). By default None.
-    average_both_axes : bool, optional
-        Whether to average the impurity on both axes. Useful to evaluate
-        bipartite criteria along each axis. By default False.
-    sample_weight : np.ndarray, optional
-        Sample weights of shape (n_samples, ), by default None.
-    weighted_n_samples : float, optional
-        The total weighted number of samples in the dataset, taken as
-        `sample_weight.sum()` if None, by default None.
-    weighted_n_node_samples : float, optional
-        The total weighted number of samples in the current node, taken to be
-        `sample_weight[start:end].sum()` if None, by default None.
-    impurity : Callable[[np.ndarray], float], optional
-        The function to use for calculating impurity, by default mse_impurity.
-    unsupervised_impurity : Callable[[np.ndarray], float], optional
-        The function to use for calculating unsupervised_impurity. If None,
-        we set unsupervised_impurity = impurity. By default None.
-
-    Returns
-    -------
-    Dict[str, int | float]
-        A dictionary with the following keys and values:
-        - 'pos': the split position.
-        - 'impurity_parent': the impurity of the parent node.
-        - 'weighted_n_left': the weighted number of samples in the left node.
-        - 'weighted_n_right': the weighted number of samples in the right node.
-        - 'impurity_left': the impurity of the left node.
-        - 'impurity_right': the impurity of the right node.
-        - 'improvement': the impurity improvement gained by the split.
-
-        If `supervision` is provided, the following values will be included:
-        - 'supervised_impurity_parent': the supervised impurity of the parent node.
-        - 'unsupervised_impurity_parent': the unsupervised impurity of the parent node.
-        - 'supervised_impurity_left': the supervised impurity of the left node.
-        - 'supervised_impurity_right': the supervised impurity of the right node.
-        - 'unsupervised_impurity_left': the unsupervised impurity of the left node.
-        - 'unsupervised_impurity_right': the unsupervised impurity of the right node.
-    """
-    start = start if start >= 0 else y.shape[0] + start
-    end = end if end > 0 else y.shape[0] + end
-
-    if not (start < pos <= end):
-        raise ValueError(
-            f'Provided index {pos} is not between {start=} and {end=}.'
-        )
-
-    x_ = X[start:end].copy()
-    y_ = y[start:end].copy()
-    rel_pos = pos - start
-
-    if feature is not None:
-        x_, y_ = sort_by_feature(x_, y_, feature)
-
-    n_samples = y.shape[0]
-    n_node_samples = y_.shape[0]
-
-    result = {'pos': pos, 'impurity_parent': impurity(y_)}
-
-    if sample_weight is None:
-        result['weighted_n_left'] = float(rel_pos)
-        weighted_n_samples = float(n_samples)
-        weighted_n_node_samples = float(n_node_samples)
-    else:
-        result['weighted_n_left'] = sample_weight[start:pos].sum()
-        if weighted_n_samples is None:
-            weighted_n_samples = sample_weight.sum()
-        if weighted_n_node_samples is None:
-            weighted_n_node_samples = sample_weight[start:end].sum()
-
-    result['weighted_n_right'] = (
-        weighted_n_node_samples - result['weighted_n_left']
-    )
-    result['impurity_left'] = impurity(y_[:rel_pos])
-    result['impurity_right'] = impurity(y_[rel_pos:])
-
-    if average_both_axes:
-        result['impurity_parent'] += impurity(y_.T)
-        result['impurity_parent'] /= 2
-        result['impurity_left'] += impurity(y_[:rel_pos].T)
-        result['impurity_left'] /= 2
-        result['impurity_right'] += impurity(y_[rel_pos:].T)
-        result['impurity_right'] /= 2
-
-    if supervision is not None:
-        u_impurity = unsupervised_impurity or impurity
-
-        root_supervised_impurity = result['impurity_parent']
-        result['supervised_impurity_parent'] = root_supervised_impurity
-
-        root_unsupervised_impurity = u_impurity(x_)
-        result['unsupervised_impurity_parent'] = root_unsupervised_impurity
-
-        result['impurity_parent'] = 1.0
-
-        result['supervised_impurity_left'] = result['impurity_left']
-        result['supervised_impurity_right'] = result['impurity_right']
-        result['unsupervised_impurity_left'] = u_impurity(x_[:rel_pos])
-        result['unsupervised_impurity_right'] = u_impurity(x_[rel_pos:])
-
-        unsupervised_impurity_left = (
-            result['unsupervised_impurity_left']
-            / root_unsupervised_impurity
-        )
-        unsupervised_impurity_right = (
-            result['unsupervised_impurity_right']
-            / root_unsupervised_impurity
-        )
-
-        if average_both_axes:
-            # unsup impurity of the other axis is 1.0, since it does not change
-            unsupervised_impurity_left = unsupervised_impurity_left/2 + 0.5
-            unsupervised_impurity_right = unsupervised_impurity_right/2 + 0.5
-
-        result['impurity_left'] = (
-            supervision * result['impurity_left'] / root_supervised_impurity
-            + (1 - supervision) * unsupervised_impurity_left
-        )
-        result['impurity_right'] = (
-            supervision * result['impurity_right'] / root_supervised_impurity
-            + (1 - supervision) * unsupervised_impurity_right
-        )
-
-    result['improvement'] = (
-        weighted_n_node_samples / weighted_n_samples
-        * (
-            result['impurity_parent']
-            - result['impurity_left']
-            * result['weighted_n_left'] / weighted_n_node_samples
-            - result['impurity_right']
-            * result['weighted_n_right'] / weighted_n_node_samples
-        )
-    )
-
-    return result
-
-
-def manually_eval_all_splits(
-    x, y,
-    sample_weight=None,
-    start=0,
-    end=0,
-    supervision=None,
-    indices=None,
-    average_both_axes=False,
-    impurity=mse_impurity,
-    unsupervised_impurity: Callable[[np.ndarray], float] | None = None,
-):
-    start = start if start >= 0 else y.shape[0] + start
-    end = end if end > 0 else y.shape[0] + end
-
-    if sample_weight is None:
-        weighted_n_samples = float(y.shape[0])
-        weighted_n_node_samples = float(end - start)
-    else:
-        weighted_n_samples = sample_weight.sum()
-        weighted_n_node_samples = sample_weight[start:end].sum()
-
-    if indices is None:
-        indices = range(start + 1, end)
-
-    result = defaultdict(list)
-
-    for pos in indices:
-        split = evaluate_split(
-            x, y,
-            pos=pos,
-            start=start,
-            end=end,
-            supervision=supervision,
-            average_both_axes=average_both_axes,
-            sample_weight=sample_weight,
-            weighted_n_samples=weighted_n_samples,
-            weighted_n_node_samples=weighted_n_node_samples,
-            impurity=impurity,
-            unsupervised_impurity=unsupervised_impurity,
-        )
-        for k, v in split.items():
-            result[k].append(v)
-
-    result = {k: np.array(v) for k, v in result.items()}
-    result['weighted_n_samples'] = weighted_n_samples
-    result['weighted_n_node_samples'] = weighted_n_node_samples
-
-    return result
-
-
 # =============================================================================
 # Tests
 # =============================================================================
@@ -800,21 +1051,21 @@ def test_ss_criterion(semisupervised_splits):
     rtol = 1e-7
     atol = 1e-7
 
+    ref_splits = semisupervised_splits['reference_splits']
+    ref_splits['ss_improvement'] = ref_splits['improvement']
+    ref_splits['ss_impurity_parent'] = ref_splits['impurity_parent']
+    ref_splits['ss_impurity_right'] = ref_splits['impurity_right']
+    ref_splits['ss_impurity_left'] = ref_splits['impurity_left']
+
     assert_equal_dicts(
         semisupervised_splits['splits'],
-        semisupervised_splits['reference_splits'],
+        ref_splits,
         rtol=rtol,
         atol=atol,
         ignore={
             'n_samples',
             'n_node_samples',
             'proxy_improvement',
-            'supervised_impurity_parent',
-            'supervised_impurity_left',
-            'supervised_impurity_right',
-            'unsupervised_impurity_parent',
-            'unsupervised_impurity_left',
-            'unsupervised_impurity_right',
             'n_outputs',
             'end',
             'start',
@@ -874,12 +1125,15 @@ def test_supervised_criterion(data):
         n_samples=Y.shape[0],
         n_outputs=Y.shape[1],
     )
-
     split_data = apply_criterion(criterion, Y)
-    manual_split_data = manually_eval_all_splits(X, Y)
+
+    ref_criterion = ReferenceSquaredError()
+    ref_criterion.set_data(X, Y)
+    ref_split_data = ref_criterion.eval_all_splits()
+
     assert_equal_dicts(
         split_data,
-        manual_split_data,
+        ref_split_data,
         rtol=1e-7,
         atol=1e-8,
         differing_keys='raise',
@@ -897,7 +1151,7 @@ def test_supervised_criterion(data):
     # the final improvement values.
     assert_ranks_are_close(
         split_data['proxy_improvement'],
-        manual_split_data['improvement'],
+        ref_split_data['improvement'],
         msg_prefix='(proxy) ',
     )
 
@@ -918,7 +1172,16 @@ def test_ss_bipartite_criterion(ss_bipartite_splits):
     ref_col_splits['axis_weighted_n_node_samples'] = \
         ref_col_splits['weighted_n_node_samples']
 
-    ignore = {'weighted_n_samples', 'weighted_n_node_samples'}
+    ignore = {
+        'n_samples',
+        'n_node_samples',
+        'supervised_n_samples',
+        'supervised_n_node_samples',
+        'unsupervised_n_samples',
+        'unsupervised_n_node_samples',
+        'weighted_n_samples',
+        'weighted_n_node_samples',
+    }
 
     assert_equal_dicts(
         row_splits,
@@ -1027,17 +1290,28 @@ def test_bipartite_proxy_factors(ss_bipartite_splits):
 
 
 @pytest.mark.parametrize(
-    'single_output_impurity, multioutput_impurity', [
-        (global_mse_impurity, mse_impurity),
+    'single_output_ref_criterion, multioutput_ref_criterion', [
+        (ReferenceSquaredErrorGSO(), ReferenceSquaredError()),
+        (ReferenceFriedmanGSO(), ReferenceFriedman()),
+        (
+            ReferenceCompositeSS(
+                ReferenceSquaredErrorGSO(),
+                ReferenceSquaredError(),
+            ),
+            ReferenceCompositeSS(
+                ReferenceSquaredError(),
+                ReferenceSquaredError(),
+            ),
+        )
     ],
-    ids=['mse'],
+    ids=['mse', 'friedman', 'ss_mse'],
 )
 def test_gso_gmo_equivalence(
     data,
     n_samples,
     supervision,
-    single_output_impurity,
-    multioutput_impurity,
+    single_output_ref_criterion,
+    multioutput_ref_criterion,
 ):
     """Tests if a single-output impurity metric is invariant in the GSO format.
 
@@ -1083,52 +1357,70 @@ def test_gso_gmo_equivalence(
     row_indices = np.arange(start_row + 1, end_row)
     col_indices = np.arange(start_col + 1, end_col)
 
-    so_row_splits = manually_eval_all_splits(
-        x=np.repeat(X[0], n_cols, axis=0),
+    multioutput_ref_criterion.set_data(
+        X=np.repeat(X[0], n_cols, axis=0),
         y=Y.reshape(-1, 1),
         supervision=supervision,
+    )
+    mo_row_splits = multioutput_ref_criterion.eval_all_splits(
         indices=row_indices * n_cols,
         start=start_row * n_cols,
         end=end_row * n_cols,
-        impurity=multioutput_impurity,
-        unsupervised_impurity=multioutput_impurity,
     )
-    so_col_splits = manually_eval_all_splits(
-        x=np.repeat(X[1], n_rows, axis=0),
+
+    multioutput_ref_criterion.set_data(
+        X=np.repeat(X[1], n_rows, axis=0),
         y=Y.T.reshape(-1, 1),
         supervision=supervision,
+    )
+    mo_col_splits = multioutput_ref_criterion.eval_all_splits(
         indices=col_indices * n_rows,
         start=start_col * n_rows,
         end=end_col * n_rows,
-        impurity=multioutput_impurity,
-        unsupervised_impurity=multioutput_impurity,
     )
 
-    mo_row_splits = manually_eval_all_splits(
-        x=X[0], y=Y,
-        supervision=supervision,
+    single_output_ref_criterion.set_data(X[0], Y, supervision=supervision)
+    so_row_splits = single_output_ref_criterion.eval_all_splits(
         start=start_row,
         end=end_row,
-        impurity=single_output_impurity,
-        unsupervised_impurity=multioutput_impurity,
     )
-    mo_col_splits = manually_eval_all_splits(
-        x=X[1], y=Y.T,
-        supervision=supervision,
+
+    single_output_ref_criterion.set_data(X[1], Y.T, supervision=supervision)
+    so_col_splits = single_output_ref_criterion.eval_all_splits(
         start=start_col,
         end=end_col,
-        impurity=single_output_impurity,
-        unsupervised_impurity=multioutput_impurity,
     )
 
-    so_row_splits['pos'] = row_indices
-    so_col_splits['pos'] = col_indices
+    mo_row_splits['pos'] = row_indices
+    mo_col_splits['pos'] = col_indices
 
     ignore = {
+        'n_samples',
+        'n_node_samples',
         'weighted_n_left',
         'weighted_n_right',
         'weighted_n_samples',
         'weighted_n_node_samples',
+        'supervised_n_samples',
+        'supervised_n_node_samples',
+        'supervised_weighted_n_left',
+        'supervised_weighted_n_right',
+        'supervised_weighted_n_samples',
+        'supervised_weighted_n_node_samples',
+        'unsupervised_n_samples',
+        'unsupervised_n_node_samples',
+        'unsupervised_weighted_n_left',
+        'unsupervised_weighted_n_right',
+        'unsupervised_weighted_n_samples',
+        'unsupervised_weighted_n_node_samples',
+        'supervised_pos',
+        'unsupervised_pos',
+        'start',
+        'end',
+        'supervised_start',
+        'supervised_end',
+        'unsupervised_start',
+        'unsupervised_end',
     }
     assert_equal_dicts(
         so_row_splits,

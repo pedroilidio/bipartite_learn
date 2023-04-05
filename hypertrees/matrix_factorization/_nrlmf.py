@@ -3,7 +3,7 @@ from sklearn.base import RegressorMixin
 from sklearn.utils import check_random_state
 from sklearn.neighbors import KNeighborsRegressor
 from ..base import BaseMultipartiteSampler
-from ..utils import check_similarity_matrix
+from ..utils import check_similarity_matrix, _X_is_multipartite
 
 __all__ = ["NRLMF"]
 
@@ -158,6 +158,10 @@ class NRLMF(
         return yt.reshape(-1)
 
     def predict(self, X):
+        if not _X_is_multipartite(X):
+            raise ValueError(
+                f"{type(self).__name__} only accepts bipartite input."
+            )
         U = self.knn_rows_.predict(1-X[0])
         V = self.knn_cols_.predict(1-X[1])
         yt = self._logistic_output(U, V)

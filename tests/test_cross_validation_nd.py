@@ -6,6 +6,7 @@ from sklearn.utils._tags import _safe_tags
 from hypertrees.model_selection import cross_validate_nd
 from hypertrees.tree import BipartiteExtraTreeRegressor
 from hypertrees.ensemble import BipartiteExtraTreesRegressor
+import hypertrees.ensemble
 
 from test_utils import stopwatch, parse_args
 from make_examples import make_interaction_regression
@@ -125,6 +126,20 @@ def test_cv_ensemble(msl, random_state, **PARAMS):
     )
 
 
+def test_cv_semisupervised_ensemble(msl, random_state, **PARAMS):
+    PARAMS = DEF_PARAMS | PARAMS
+    return _test_cv(
+        estimator=hypertrees.ensemble.BipartiteExtraTreesRegressorSS(
+            min_samples_leaf=msl,
+            random_state=random_state,
+            bipartite_adapter='gmosa',
+            criterion='squared_error',
+        ),
+        random_state=random_state,
+        **PARAMS,
+    )
+
+
 def test_cv_pairwise_tag(msl, random_state, **PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
     PARAMS["n_features"] = PARAMS["n_samples"]  # Make Xs square
@@ -143,7 +158,10 @@ def test_cv_pairwise_tag(msl, random_state, **PARAMS):
     # Revert patch even if an exception is raised
     try:
         cv_res = _test_cv(
-            estimator, random_state=random_state, cv_params=cv_params, **PARAMS,
+            estimator,
+            random_state=random_state,
+            cv_params=cv_params,
+            **PARAMS,
         )
     finally:
         estimator.__class__._more_tags = lambda self: old_tags
@@ -168,14 +186,3 @@ def test_cv_pairwise_parameter(msl, random_state, **PARAMS):
     assert not _safe_tags(estimator, "pairwise")
     return cv_res
 
-
-def main(**PARAMS):
-    test_cv_tree(**PARAMS)
-    test_cv_ensemble(**PARAMS)
-    test_cv_pairwise_tag(**PARAMS)
-    test_cv_pairwise_parameter(**PARAMS)
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    main(**vars(args))

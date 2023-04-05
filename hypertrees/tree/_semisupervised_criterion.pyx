@@ -95,7 +95,9 @@ cdef class SSCompositeCriterion(AxisCriterion):
         self.X = X
 
     cdef inline void _copy_position_wise_attributes(self) noexcept nogil:
-        # NOTE: we assume weighted_n_left/right do not diverge among criteria.
+        # NOTE: we assume the weighted_n_left/right of the supervised
+        # criterion, that could sometimes diverge from the ones of the
+        # unsupervised criterion.
         self.pos = self.supervised_criterion.pos
         self.weighted_n_left = self.supervised_criterion.weighted_n_left
         self.weighted_n_right = self.supervised_criterion.weighted_n_right   
@@ -104,11 +106,19 @@ cdef class SSCompositeCriterion(AxisCriterion):
         # nogil to allow children classes to override it
         with gil:
             self._curr_supervision = self.update_supervision(
+                y=self.y_,
+                sample_indices=self.sample_indices,
+                col_indices=self.col_indices,
+                start=self.start,
+                end=self.end,
+                start_col=self.start_col,
+                end_col=self.end_col,
                 weighted_n_samples=self.weighted_n_samples,
                 weighted_n_node_samples=self.weighted_n_node_samples,
+                weighted_n_cols=self.weighted_n_cols,
+                weighted_n_node_cols=self.weighted_n_node_cols,
                 current_supervision=self._curr_supervision,
                 original_supervision=self.supervision,
-                y=self.y_,
             )
 
     cdef void set_root_impurities(self) nogil:
@@ -386,6 +396,27 @@ cdef class SSCompositeCriterion(AxisCriterion):
         """
         self.supervised_criterion.node_value(dest)
 
+    cdef void total_node_value(self, double* dest) nogil:
+        """Compute a single node value for all targets, disregarding y's shape.
+
+        This method is used instead of node_value() in cases where the
+        different columns of y are *not* considered as different outputs, being
+        usually equivalent to node_value if y were to be flattened, i.e.
+
+            total_node_value(y) == node_value(y.reshape[-1, 1])
+
+        Parameters
+        ----------
+        dest : double pointer
+            The memory address which we will save the node value into.
+        """
+        if self._supervised_is_axis_criterion:
+            (<AxisCriterion>self.supervised_criterion).total_node_value(dest)
+        else:
+            with gil:
+                raise TypeError(
+                    "total value only available for supervised AxisCriterion"
+                ) 
 
     cdef double impurity_improvement(
         self,
@@ -672,7 +703,7 @@ cdef class BipartiteSemisupervisedCriterion(GMO):
         # the right position.
         # TODO: remove this dependency on the way we do axis_supervision_only.
         (<SSCompositeCriterion>ss_criterion_ptr).update(
-            (<SSCompositeCriterion>ss_criterion_ptr).pos
+            (<SSCompositeCriterion>ss_criterion_ptr).supervised_criterion.pos
         )
 
         scaled_u_other_imp = (
@@ -720,7 +751,7 @@ cdef class BipartiteSemisupervisedCriterion(GMO):
         # the right position.
         # TODO: remove this dependency on the way we do axis_supervision_only.
         (<SSCompositeCriterion>criterion_ptr).update(
-            (<SSCompositeCriterion>criterion_ptr).pos
+            (<SSCompositeCriterion>criterion_ptr).supervised_criterion.pos
         )
         return (
             (<SSCompositeCriterion>criterion_ptr).impurity_improvement(

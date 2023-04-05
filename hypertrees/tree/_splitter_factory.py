@@ -343,22 +343,19 @@ def make_bipartite_ss_splitter(
     )
 
     if axis_decision_only:
-        supervised_criteria[ax] = splitters[ax].criterion
+        splitter_criteria = [
+            criterion_wrapper.criterion_rows.supervised_criterion,
+            criterion_wrapper.criterion_cols.supervised_criterion,
+        ]
+    else:
+        splitter_criteria = [
+            criterion_wrapper.criterion_rows,
+            criterion_wrapper.criterion_cols,
+        ]
 
     for ax in range(2):
         if not issubclass(splitters[ax], Splitter):
             raise TypeError
-
-        if axis_decision_only:
-            splitter_criteria = [
-                criterion_wrapper.criterion_rows.supervised_criterion,
-                criterion_wrapper.criterion_cols.supervised_criterion,
-            ]
-        else:
-            splitter_criteria = [
-                criterion_wrapper.criterion_rows,
-                criterion_wrapper.criterion_cols,
-            ]
 
         splitters[ax] = splitters[ax](
             criterion=splitter_criteria[ax],

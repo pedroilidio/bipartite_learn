@@ -294,6 +294,19 @@ cdef class AxisCriterion(BaseComposableCriterion):
         pass
 
     cdef void total_node_value(self, double* dest) nogil:
+        """Compute a single node value for all targets, disregarding y's shape.
+
+        This method is used instead of node_value() in cases where the
+        different columns of y are *not* considered as different outputs, being
+        usually equivalent to node_value if y were to be flattened, i.e.
+
+            total_node_value(y) == node_value(y.reshape[-1, 1])
+
+        Parameters
+        ----------
+        dest : double pointer
+            The memory address which we will save the node value into.
+        """
         pass
     
     cdef double _proxy_improvement_factor(self) noexcept nogil:
@@ -515,7 +528,19 @@ cdef class AxisRegressionCriterion(AxisCriterion):
             dest[j] = self.sum_total[k] / self.weighted_n_node_samples
 
     cdef void total_node_value(self, double* dest) nogil:
-        """Compute the node value of sample_indices[start:end] into dest."""
+        """Compute a single node value for all targets, disregarding y's shape.
+
+        This method is used instead of node_value() in cases where the
+        different columns of y are *not* considered as different outputs, being
+        usually equivalent to node_value if y were to be flattened, i.e.
+
+            total_node_value(y) == node_value(y.reshape[-1, 1])
+
+        Parameters
+        ----------
+        dest : double pointer
+            The memory address which we will save the node value into.
+        """
         cdef SIZE_t k
         dest[0] = 0.0
         for k in range(self.n_node_cols):
@@ -853,6 +878,19 @@ cdef class AxisCriterionGSO(AxisCriterion):
         )
 
     cdef void total_node_value(self, double* dest) noexcept nogil:
+        """Compute a single node value for all targets, disregarding y's shape.
+
+        This method is used instead of node_value() in cases where the
+        different columns of y are *not* considered as different outputs, being
+        usually equivalent to node_value if y were to be flattened, i.e.
+
+            total_node_value(y) == node_value(y.reshape[-1, 1])
+
+        Parameters
+        ----------
+        dest : double pointer
+            The memory address which we will save the node value into.
+        """
         self.node_value(dest)
         
     cdef double impurity_improvement(
@@ -1015,7 +1053,7 @@ cdef class AxisFriedmanGSO(AxisSquaredErrorGSO):
         diff = (
             self.weighted_n_right * self.sum_left
             - self.weighted_n_left * self.sum_right
-        ) / self.weighted_n_node_cols
+        )
 
         return (
             diff * diff
@@ -1023,6 +1061,7 @@ cdef class AxisFriedmanGSO(AxisSquaredErrorGSO):
                 self.weighted_n_left
                 * self.weighted_n_right
                 * self.weighted_n_node_samples
+                * self.weighted_n_node_cols  # In GMO this factor is squared
             )
         )
 
@@ -1032,11 +1071,7 @@ cdef class AxisFriedmanGSO(AxisSquaredErrorGSO):
         This is useful when defining proxy impurity improvements for
         compositions of Criterion objects.
         """
-        return (
-            self.weighted_n_node_cols
-            * self.weighted_n_node_cols
-            * self.weighted_n_node_samples
-        )
+        return self.weighted_n_node_cols * self.weighted_n_node_samples
 
 
 cdef class AxisClassificationCriterion(AxisCriterion):
@@ -1291,7 +1326,14 @@ cdef class AxisClassificationCriterion(AxisCriterion):
             # memset(&dest[j, n_classes], 0, n_missing_classes * sizeof(double))
 
     cdef void total_node_value(self, double* dest) noexcept nogil:
-        """Compute the node value of sample_indices[start:end] and save it into dest.
+        """Compute a single node value for all targets, disregarding y's shape.
+
+        This method is used instead of node_value() in cases where the
+        different columns of y are *not* considered as different outputs, being
+        usually equivalent to node_value if y were to be flattened, i.e.
+
+            total_node_value(y) == node_value(y.reshape[-1, 1])
+
         Parameters
         ----------
         dest : double pointer

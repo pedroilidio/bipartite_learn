@@ -83,7 +83,7 @@ class BaseMultipartiteEstimator(BaseEstimator):
                     check_X_params = {**default_check_params, **check_X_params}
 
                 for ax in range(len(X)):
-                    X[ax] = check_array(X[ax], input_name="X", **check_params)
+                    X[ax] = check_array(X[ax], input_name="X", **check_X_params)
 
                 if "estimator" not in check_y_params:
                     check_y_params = {**default_check_params, **check_y_params}

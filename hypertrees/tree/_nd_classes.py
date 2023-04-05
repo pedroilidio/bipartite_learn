@@ -1,4 +1,3 @@
-# TODO: review criterion and bipartite str options and validation
 """
 This module gathers tree-based methods, including decision, regression and
 randomized trees, adapted from sklearn for bipartite training data.
@@ -83,7 +82,7 @@ PREDICTION_WEIGHTS_OPTIONS = {
 
 AXIS_CRITERIA_REG = {
     "squared_error": AxisSquaredError,
-    "friedman_mse": AxisFriedmanGSO,
+    "friedman_gso": AxisFriedmanGSO,
     "squared_error_gso": AxisSquaredErrorGSO,
 }
 AXIS_CRITERIA_CLF = {
@@ -108,7 +107,7 @@ BIPARTITE_CRITERIA = {
     "gmosa": {
         "regression": {
             "squared_error": (GMOSA, AxisSquaredError),
-            "friedman_mse": (GMOSA, AxisFriedmanGSO),
+            "friedman_gso": (GMOSA, AxisFriedmanGSO),
             "squared_error_gso": (GMOSA, AxisSquaredErrorGSO),
         },
         "classification": {
