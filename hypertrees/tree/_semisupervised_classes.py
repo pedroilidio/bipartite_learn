@@ -36,16 +36,12 @@ from sklearn.tree._tree import (
 from sklearn.tree import _tree
 # Hypertree-specific:
 from ._nd_splitter import BipartiteSplitter
-from ..melter import row_cartesian_product
 
 # Semi-supervision-specific:
 from sklearn.tree._classes import (
-    check_is_fitted,
     BaseDecisionTree,
     DecisionTreeRegressor,
     DecisionTreeClassifier,
-    ExtraTreeRegressor,
-    ExtraTreeClassifier,
     DENSE_SPLITTERS,
     SPARSE_SPLITTERS,
 )
@@ -161,67 +157,67 @@ def _is_pairwise_criterion(unsupervised_criterion):
     )
 
 
-def _validate_X_double(
+def _validate_X_targets(
     *,
     X,
-    X_double,
+    X_targets,
     is_categoric,
     is_pairwise,
 ):
-    if is_pairwise:
-        check_pairwise_arrays(X, precomputed=True)
-
-    if X_double is None:
-        # _X_double will be the target matrix for unsupervised criteria,
+    if X_targets is None:
+        # _X_targets will be the target matrix for unsupervised criteria,
         # and thus must be formatted like y usually is, double-valued and
         # C contiguous.
-        X_double = X.toarray() if issparse(X) else X
+        X_targets = X.toarray() if issparse(X) else X
 
         if is_categoric:
             # TODO: class weights for X.
-            X_double, *_ = _encode_classes(X_double)
+            X_targets, *_ = _encode_classes(X_targets)
 
         if (
-            getattr(X_double, "dtype", None) != DOUBLE
-            or not X_double.flags.contiguous
+            getattr(X_targets, "dtype", None) != DOUBLE
+            or not X_targets.flags.contiguous
         ):
-            X_double = np.ascontiguousarray(X_double, dtype=DOUBLE)
+            X_targets = np.ascontiguousarray(X_targets, dtype=DOUBLE)
 
     elif (
-            getattr(X_double, "dtype", None) != DOUBLE
-            or not X_double.flags.contiguous
-        ):
+        getattr(X_targets, "dtype", None) != DOUBLE
+        or not X_targets.flags.contiguous
+    ):
         raise TypeError(
-            "If provided, _X_double must be a C contiguous array of float64"
+            "If provided, _X_targets must be a C contiguous array of float64"
         )
 
-    return X_double
+    if is_pairwise:
+        check_pairwise_arrays(X_targets, Y=None, precomputed=True)
+
+    return X_targets
 
 
-def _validate_bipartite_X_double(
+def _validate_bipartite_X_targets(
     *,
     X,
-    X_double,
+    X_targets,
     is_categoric_rows,
     is_categoric_cols,
     is_pairwise_rows,
     is_pairwise_cols,
 ):
-    if X_double is None:
-        X_double = [None, None]
+    if X_targets is None:
+        X_targets = [None, None]
 
     for axis, (is_categoric, is_pairwise) in enumerate((
-        (is_categoric_rows, is_categoric_cols),
-        (is_pairwise_rows, is_pairwise_cols),
+        (is_categoric_rows, is_pairwise_rows),
+        (is_categoric_cols, is_pairwise_cols),
     )):
-        X_double[axis] = _validate_X_double(
+        X_targets[axis] = _validate_X_targets(
             X=X[axis],
-            X_double=X_double[axis],
+            X_targets=X_targets[axis],
             is_categoric=is_categoric,
             is_pairwise=is_pairwise,
         )
 
-    return X_double
+    return X_targets
 
 
 # =============================================================================
@@ -248,6 +244,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
             Hidden(StrOptions(set(SS_CRITERIA.keys()))),
             Hidden(_semisupervised_criterion.SSCompositeCriterion),
         ],
+        "preprocess_X_targets": [callable, None],
     }
 
     def _more_tags(self):
@@ -264,21 +261,26 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         unsupervised_criterion="squared_error",
         update_supervision=None,
         ss_adapter=None,
-        _X_double=None,
+        preprocess_X_targets=None,
+        _X_targets=None,
         **kwargs,
     ):
         self.supervision = supervision
         self.ss_adapter = ss_adapter
         self.unsupervised_criterion = unsupervised_criterion
         self.update_supervision = update_supervision
-        self._X_double = _X_double
+        self.preprocess_X_targets = preprocess_X_targets
+        self._X_targets = _X_targets
 
         super().__init__(**kwargs)
 
-    def _check_X_double(self, X, _X_double=None):
-        return _validate_X_double(
+    def _check_X_targets(self, X, _X_targets=None):
+        if _X_targets is None and self.preprocess_X_targets is not None:
+            X = self.preprocess_X_targets(X)
+
+        return _validate_X_targets(
             X=X,
-            X_double=_X_double,
+            X_targets=_X_targets,
             is_categoric=_is_categoric_criterion(
                 self.unsupervised_criterion,
             ),
@@ -289,20 +291,20 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
 
     # FIXME: Avoid copying the whole BaseDecisionTree.fit(). We currently do it
     # just so we can build the Splitter object our own way.
-    def fit(self, X, y, sample_weight=None, check_input=True, _X_double=None):
+    def fit(self, X, y, sample_weight=None, check_input=True, _X_targets=None):
         self._validate_params()
         random_state = check_random_state(self.random_state)
 
         if check_input:
-            # TODO: Since we cannot pass _X_double to trees in an ensemble,
+            # TODO: Since we cannot pass _X_targets to trees in an ensemble,
             # inside sklearn.ensemble._forest._parallel_build_trees(),
-            # we add _X_double as a parameter in self.__init__ and in the
+            # we add _X_targets as a parameter in self.__init__ and in the
             # forest.estimator_params list, that will be reused by the
             # individual trees without copying the array for each tree
             # and consuming a large amount of memory.  In forests, check_inpu
-            # is set to false, in which case we do not override self._X_double
+            # is set to false, in which case we do not override self._X_targets
             # below.
-            self._X_double = self._check_X_double(X, _X_double)
+            self._X_targets = self._check_X_targets(X, _X_targets)
 
             # Need to validate separately here.
             # We can't pass multi_output=True because that would allow y to be
@@ -405,7 +407,7 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         # Build tree
         splitter = self._make_splitter(
             X=X,
-            X_double=self._X_double,
+            X_targets=self._X_targets,
             min_samples_leaf=min_samples_leaf,
             min_weight_leaf=min_weight_leaf,
             random_state=random_state,
@@ -458,9 +460,9 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
 
     def _check_criterion(
         self,
-        X_double,
         *,
         n_samples,
+        X_targets=None,
         n_outputs=None,
         n_features=None,
         supervision=None,
@@ -475,8 +477,9 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         supervision = supervision or self.supervision
         ss_adapter = ss_adapter or self.ss_adapter
         criterion = criterion or self.criterion
-        unsupervised_criterion = unsupervised_criterion or self.unsupervised_criterion
         update_supervision = update_supervision or self.update_supervision
+        X_targets = X_targets if X_targets is not None else self._X_targets
+        unsupervised_criterion = unsupervised_criterion or self.unsupervised_criterion
 
         if isinstance(ss_adapter, str):
             ss_adapter = SS_CRITERIA[ss_adapter]
@@ -510,17 +513,17 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
             update_supervision=update_supervision,
         )
 
-        if X_double is None:
-            raise RuntimeError("_X_double was not set.")
+        if X_targets is None:
+            raise RuntimeError("_X_targets was not set.")
 
-        final_criterion.set_X(X_double)
+        final_criterion.set_X(X_targets)
         return final_criterion
 
     def _make_splitter(
         self,
         *,
         X,
-        X_double,
+        X_targets,
         min_samples_leaf,
         min_weight_leaf,
         random_state,
@@ -530,7 +533,9 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
         if isinstance(self.splitter, Splitter):
             return deepcopy(self.splitter)
         else:
-            criterion = self._check_criterion(X_double, n_samples=X.shape[0])
+            criterion = self._check_criterion(
+                X_targets=X_targets, n_samples=X.shape[0],
+            )
 
             return SPLITTERS[self.splitter](
                 criterion,
@@ -806,7 +811,8 @@ class DecisionTreeClassifierSS(BaseDecisionTreeSS, DecisionTreeClassifier):
         ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
-        _X_double=None,
+        preprocess_X_targets=None,
+        _X_targets=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -826,7 +832,8 @@ class DecisionTreeClassifierSS(BaseDecisionTreeSS, DecisionTreeClassifier):
             ss_adapter=ss_adapter,
             unsupervised_criterion=unsupervised_criterion,
             update_supervision=update_supervision,
-            _X_double=_X_double,
+            preprocess_X_targets=preprocess_X_targets,
+            _X_targets=_X_targets,
         )
 
 
@@ -1070,7 +1077,8 @@ class DecisionTreeRegressorSS(BaseDecisionTreeSS, DecisionTreeRegressor):
         ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
-        _X_double=None,
+        preprocess_X_targets=None,
+        _X_targets=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -1089,7 +1097,8 @@ class DecisionTreeRegressorSS(BaseDecisionTreeSS, DecisionTreeRegressor):
             ss_adapter=ss_adapter,
             unsupervised_criterion=unsupervised_criterion,
             update_supervision=update_supervision,
-            _X_double=_X_double,
+            preprocess_X_targets=preprocess_X_targets,
+            _X_targets=_X_targets,
         )
 
 
@@ -1335,7 +1344,8 @@ class ExtraTreeClassifierSS(DecisionTreeClassifierSS):
         ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
-        _X_double=None,
+        preprocess_X_targets=None,
+        _X_targets=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -1355,7 +1365,8 @@ class ExtraTreeClassifierSS(DecisionTreeClassifierSS):
             criterion=criterion,
             unsupervised_criterion=unsupervised_criterion,
             update_supervision=update_supervision,
-            _X_double=_X_double,
+            preprocess_X_targets=preprocess_X_targets,
+            _X_targets=_X_targets,
         )
 
 
@@ -1578,7 +1589,8 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
         ss_adapter=None,
         unsupervised_criterion="squared_error",
         update_supervision=None,
-        _X_double=None,
+        preprocess_X_targets=None,
+        _X_targets=None,
     ):
         super().__init__(
             splitter=splitter,
@@ -1597,7 +1609,8 @@ class ExtraTreeRegressorSS(DecisionTreeRegressorSS):
             criterion=criterion,
             unsupervised_criterion=unsupervised_criterion,
             update_supervision=update_supervision,
-            _X_double=_X_double,
+            preprocess_X_targets=preprocess_X_targets,
+            _X_targets=_X_targets,
         )
 
 
@@ -1621,6 +1634,7 @@ class BaseBipartiteDecisionTreeSS(
             StrOptions(set(UNSUPERVISED_CRITERIA.keys())),
             Hidden(Criterion),
         ],
+        "preprocess_X_targets": [callable, None],
     }
     _parameter_constraints.pop("unsupervised_criterion")
 
@@ -1658,6 +1672,7 @@ class BaseBipartiteDecisionTreeSS(
         unsupervised_criterion_cols="squared_error",
         update_supervision=None,
         axis_decision_only=False,
+        preprocess_X_targets=None,
     ):
         self.supervision = supervision
         self.ss_adapter = ss_adapter
@@ -1665,6 +1680,7 @@ class BaseBipartiteDecisionTreeSS(
         self.unsupervised_criterion_cols = unsupervised_criterion_cols
         self.update_supervision = update_supervision
         self.axis_decision_only = axis_decision_only
+        self.preprocess_X_targets = preprocess_X_targets
 
         BaseBipartiteDecisionTree.__init__(
             self,
@@ -1707,18 +1723,21 @@ class BaseBipartiteDecisionTreeSS(
         tags["pairwise"] = tags["pairwise_rows"] and tags["pairwise_cols"]
         return tags
 
-    def fit(self, X, y, sample_weight=None, check_input=True, _X_double=None):
+    def fit(self, X, y, sample_weight=None, check_input=True, _X_targets=None):
         if check_input:
-            _X_double = self._check_X_double(X, _X_double)
+            _X_targets = self._check_X_targets(X, _X_targets)
 
-        self._X_double = _X_double  # TODO: Keep it?
+        self._X_targets = _X_targets  # TODO: Keep it?
 
         return super().fit(X, y, sample_weight, check_input)
 
-    def _check_X_double(self, X, _X_double=None):
-        return _validate_bipartite_X_double(
+    def _check_X_targets(self, X, _X_targets=None):
+        if _X_targets is None and self.preprocess_X_targets is not None:
+            X = [self.preprocess_X_targets(Xi) for Xi in X]
+
+        return _validate_bipartite_X_targets(
             X=X,
-            X_double=_X_double,
+            X_targets=_X_targets,
             is_categoric_rows=_is_categoric_criterion(
                 self.unsupervised_criterion_rows,
             ),
@@ -1834,12 +1853,12 @@ class BaseBipartiteDecisionTreeSS(
             axis_decision_only=self.axis_decision_only,
         )
 
-        if self._X_double is None:
-            raise RuntimeError("_X_double was not set.")
+        if self._X_targets is None:
+            raise RuntimeError("_X_targets was not set.")
 
         splitter.criterion_wrapper.set_X(
-            self._X_double[0],
-            self._X_double[1],
+            self._X_targets[0],
+            self._X_targets[1],
         )
         return splitter
 
@@ -1887,6 +1906,7 @@ class BipartiteDecisionTreeRegressorSS(
         unsupervised_criterion_cols="squared_error",
         update_supervision=None,
         axis_decision_only=False,
+        preprocess_X_targets=None,
     ):
         super().__init__(
             criterion=criterion,
@@ -1918,6 +1938,7 @@ class BipartiteDecisionTreeRegressorSS(
             unsupervised_criterion_cols=unsupervised_criterion_cols,
             update_supervision=update_supervision,
             axis_decision_only=axis_decision_only,
+            preprocess_X_targets=preprocess_X_targets,
         )
 
 
@@ -1964,6 +1985,7 @@ class BipartiteExtraTreeRegressorSS(
         unsupervised_criterion_cols="squared_error",
         update_supervision=None,
         axis_decision_only=False,
+        preprocess_X_targets=None,
     ):
         super().__init__(
             criterion=criterion,
@@ -1995,4 +2017,5 @@ class BipartiteExtraTreeRegressorSS(
             unsupervised_criterion_cols=unsupervised_criterion_cols,
             update_supervision=update_supervision,
             axis_decision_only=axis_decision_only,
+            preprocess_X_targets=preprocess_X_targets,
         )

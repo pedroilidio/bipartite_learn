@@ -9,8 +9,12 @@ from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.utils.validation import check_random_state
 from sklearn.dummy import DummyRegressor, DummyClassifier
 from sklearn.utils._testing import assert_allclose
+from sklearn.base import is_classifier
 
-from hypertrees.tree import BipartiteDecisionTreeRegressor, BipartiteExtraTreeRegressor
+from hypertrees.tree import (
+    BipartiteDecisionTreeRegressor,
+    BipartiteExtraTreeRegressor,
+)
 
 from hypertrees.ensemble import (
     BipartiteExtraTreesRegressor,
@@ -20,7 +24,7 @@ from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 
 from hypertrees.tree._semisupervised_classes import (
     DecisionTreeRegressorSS,
-    # BipartiteExtraTreeRegressorSS,  # TODO
+    BipartiteExtraTreeRegressorSS,
 )
 
 from hypertrees.melter import (
@@ -31,6 +35,7 @@ from hypertrees.ensemble._semisupervised_forest import (
     ExtraTreesRegressorSS,
     BipartiteRandomForestRegressorSS,
     BipartiteExtraTreesRegressorSS,
+    # BipartiteRandomForestClassifierSS,
 )
 
 from test_utils import (
@@ -66,7 +71,7 @@ def random_state(request):
 
 @pytest.fixture
 def n_samples(request):
-    return (50, 30)
+    return (11, 13)
 
 
 @pytest.fixture#(params=[(50, 30)])
@@ -116,8 +121,36 @@ def pairwise_classification_data(classification_data):
     return apply_rbf_kernel(classification_data)
 
 
+@pytest.fixture
+def get_appropriate_data(
+    classification_data,
+    regression_data,
+    pairwise_classification_data,
+    pairwise_regression_data,
+):
+    def _getter(estimator):
+        if is_classifier(estimator):
+            if estimator._get_tags()['pairwise']:
+                return pairwise_classification_data
+            else:
+                return classification_data
+        else:
+            if estimator._get_tags()['pairwise']:
+                return pairwise_regression_data
+            else:
+                return regression_data
+    return _getter
+
+
 @pytest.mark.parametrize(
     'estimator_name, estimator', [
+        (
+            'BipartiteRandomForestRegressorSS',
+            BipartiteRandomForestRegressorSS(
+                unsupervised_criterion_rows='squared_error',
+                unsupervised_criterion_cols='squared_error',
+            ),
+        ),
         (
             'BipartiteRandomForestRegressorSS',
             BipartiteRandomForestRegressorSS(
@@ -127,65 +160,24 @@ def pairwise_classification_data(classification_data):
         ),
     ],
 )
-def test_all_regressors(
-    regression_data,
-    pairwise_regression_data,
+def test_forests_score(
+    get_appropriate_data,
     estimator_name,
     estimator,
 ):
-    if estimator._get_tags()['pairwise']:
-        X, Y, x, y = pairwise_regression_data
-    else:
-        X, Y, x, y = regression_data
+    X, Y, x, y = get_appropriate_data(estimator)
 
     estimator.fit(X, Y)
 
     # The two formats must be supported:
     pred1 = estimator.predict(X)
-    try:
-        pred2 = estimator.predict(x)
-        assert_allclose(pred1, pred2)
-    except ValueError:
-        warnings.warn(f"{estimator_name} does not accept melted input.")
+    pred2 = estimator.predict(x)
+    assert_allclose(pred1, pred2)
 
     score = estimator.score(X, y)
 
     logging.info(f"{estimator_name}'s score: {score}")
     assert score > 0.1
-
-
-@pytest.mark.parametrize(
-    'estimator_name, estimator', [],
-)
-def test_all_classifiers(
-    classification_data,
-    pairwise_classification_data,
-    estimator_name,
-    estimator,
-):
-    estimator = estimator()
-    dummy = DummyClassifier()
-
-    if estimator._get_tags()['pairwise']:
-        X, Y, x, y = pairwise_classification_data
-    else:
-        X, Y, x, y = classification_data
-
-    estimator.fit(X, Y)
-    dummy.fit(x, y)
-
-    # The two formats must be supported:
-    pred1 = estimator.predict(X)
-    try:
-        pred2 = estimator.predict(x)
-        assert_allclose(pred1, pred2)
-    except ValueError:
-        warnings.warn(f"{estimator_name} does not accept melted input.")
-
-    score = estimator.score(X, y)
-
-    logging.info(f"{estimator_name}'s score: {score}")
-    assert score > dummy.score(x, y)
 
 
 def compare_estimators(estimators1d, estimators2d, **PARAMS):
@@ -269,10 +261,6 @@ def test_semisupervised_forests(forest_params=None, **PARAMS):
         'SSRF': RandomForestRegressorSS(**forest_params),
         'SSXT': ExtraTreesRegressorSS(**forest_params),
         'SSXT2': ExtraTreesRegressorSS(**forest_params),
-        'SSXT3': ExtraTreesRegressorSS(
-            unsupervised_criterion='mean_distance',
-            **forest_params,
-        ),
     }
     estimators2d = {
         'SSBRF': BipartiteRandomForestRegressorSS(**forest_params),
@@ -281,10 +269,46 @@ def test_semisupervised_forests(forest_params=None, **PARAMS):
             axis_decision_only=True,
             **forest_params,
         ),
-        'SSBXT_mean_dist': BipartiteExtraTreesRegressorSS(
-            unsupervised_criterion_rows='mean_distance',
-            unsupervised_criterion_cols='mean_distance',
-            **forest_params,
-        ),
     }
     compare_estimators(estimators1d, estimators2d, **PARAMS)
+
+
+@pytest.mark.parametrize(
+    'forest_class',
+    [
+        RandomForestRegressorSS,
+        BipartiteRandomForestRegressorSS,
+    ],
+)
+def test_ss_forest_can_set_X_targets(regression_data, forest_class):
+    def preprocessor_func(x):
+        return x ** 2
+
+    X, Y, x, y = regression_data
+
+    forest = forest_class(
+        preprocess_X_targets=preprocessor_func,
+        n_estimators=5,
+    )
+
+    is_bipartite = forest._get_tags().get('multipartite', False)
+
+    if is_bipartite:
+        X_processed = [preprocessor_func(Xi) for Xi in X]
+    else:
+        X = X[0]
+        X_processed = preprocessor_func(X)
+
+    forest.fit(X, Y)
+
+    tree = forest.estimators_[0]
+    assert tree.preprocess_X_targets is preprocessor_func
+    assert forest._X_targets is not None
+    assert tree._X_targets is not None
+    assert tree._X_targets is forest._X_targets
+
+    if is_bipartite:
+        assert (tree._X_targets[0] == X_processed[0]).all()
+        assert (tree._X_targets[1] == X_processed[1]).all()
+    else:
+        assert (tree._X_targets == X_processed).all()

@@ -524,33 +524,6 @@ cdef class SSCompositeCriterion(AxisCriterion):
         )
 
 
-# FIXME
-cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
-    def __init__(self, SIZE_t n_features=1, *args, **kwargs):
-        if n_features != 1:
-            raise ValueError(f"Provided n_features={n_features} is not 1.")
-                
-        super().__init__(*args, n_features=1, **kwargs)
-
-        if self.unsupervised_criterion.n_outputs != 1:
-            raise ValueError(
-                "Unsupervised criterion must have a single output."
-            )
-
-    def set_feature(self, SIZE_t new_feature):
-        self.current_feature = new_feature
-        self.X = self._full_X[:, new_feature:new_feature + 1]
-
-        self.unsupervised_criterion.init(
-            y=self.X,
-            sample_weight=self.sample_weight,
-            weighted_n_samples=self.weighted_n_samples,
-            sample_indices=self.sample_indices,
-            start=self.start,
-            end=self.end,
-        )
-
-
 # =============================================================================
 # Bipartite Semi-supervised Criterion Wrapper
 # =============================================================================

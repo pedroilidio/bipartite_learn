@@ -29,12 +29,12 @@ def random_state(request):
 
 @pytest.fixture
 def n_samples(request):
-    return (50, 30)
+    return (11, 13)
 
 
-@pytest.fixture#(params=[(50, 30)])
+@pytest.fixture
 def n_features(request):
-    return (10, 10)
+    return (5, 7)
 
 
 @pytest.fixture

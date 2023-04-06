@@ -16,15 +16,11 @@ from hypertrees.tree._splitter_factory import (
 ) 
 from hypertrees.tree._semisupervised_criterion import (
     SSCompositeCriterion,
-    SingleFeatureSSCompositeCriterion,
 )
 
 from hypertrees.tree._semisupervised_classes import (
     DecisionTreeRegressorSS, BipartiteDecisionTreeRegressorSS,
 )
-
-from hypertrees.tree._semisupervised_splitter import BestSplitterSFSS
-from hypertrees.tree._dynamic_supervision_criterion import DynamicSSMSE
 
 from sklearn.tree._criterion import MSE
 from test_nd_classes import compare_trees, parse_args
@@ -187,108 +183,5 @@ def test_dynamic_supervision_1d2d(
         tree2_is_2d=True,
         supervision=1.0,
         random_state=random_state,
-        **params,
-    )
-
-
-@pytest.mark.skip
-def test_single_feature_semisupervision_1d_sup(**params):
-    params = DEF_PARAMS | params
-    rstate = check_random_state(params['random_state'])
-
-    splitter1d = BestSplitterSFSS(
-        criterion=SingleFeatureSSCompositeCriterion(
-            supervision=1.,
-            criterion=MSE,
-            n_features=np.sum(params['n_features']),
-            n_samples=np.prod(params['n_samples']),
-            n_outputs=1,
-        ),
-        max_features=np.sum(params['n_features']),
-        min_samples_leaf=params['min_samples_leaf'],
-        min_weight_leaf=0.0,
-        random_state=rstate,
-    )
-
-    tree1 = DecisionTreeRegressorSS(
-        splitter=splitter1d,
-    )
-
-    return compare_trees(
-        tree1=tree1,
-        tree2_is_2d=True,
-        **params,
-    )
-
-
-@pytest.mark.skip
-def test_single_feature_semisupervision_1d2d(supervision=None, **params):
-    params = DEF_PARAMS | params
-    if supervision is None:
-        supervision = check_random_state(params['random_state']).random()
-    print('Supervision level:', supervision)
-
-    splitter1d = BestSplitterSFSS(
-        criterion=SingleFeatureSSCompositeCriterion(
-            supervision=supervision,
-            supervised_criterion=MSE,
-            unsupervised_criterion=MSE,
-            n_features=1.,
-            n_samples=np.prod(params['n_samples']),
-            n_outputs=1,
-        ),
-        max_features=np.sum(params['n_features']),
-        min_samples_leaf=params['min_samples_leaf'],
-        min_weight_leaf=0.,
-        random_state=check_random_state(params['random_state']),
-    )
-
-    ss2d_splitter = make_bipartite_ss_splitter(
-        splitters=BestSplitterSFSS,
-        supervised_criteria=MSE,
-        unsupervised_criteria=MSE,
-        ss_criteria=SingleFeatureSSCompositeCriterion,
-        supervision=supervision,
-        max_features=params['n_features'],
-        n_features=1,
-        n_samples=params['n_samples'],
-        n_outputs=1,
-        random_state=check_random_state(params['random_state']),
-        min_samples_leaf=params['min_samples_leaf'],
-        min_weight_leaf=0.,
-    )
-
-    tree1 = DecisionTreeRegressorSS(
-        splitter=splitter1d,
-    )
-    tree2 = BipartiteDecisionTreeRegressorSS(
-        splitter=ss2d_splitter,
-    )
-
-    return compare_trees(
-        tree1=tree1,
-        tree2=tree2,
-        tree2_is_2d=True,
-        random_state=random_state,
-        **params,
-    )
-
-
-@pytest.mark.skip
-def test_single_feature_semisupervision_1d2d_classes(**params):
-    params = DEF_PARAMS | params
-    rstate = check_random_state(params['random_state'])
-    supervision = params['supervision']
-
-    if supervision == -1:
-        supervision = rstate.random()
-
-    print('Supervision level:', supervision)
-
-    # FIXME: Are not they supposed to match?
-    return compare_trees(
-        tree1=partial(DecisionTreeRegressorSFSS, supervision=supervision),
-        tree2=partial(BipartiteDecisionTreeRegressorSFSS, supervision=supervision),
-        tree2_is_2d=True,
         **params,
     )
