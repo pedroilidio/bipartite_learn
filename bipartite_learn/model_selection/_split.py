@@ -13,7 +13,7 @@ from sklearn.model_selection._split import (
 )
 from sklearn.utils.validation import _num_samples
 
-from hypertrees.base import InputDataND
+from bipartite_learn.base import InputDataND
 
 
 class CrossValidatorNDWrapper(BaseCrossValidator):
@@ -210,7 +210,7 @@ def make_kfold_nd(
     Wraps n_dim KFold or StratifiedKFold cross-validators with a
     CrossValidatorNDWrapper, that provides train-test indices for splitting
     InputDataND objects. The returned wrapper object is compatible with paramet-
-    er search objects in hypertrees.model_selection, such as MultipartiteGridSearchCV and
+    er search objects in bipartite_learn.model_selection, such as MultipartiteGridSearchCV and
     MultipartiteRandomizedSearchCV.
 
     The parameters 'cv', 'shuffle' and 'stratified' can be
@@ -272,7 +272,7 @@ def make_kfold_nd(
             )
         cv_list.append(copy.deepcopy(cv[ax]))
 
-    return check_cv_nd(cv_list, n_dim=n_dim, diagonal=diagonal)
+    return check_multipartite_cv(cv_list, n_dim=n_dim, diagonal=diagonal)
 
 
 def make_train_test_splitter_nd(
@@ -285,7 +285,7 @@ def make_train_test_splitter_nd(
     Wraps len(n_samples) CrossValidator data splitters with a
     CrossValidatorNDWrapper, that provides train-test indices for splitting
     InputDataND objects. The returned wrapper object is compatible with paramet-
-    er search objects in hypertrees.model_selection, such as MultipartiteGridSearchCV and
+    er search objects in bipartite_learn.model_selection, such as MultipartiteGridSearchCV and
     MultipartiteRandomizedSearchCV.
 
     The parameters 'test_size', 'train_size', 'shuffle' and 'stratify' can be
@@ -360,10 +360,10 @@ def make_train_test_splitter_nd(
             )
         cv_list.append(copy.deepcopy(cv))
 
-    return check_cv_nd(cv_list, n_dim=n_dim)
+    return check_multipartite_cv(cv_list, n_dim=n_dim)
      
 
-def check_cv_nd(cv, y=None, *, n_dim=None, classifier=False, diagonal=False):
+def check_multipartite_cv(cv, y=None, *, n_dim=None, classifier=False, diagonal=False):
     if isinstance(cv, CrossValidatorNDWrapper):
         return cv
     if not n_dim and y is None:

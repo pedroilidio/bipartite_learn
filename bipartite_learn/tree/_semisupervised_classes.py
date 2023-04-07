@@ -35,7 +35,7 @@ from sklearn.tree._tree import (
 )
 from sklearn.tree import _tree
 # Hypertree-specific:
-from ._nd_splitter import BipartiteSplitter
+from ._bipartite_splitter import BipartiteSplitter
 
 # Semi-supervision-specific:
 from sklearn.tree._classes import (
@@ -45,7 +45,7 @@ from sklearn.tree._classes import (
     DENSE_SPLITTERS,
     SPARSE_SPLITTERS,
 )
-from ._nd_classes import (
+from ._bipartite_classes import (
     BaseBipartiteDecisionTree,
     BipartiteDecisionTreeRegressor,
     BipartiteExtraTreeRegressor,
@@ -1849,14 +1849,14 @@ class BaseBipartiteDecisionTreeSS(
             ax_min_samples_leaf=ax_min_samples_leaf,
             ax_min_weight_leaf=ax_min_weight_leaf,
             random_state=random_state,
-            criterion_wrapper_class=bipartite_adapter,
+            bipartite_criterion_class=bipartite_adapter,
             axis_decision_only=self.axis_decision_only,
         )
 
         if self._X_targets is None:
             raise RuntimeError("_X_targets was not set.")
 
-        splitter.criterion_wrapper.set_X(
+        splitter.bipartite_criterion.set_X(
             self._X_targets[0],
             self._X_targets[1],
         )

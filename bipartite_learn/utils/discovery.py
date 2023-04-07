@@ -35,10 +35,10 @@ _MODULE_TO_IGNORE = {
     ],
 })
 def all_estimators(type_filter=None, base_estimator=None):
-    """Get a list of all estimators from `hypertrees`.
+    """Get a list of all estimators from `bipartite_learn`.
 
     This function is adapted from the original sklearn.utils.all_estimators to
-    crawl the hypertrees package.
+    crawl the bipartite_learn package.
 
     This function crawls the module and gets all classes that inherit
     from BaseEstimator. Classes that are defined in test-modules are not
@@ -88,11 +88,11 @@ def all_estimators(type_filter=None, base_estimator=None):
         return True
 
     all_classes = []
-    root = str(Path(__file__).parent.parent)  # hypertrees package
+    root = str(Path(__file__).parent.parent)  # bipartite_learn package
     # Ignore deprecation warnings triggered at import time and from walking
     # packages
     with ignore_warnings(category=FutureWarning):
-        for _, module_name, _ in pkgutil.walk_packages(path=[root], prefix="hypertrees."):
+        for _, module_name, _ in pkgutil.walk_packages(path=[root], prefix="bipartite_learn."):
             module_parts = module_name.split(".")
             if (
                 any(part in _MODULE_TO_IGNORE for part in module_parts)

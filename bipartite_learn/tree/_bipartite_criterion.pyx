@@ -1,8 +1,8 @@
 # cython: boundscheck=False
-from sklearn.tree._criterion cimport RegressionCriterion, Criterion
+import numpy as np
 from libc.stdlib cimport malloc, calloc, free, realloc
 from libc.string cimport memset
-import numpy as np
+from sklearn.tree._criterion cimport RegressionCriterion, Criterion
 from ._axis_criterion cimport AxisCriterion, AxisClassificationCriterion
 
 
@@ -234,7 +234,7 @@ cdef class GMO(BipartiteCriterion):
             impurity_right,
         )
  
-    cdef void* _get_criterion(self, SIZE_t axis) except NULL nogil:
+    cdef void* _get_criterion(self, SIZE_t axis) nogil:
         if axis == 0:
             return <void*> self.criterion_rows
         elif axis == 1:

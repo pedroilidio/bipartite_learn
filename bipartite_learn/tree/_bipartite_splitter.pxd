@@ -4,7 +4,7 @@ from sklearn.tree._tree cimport DTYPE_t          # Type of X
 from sklearn.tree._tree cimport DOUBLE_t         # Type of y, sample_weight
 from sklearn.tree._tree cimport SIZE_t           # Type for indices and counters
 
-from ._nd_criterion cimport BipartiteCriterion
+from ._bipartite_criterion cimport BipartiteCriterion
 
 
 # Data to track sample split
@@ -22,7 +22,7 @@ cdef class BipartiteSplitter:
     # The impurity computations are delegated to a criterion object.
     cdef public Splitter splitter_rows
     cdef public Splitter splitter_cols
-    cdef public BipartiteCriterion criterion_wrapper
+    cdef public BipartiteCriterion bipartite_criterion
     cdef public SIZE_t n_row_features  # Number of row features (X[0].shape[0]).
     # TODO: X dtype must be DOUBLE_t, not DTYPE_t (float32) to use
     # semisupervision.

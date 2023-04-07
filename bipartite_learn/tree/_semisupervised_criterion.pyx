@@ -16,7 +16,7 @@ from sklearn.utils._param_validation import (
     Interval,
 )
 from ._unsupervised_criterion cimport PairwiseCriterion
-from ._nd_criterion import InvalidAxisError
+from ._bipartite_criterion import InvalidAxisError
 
 
 cdef DOUBLE_t NAN = np.nan

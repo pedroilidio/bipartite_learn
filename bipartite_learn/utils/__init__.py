@@ -1,5 +1,5 @@
 """
-The :mod:`hypertrees.utils` module includes various utilities.
+The :mod:`bipartite_learn.utils` module includes various utilities.
 """
 # TODO: reallocate as much as we can.
 

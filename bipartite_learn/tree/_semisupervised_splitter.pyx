@@ -159,7 +159,7 @@ cdef class BestSplitterSFSS(BaseDenseSplitter):
                 current.feature = features[f_j]
 
               # ===============================================
-              # HYPERTREES NOTE:                              
+              # bipartite_learn NOTE:                              
 
                 # Sort samples along that feature; by
                 # copying the values into an array and
@@ -248,7 +248,7 @@ cdef class BestSplitterSFSS(BaseDenseSplitter):
                     samples[p], samples[partition_end] = samples[partition_end], samples[p]
 
           # ============================================
-          # HYPERTREES NOTE:
+          # bipartite_learn NOTE:
           # ============================================
             with gil:
                 self.criterion.set_feature(best.feature)
@@ -539,7 +539,7 @@ cdef class RandomSplitterSFSS(BaseDenseSplitter):
                         continue
 
                 # ===============================================
-                # HYPERTREES NOTE:                              
+                # bipartite_learn NOTE:                              
                 # ===============================================
                 # One of the two lines that we added.
                 # ===============================================
@@ -578,7 +578,7 @@ cdef class RandomSplitterSFSS(BaseDenseSplitter):
                         samples[p], samples[partition_end] = samples[partition_end], samples[p]
 
         # ===============================================
-        # HYPERTREES NOTE:                              
+        # bipartite_learn NOTE:                              
         # ===============================================
         # One of the two lines that we added.
         # ===============================================

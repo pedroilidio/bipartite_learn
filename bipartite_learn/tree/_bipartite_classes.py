@@ -40,13 +40,13 @@ from sklearn.tree._tree import DTYPE, DOUBLE
 
 from sklearn.tree._classes import BaseDecisionTree
 from ..base import BaseMultipartiteEstimator
-from ._nd_tree import DepthFirstTreeBuilder2D
-from ._nd_criterion import (
+from ._bipartite_tree import DepthFirstTreeBuilder2D
+from ._bipartite_criterion import (
     BipartiteCriterion,
     GMO,
     GMOSA,
 )
-from ._nd_splitter import BipartiteSplitter
+from ._bipartite_splitter import BipartiteSplitter
 from ..melter import row_cartesian_product
 from ..utils import check_similarity_matrix, _X_is_multipartite
 from ._axis_criterion import (
@@ -716,7 +716,7 @@ class BaseBipartiteDecisionTree(
             ax_min_samples_leaf=ax_min_samples_leaf,
             ax_min_weight_leaf=ax_min_weight_leaf,
             random_state=random_state,
-            criterion_wrapper_class=bipartite_adapter,
+            bipartite_criterion_class=bipartite_adapter,
         )
 
         return splitter
@@ -1066,13 +1066,13 @@ class BipartiteDecisionTreeRegressor(
     BipartiteDecisionTreeClassifier : A bipartite decision tree classifier.
     BipartiteExtraTreeClassifier : An extremely randomized bipartite tree
         classifier.
-    hypertrees.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
+    bipartite_learn.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
         classifier.
-    hypertrees.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
+    bipartite_learn.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
         regressor.
-    hypertrees.ensemble.BipartiteRandomForestClassifier : A bipartite random
+    bipartite_learn.ensemble.BipartiteRandomForestClassifier : A bipartite random
         forest classifier.
-    hypertrees.ensemble.BipartiteRandomForestRegressor : A bipartite random
+    bipartite_learn.ensemble.BipartiteRandomForestRegressor : A bipartite random
         forest regressor.
 
     Notes
@@ -1440,13 +1440,13 @@ class BipartiteExtraTreeRegressor(BipartiteDecisionTreeRegressor):
         classifier.
     BipartiteDecisionTreeRegressor : A bipartite decision tree regressor.
     BipartiteDecisionTreeClassifier : A bipartite decision tree classifier.
-    hypertrees.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
+    bipartite_learn.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
         classifier.
-    hypertrees.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
+    bipartite_learn.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
         regressor.
-    hypertrees.ensemble.BipartiteRandomForestClassifier : A bipartite random
+    bipartite_learn.ensemble.BipartiteRandomForestClassifier : A bipartite random
         forest classifier.
-    hypertrees.ensemble.BipartiteRandomForestRegressor : A bipartite random
+    bipartite_learn.ensemble.BipartiteRandomForestRegressor : A bipartite random
         forest regressor.
     Notes
     -----
@@ -1775,13 +1775,13 @@ class BipartiteDecisionTreeClassifier(
         regressor.
     BipartiteExtraTreeClassifier : An extremely randomized bipartite tree
         classifier.
-    hypertrees.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
+    bipartite_learn.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
         classifier.
-    hypertrees.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
+    bipartite_learn.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
         regressor.
-    hypertrees.ensemble.BipartiteRandomForestClassifier : A bipartite random
+    bipartite_learn.ensemble.BipartiteRandomForestClassifier : A bipartite random
         forest classifier.
-    hypertrees.ensemble.BipartiteRandomForestRegressor : A bipartite random
+    bipartite_learn.ensemble.BipartiteRandomForestRegressor : A bipartite random
         forest regressor.
 
     Notes
@@ -2194,13 +2194,13 @@ class BipartiteExtraTreeClassifier(BipartiteDecisionTreeClassifier):
     BipartiteExtraTreeRegressor : An extremely randomized bipartite tree
         regressor.
     BipartiteDecisionTreeRegressor : A bipartite decision tree regressor.
-    hypertrees.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
+    bipartite_learn.ensemble.BipartiteExtraTreesClassifier : A bipartite extra-trees
         classifier.
-    hypertrees.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
+    bipartite_learn.ensemble.BipartiteExtraTreesRegressor : A bipartite extra-trees
         regressor.
-    hypertrees.ensemble.BipartiteRandomForestClassifier : A bipartite random
+    bipartite_learn.ensemble.BipartiteRandomForestClassifier : A bipartite random
         forest classifier.
-    hypertrees.ensemble.BipartiteRandomForestRegressor : A bipartite random
+    bipartite_learn.ensemble.BipartiteRandomForestRegressor : A bipartite random
         forest regressor.
 
     Notes

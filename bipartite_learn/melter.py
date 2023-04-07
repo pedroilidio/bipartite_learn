@@ -1,11 +1,11 @@
 import numpy as np
 from sklearn.utils.validation import check_random_state
 from sklearn.utils._param_validation import validate_params
-from hypertrees.base import (
+from bipartite_learn.base import (
     BaseBipartiteEstimator,
     BaseMultipartiteSampler,
 )
-from hypertrees.utils import _X_is_multipartite
+from bipartite_learn.utils import _X_is_multipartite
 
 __all__ = [
     "BipartiteMelter",

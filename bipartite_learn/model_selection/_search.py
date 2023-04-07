@@ -40,8 +40,8 @@ from sklearn.model_selection._search import (
     GridSearchCV,
 )
 from ..base import BaseMultipartiteEstimator
-from ._validation import _fit_and_score_nd, _check_train_test_combinations
-from ._split import check_cv_nd
+from ._validation import _bipartite_fit_and_score, _check_train_test_combinations
+from ._split import check_multipartite_cv
 
 __all__ = ["MultipartiteGridSearchCV", "MultipartiteRandomizedSearchCV"]
 
@@ -134,7 +134,7 @@ class BaseMultipartiteSearchCV(
         # X, y, groups = indexable(X, y, groups)
 
         fit_params = _check_fit_params(X[0], fit_params)
-        cv_orig = check_cv_nd(
+        cv_orig = check_multipartite_cv(
             self.cv,
             y,
             classifier=is_classifier(estimator),
@@ -188,7 +188,7 @@ class BaseMultipartiteSearchCV(
                     )
 
                 out = parallel(
-                    delayed(_fit_and_score_nd)(  ###
+                    delayed(_bipartite_fit_and_score)(  ###
                         clone(base_estimator),
                         X,
                         y,

@@ -2,12 +2,8 @@
 The :mod:`sklearn.model_selection._validation` module includes classes and
 functions to validate the model.
 """
-# Author: Alexandre Gramfort <alexandre.gramfort@inria.fr>
-#         Gael Varoquaux <gael.varoquaux@normalesup.org>
-#         Olivier Grisel <olivier.grisel@ensta.org>
-#         Raghav RV <rvraghav93@gmail.com>
-#         Michal Karbownik <michakarbownik@gmail.com>
-# ND adapted by Pedro Ilídio <ilidio@alumni.usp.br>.
+# Author: Pedro Ilídio <ilidio@alumni.usp.br>
+# Modified from scikit-learn.
 # License: BSD 3 clause
 
 import warnings
@@ -35,15 +31,15 @@ from sklearn.utils.parallel import delayed, Parallel
 from sklearn.metrics import check_scoring
 from sklearn.metrics._scorer import _check_multimetric_scoring
 
-from ._split import check_cv_nd, _check_train_test_combinations
+from ._split import check_multipartite_cv, _check_train_test_combinations
 
 
 __all__ = [
-    "cross_validate_nd",
+    "multipartite_cross_validate",
 ]
 
 
-def cross_validate_nd(
+def multipartite_cross_validate(
     estimator,
     X,
     y=None,
@@ -276,7 +272,7 @@ def cross_validate_nd(
         raise ValueError("Incompatible dimensions. One must ensure "
                          "y.ndim == len(X) == len(groups)")
 
-    cv = check_cv_nd(
+    cv = check_multipartite_cv(
         cv, y, classifier=is_classifier(estimator), diagonal=diagonal)
 
     train_test_combinations, train_test_names = _check_train_test_combinations(
@@ -300,7 +296,7 @@ def cross_validate_nd(
     # independent, and that it is pickle-able.
     parallel = Parallel(n_jobs=n_jobs, verbose=verbose, pre_dispatch=pre_dispatch)
     results = parallel(
-        delayed(_fit_and_score_nd)(
+        delayed(_bipartite_fit_and_score)(
             clone(estimator),
             X,
             y,
@@ -348,7 +344,7 @@ def cross_validate_nd(
     return ret
 
 
-def _fit_and_score_nd(
+def _bipartite_fit_and_score(
     estimator,
     X,
     y,
@@ -509,10 +505,10 @@ def _fit_and_score_nd(
         # is_test_tuple ~= (0, 1, 1, 0)
         test_indices = [ax_train_test[is_test] for is_test, ax_train_test in
                         zip(is_test_tuple, train_test)]
-        test_splits[ttc_name] = _safe_split_nd(
+        test_splits[ttc_name] = _multipartite_safe_split(
             estimator, X, y, test_indices, train_indices, pairwise=pairwise)
 
-    X_train, y_train = _safe_split_nd(estimator, X, y, train_indices,
+    X_train, y_train = _multipartite_safe_split(estimator, X, y, train_indices,
                                       pairwise=pairwise)
     result = {}
     try:
@@ -583,7 +579,7 @@ def _fit_and_score_nd(
 
 
 # NOTE: Originally in sklearn.utils.metaestimators
-def _safe_split_nd(
+def _multipartite_safe_split(
     estimator,
     X,
     y,
@@ -658,7 +654,7 @@ def _safe_split_nd(
 
 # NOTE: Originally in sklearn.utils.__init__
 # FIXME: unused by now.
-def _safe_indexing_nd(X, indices):
+def _multipartite_safe_indexing(X, indices):
     """Return rows, items or columns of X using indices.
 
     .. warning::

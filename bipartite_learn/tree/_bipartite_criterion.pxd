@@ -91,4 +91,4 @@ cdef class GMO(BipartiteCriterion):
         public AxisCriterion criterion_rows
         public AxisCriterion criterion_cols
 
-        void* _get_criterion(self, SIZE_t axis) except NULL nogil
+        void* _get_criterion(self, SIZE_t axis) nogil

@@ -9,8 +9,8 @@ from sklearn.utils.validation import check_random_state
 from sklearn.utils._param_validation import (
     validate_params, Interval, HasMethods
 )
-from ._nd_splitter import BipartiteSplitter
-from ._nd_criterion import GMOSA
+from ._bipartite_splitter import BipartiteSplitter
+from ._bipartite_criterion import GMOSA
 from ._semisupervised_criterion import (
     SSCompositeCriterion,
     BipartiteSemisupervisedCriterion,
@@ -145,7 +145,7 @@ def check_criterion(
 #     ax_min_samples_leaf=1,
 #     ax_min_weight_leaf=0.0,
 #     random_state=None,
-#     criterion_wrapper_class=GMOSA,
+#     bipartite_criterion_class=GMOSA,
 # ))
 def make_bipartite_splitter(
     splitters,
@@ -161,7 +161,7 @@ def make_bipartite_splitter(
     ax_min_samples_leaf=1,
     ax_min_weight_leaf=0.0,
     random_state=None,
-    criterion_wrapper_class=GMOSA,
+    bipartite_criterion_class=GMOSA,
 ):
     """Factory function of BipartiteSplitter instances.
 
@@ -172,17 +172,17 @@ def make_bipartite_splitter(
     ax_min_samples_leaf represents [min_rows_leaf, min_cols_leaf]
     """
     if criteria is not None:
-        criterion_wrapper = make_bipartite_criterion(
+        bipartite_criterion = make_bipartite_criterion(
             criteria,
-            criterion_wrapper_class,
+            bipartite_criterion_class,
             is_classification=is_classification,
             n_samples=n_samples,
             n_classes=n_classes,
             n_outputs=n_outputs,
         )
         criteria = [
-            criterion_wrapper.criterion_rows,
-            criterion_wrapper.criterion_cols,
+            bipartite_criterion.criterion_rows,
+            bipartite_criterion.criterion_cols,
         ]
 
     (
@@ -228,7 +228,7 @@ def make_bipartite_splitter(
     return BipartiteSplitter(
         splitter_rows=splitters[0],
         splitter_cols=splitters[1],
-        criterion_wrapper=criterion_wrapper,
+        bipartite_criterion=bipartite_criterion,
         min_samples_leaf=min_samples_leaf,
         min_weight_leaf=min_weight_leaf,
     )
@@ -236,7 +236,7 @@ def make_bipartite_splitter(
 
 def make_bipartite_criterion(
     criteria,
-    criterion_wrapper_class,
+    bipartite_criterion_class,
     *,
     is_classification=None,
     n_samples=None,
@@ -267,7 +267,7 @@ def make_bipartite_criterion(
             is_classification=is_classification,
         )
 
-    return criterion_wrapper_class(criteria[0], criteria[1])
+    return bipartite_criterion_class(criteria[0], criteria[1])
 
 
 # TODO: docs
@@ -298,8 +298,8 @@ def make_bipartite_ss_splitter(
     ax_min_weight_leaf=0.0,
     random_state=None,
     axis_decision_only=False,
-    criterion_wrapper_class=GMOSA,
-    ss_criterion_wrapper_class=BipartiteSemisupervisedCriterion,
+    bipartite_criterion_class=GMOSA,
+    ss_bipartite_criterion_class=BipartiteSemisupervisedCriterion,
 ):
     """Factory function of BipartiteSplitter instances with semisupervised criteria.
 
@@ -327,8 +327,8 @@ def make_bipartite_ss_splitter(
 
     random_state = check_random_state(random_state)
 
-    criterion_wrapper = make_2dss_criterion(
-        criterion_wrapper_class=criterion_wrapper_class,
+    bipartite_criterion = make_2dss_criterion(
+        bipartite_criterion_class=bipartite_criterion_class,
         supervised_criteria=supervised_criteria,
         unsupervised_criteria=unsupervised_criteria,
         supervision=supervision,
@@ -339,18 +339,18 @@ def make_bipartite_ss_splitter(
         n_classes=n_classes,
         is_classification=is_classification,
         n_outputs=n_outputs,
-        ss_criterion_wrapper_class=ss_criterion_wrapper_class,
+        ss_bipartite_criterion_class=ss_bipartite_criterion_class,
     )
 
     if axis_decision_only:
         splitter_criteria = [
-            criterion_wrapper.criterion_rows.supervised_criterion,
-            criterion_wrapper.criterion_cols.supervised_criterion,
+            bipartite_criterion.criterion_rows.supervised_criterion,
+            bipartite_criterion.criterion_cols.supervised_criterion,
         ]
     else:
         splitter_criteria = [
-            criterion_wrapper.criterion_rows,
-            criterion_wrapper.criterion_cols,
+            bipartite_criterion.criterion_rows,
+            bipartite_criterion.criterion_cols,
         ]
 
     for ax in range(2):
@@ -368,7 +368,7 @@ def make_bipartite_ss_splitter(
     return BipartiteSplitter(
         splitter_rows=splitters[0],
         splitter_cols=splitters[1],
-        criterion_wrapper=criterion_wrapper,
+        bipartite_criterion=bipartite_criterion,
         min_samples_leaf=min_samples_leaf,
         min_weight_leaf=min_weight_leaf,
     )
@@ -438,7 +438,7 @@ def make_semisupervised_criterion(
 
 
 def make_2dss_criterion(
-    criterion_wrapper_class,
+    bipartite_criterion_class,
     supervised_criteria,
     unsupervised_criteria,
     supervision,
@@ -449,7 +449,7 @@ def make_2dss_criterion(
     n_classes=None,
     n_outputs=1,
     is_classification=None,
-    ss_criterion_wrapper_class=BipartiteSemisupervisedCriterion,
+    ss_bipartite_criterion_class=BipartiteSemisupervisedCriterion,
 ):
     """Factory function of BipartiteSplitter instances with semisupervised criteria.
 
@@ -505,8 +505,8 @@ def make_2dss_criterion(
                 f"\n  {ss_criteria[ax]=}"
             )
     
-    return ss_criterion_wrapper_class(
-        bipartite_criterion=criterion_wrapper_class(
+    return ss_bipartite_criterion_class(
+        bipartite_criterion=bipartite_criterion_class(
             criterion_rows=ss_criteria[0],
             criterion_cols=ss_criteria[1],
         )

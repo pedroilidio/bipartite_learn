@@ -35,7 +35,7 @@ cdef class BipartiteSplitter:
         self,
         Splitter splitter_rows,
         Splitter splitter_cols,
-        BipartiteCriterion criterion_wrapper,
+        BipartiteCriterion bipartite_criterion,
         min_samples_leaf,
         min_weight_leaf,
     ):
@@ -44,7 +44,7 @@ cdef class BipartiteSplitter:
         self.weighted_n_samples = 0.0
         self.splitter_rows = splitter_rows
         self.splitter_cols = splitter_cols
-        self.criterion_wrapper = criterion_wrapper
+        self.bipartite_criterion = bipartite_criterion
 
         self.min_samples_leaf = min_samples_leaf
         self.min_weight_leaf = min_weight_leaf
@@ -57,7 +57,7 @@ cdef class BipartiteSplitter:
             (
                 self.splitter_rows,
                 self.splitter_cols,
-                self.criterion_wrapper,
+                self.bipartite_criterion,
                 self.min_samples_leaf,
                 self.min_weight_leaf,
             ),
@@ -169,7 +169,7 @@ cdef class BipartiteSplitter:
         self.start[0], self.start[1] = start[0], start[1]
         self.end[0], self.end[1] = end[0], end[1]
 
-        self.criterion_wrapper.init(
+        self.bipartite_criterion.init(
             self.X_rows,
             self.X_cols,
             self.y,
@@ -184,13 +184,13 @@ cdef class BipartiteSplitter:
         )
 
         weighted_n_node_samples[0] = (
-            self.criterion_wrapper.weighted_n_node_samples
+            self.bipartite_criterion.weighted_n_node_samples
         )
         weighted_n_node_samples[1] = (
-            self.criterion_wrapper.weighted_n_node_rows
+            self.bipartite_criterion.weighted_n_node_rows
         )
         weighted_n_node_samples[2] = (
-            self.criterion_wrapper.weighted_n_node_cols
+            self.bipartite_criterion.weighted_n_node_cols
         )
 
         return 0
@@ -235,10 +235,10 @@ cdef class BipartiteSplitter:
             if current_split.split_record.pos == self.end[ax]:
                 continue
 
-            self.criterion_wrapper.children_impurity(
+            self.bipartite_criterion.children_impurity(
                 &imp_left, &imp_right, axis=ax,
             )
-            imp_improve = self.criterion_wrapper.impurity_improvement(
+            imp_improve = self.bipartite_criterion.impurity_improvement(
                 impurity, imp_left, imp_right, axis=ax,
             )
 
@@ -256,8 +256,8 @@ cdef class BipartiteSplitter:
 
     cdef void node_value(self, double* dest) nogil:
         """Copy the value (prototype) of node samples into dest."""
-        self.criterion_wrapper.node_value(dest)
+        self.bipartite_criterion.node_value(dest)
 
     cdef double node_impurity(self) nogil:
         """Return the impurity of the current node."""
-        return self.criterion_wrapper.node_impurity()
+        return self.bipartite_criterion.node_impurity()
