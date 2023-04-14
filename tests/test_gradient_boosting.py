@@ -6,13 +6,13 @@ from sklearn.ensemble._gb import (
     GradientBoostingClassifier,
     GradientBoostingRegressor,
 )
-from hypertrees.ensemble._gb import (
+from bipartite_learn.ensemble._gb import (
     BipartiteGradientBoostingClassifier,
     BipartiteGradientBoostingRegressor,
 )
-from hypertrees.wrappers import GlobalSingleOutputWrapper
-from make_examples import make_interaction_regression
-from test_utils import stopwatch
+from bipartite_learn.wrappers import GlobalSingleOutputWrapper
+from .utils.make_examples import make_interaction_regression
+from .utils.test_utils import stopwatch
 
 
 @pytest.fixture(params=range(5))

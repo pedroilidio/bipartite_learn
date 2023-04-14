@@ -6,10 +6,10 @@ from sklearn.dummy import DummyRegressor, DummyClassifier
 from sklearn.utils._testing import assert_allclose
 from sklearn.metrics import mean_absolute_error
 from sklearn.metrics.pairwise import rbf_kernel
-from hypertrees.base import BaseMultipartiteEstimator
-from hypertrees.utils import all_estimators
-from hypertrees.melter import row_cartesian_product
-from make_examples import (
+from bipartite_learn.base import BaseMultipartiteEstimator
+from bipartite_learn.utils import all_estimators
+from bipartite_learn.melter import row_cartesian_product
+from .utils.make_examples import (
     make_interaction_blobs,
     make_interaction_regression,
 )

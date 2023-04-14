@@ -6,9 +6,8 @@ from pprint import pformat
 from time import time
 
 import numpy as np
-from sklearn.utils._testing import assert_allclose
-from make_examples import make_interaction_data
-from hypertrees.melter import row_cartesian_product
+from .make_examples import make_interaction_data
+from bipartite_learn.melter import row_cartesian_product
 
 DTYPE_t, DOUBLE_t = np.float32, np.float64
 
@@ -134,7 +133,10 @@ def comparison_text(a, b, equal_indices):
         b = np.repeat(b, a.size)
 
     if n_diff == 0:
-        return np.array2string(a, edgeitems=2, threshold=5)
+        return (
+            np.array2string(a, edgeitems=2, threshold=5)
+            + f' shape: {a.shape}'
+        )
 
     a = a.reshape(-1)
     b = b.reshape(-1)

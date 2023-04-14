@@ -13,16 +13,16 @@ import sklearn.tree
 from sklearn.utils._testing import assert_allclose
 from sklearn.utils.validation import check_symmetric, check_random_state
 
-from hypertrees.tree._nd_classes import (
+from bipartite_learn.tree._bipartite_classes import (
     BipartiteDecisionTreeRegressor,
     BipartiteDecisionTreeClassifier,
     _normalize_weights,
 )
-from hypertrees.tree import _nd_classes
-from hypertrees.melter import row_cartesian_product
+from bipartite_learn.tree import _bipartite_classes
+from bipartite_learn.melter import row_cartesian_product
 
-from make_examples import make_interaction_blobs, make_interaction_regression, make_interaction_data
-from test_utils import assert_equal_dicts, stopwatch, parse_args, gen_mock_data, melt_2d_data
+from .utils.make_examples import make_interaction_blobs, make_interaction_regression, make_interaction_data
+from .utils.test_utils import assert_equal_dicts, stopwatch, parse_args, gen_mock_data, melt_2d_data
 
 # from sklearn.tree._tree import DTYPE_t, DOUBLE_t
 DTYPE_t, DOUBLE_t = np.float32, np.float64
@@ -54,7 +54,7 @@ def n_samples(request):
 def n_features(request):
     return request.param
 
-@pytest.fixture(params=["squared_error_gso", "friedman_mse"])
+@pytest.fixture(params=["squared_error_gso", "friedman_gso"])
 def gso_criterion(request):
     return request.param
 
@@ -123,7 +123,7 @@ def compare_trees(
 ):
     """Fit and compare trees.
 
-    Fit hypertreesBipartiteDecisionTreeRegressor on mock data and assert the grown
+    Fit bipartite_learnBipartiteDecisionTreeRegressor on mock data and assert the grown
     tree is identical to the one built by sklearn.DecisionTreeRegressor.
 
     Parameters
@@ -216,7 +216,7 @@ def compare_trees(
     'criterion_mono, criterion_bi',
     [
         ('squared_error', 'squared_error_gso'),
-        ('friedman_mse', 'friedman_mse'),
+        ('friedman_mse', 'friedman_gso'),
     ]
 )
 def test_simple_tree_1d2d(
@@ -313,13 +313,13 @@ def test_identity_gso(splitter, adapter, gso_criterion, **params):
 @pytest.mark.parametrize(
     "pred_weights", [
         None,
-        *_nd_classes.PREDICTION_WEIGHTS_OPTIONS-{"raw"},
+        *_bipartite_classes.PREDICTION_WEIGHTS_OPTIONS-{"raw"},
         lambda x: x ** 3,
     ]
 )
 @pytest.mark.parametrize("splitter", ["random", "best"])
 @pytest.mark.parametrize(
-    "criterion", _nd_classes.BIPARTITE_CRITERIA["gmo"]["regression"].keys()
+    "criterion", _bipartite_classes.BIPARTITE_CRITERIA["gmo"]["regression"].keys()
 )
 def test_identity_gmo(pred_weights, splitter, criterion, **params):
     """Tests wether regression trees can grow util isolating every instance.
@@ -350,16 +350,14 @@ def test_identity_gmo(pred_weights, splitter, criterion, **params):
 
 
 @pytest.mark.parametrize("splitter", ["random", "best"])
-def test_gini_mse_identity(splitter, random_state, **params):
-    params = DEF_PARAMS | params
-    params['n_features'] = params['n_samples'] #= (10, 10)
-    XX, Y = make_interaction_regression(return_molten=False, **params)
-    XX = [check_symmetric(X, raise_warning=False) for X in XX]
-    Y = (Y > Y.mean()).astype(np.float64)  # Turn into binary.
-
+def test_random_state(splitter, n_samples, random_state):
     random_state = check_random_state(random_state)
 
-    tree_reg = BipartiteDecisionTreeRegressor(
+    XX = [random_state.uniform(size=(n, n)) for n in n_samples]
+    XX = [check_symmetric(X, raise_warning=False) for X in XX]
+    Y = random_state.choice((0., 1.), size=n_samples)
+
+    tree1 = BipartiteDecisionTreeRegressor(
         min_samples_leaf=1,
         bipartite_adapter="gmosa",
         splitter=splitter,
@@ -367,31 +365,97 @@ def test_gini_mse_identity(splitter, random_state, **params):
         random_state=copy.deepcopy(random_state),
     ).fit(XX, Y)
 
-    tree_clf = BipartiteDecisionTreeClassifier(
+    tree2 = BipartiteDecisionTreeRegressor(
         min_samples_leaf=1,
+        bipartite_adapter="gmosa",
+        splitter=splitter,
+        criterion="squared_error",
+        random_state=copy.deepcopy(random_state),
+    ).fit(XX, Y)
+
+    leaves1 = get_leaves(tree1.tree_)
+    leaves2 = get_leaves(tree2.tree_)
+
+    values1 = tree1.tree_.value[..., -1].reshape(-1)
+    values2 = tree2.tree_.value[..., -1].reshape(-1)
+
+    assert len(values1) > 10, "Not enough leaves"
+
+    pred1 = tree1.predict(XX)
+    pred2 = tree2.predict(XX)
+
+    assert_equal_dicts(
+        {
+            **leaves1,
+            'value': values1,
+            'predictions': pred1,
+        },
+        {
+            **leaves2,
+            'value': values2,
+            'predictions': pred2,
+        },
+    )
+
+
+@pytest.mark.parametrize("splitter", ["random", "best"])
+def test_gini_mse_identity(splitter, n_samples, random_state):
+    random_state = check_random_state(random_state)
+
+    XX = [random_state.uniform(size=(n, n)) for n in n_samples]
+    XX = [check_symmetric(X, raise_warning=False) for X in XX]
+    Y = random_state.choice((0., 1.), size=n_samples)
+
+    tree_reg = BipartiteDecisionTreeRegressor(
+        min_rows_leaf=10,
+        min_cols_leaf=10,
+        bipartite_adapter="gmosa",
+        splitter=splitter,
+        criterion="squared_error",
+        random_state=copy.deepcopy(random_state),
+    ).fit(XX, Y)
+
+    tree_clf = BipartiteDecisionTreeClassifier(
+        min_rows_leaf=10,
+        min_cols_leaf=10,
         bipartite_adapter="gmosa",
         splitter=splitter,
         criterion="gini",
         random_state=copy.deepcopy(random_state),
     ).fit(XX, Y)
 
-    assert_equal_leaves(tree_reg.tree_, tree_clf.tree_, ignore={'value'})
+    leaves_reg = get_leaves(tree_reg.tree_)
+    leaves_clf = get_leaves(tree_clf.tree_)
 
-    values_reg = tree_reg.tree_.value[..., -1]
-    values_clf = tree_clf.tree_.value[..., -1]
+    leaves_reg['impurity'] *= 2
 
-    assert_allclose(values_reg, values_clf)
+    values_reg = tree_reg.tree_.value[..., -1].reshape(-1)
+    values_clf = tree_clf.tree_.value[..., -1].flatten()  # copy
+    values_clf /= tree_clf.tree_.weighted_n_node_samples
+
+    assert len(leaves_reg['impurity']) > 5, "Not enough leaves"
 
     pred_reg = tree_reg.predict(XX)
-    pred_clf = tree_clf.predict_proba(XX)
+    pred_clf = tree_clf.predict_proba(XX)[..., -1]
 
-    assert_allclose(pred_reg, pred_clf)
+    assert_equal_dicts(
+        {
+            **leaves_reg,
+            'value': values_reg,
+            'predictions': pred_reg,
+        },
+        {
+            **leaves_clf,
+            'value': values_clf,
+            'predictions': pred_clf,
+        },
+    )
 
 
 @pytest.mark.parametrize("min_samples_leaf", [1, 20, 100])
 @pytest.mark.parametrize("splitter", ["random", "best"])
 @pytest.mark.parametrize(
-    "criterion", _nd_classes.BIPARTITE_CRITERIA["gmo"]["regression"].keys()
+    "criterion", _bipartite_classes.BIPARTITE_CRITERIA["gmo"]["regression"].keys()
 )
 def test_leaf_mean_symmetry(min_samples_leaf, splitter, criterion):
     """Tests if Y_leaf.mean(0).mean() == Y_leaf.mean(1).mean()

@@ -3,13 +3,13 @@ from typing import Sequence
 import pytest
 from sklearn.utils._tags import _safe_tags
 
-from hypertrees.model_selection import cross_validate_nd
-from hypertrees.tree import BipartiteExtraTreeRegressor
-from hypertrees.ensemble import BipartiteExtraTreesRegressor
-import hypertrees.ensemble
+from bipartite_learn.model_selection import multipartite_cross_validate
+from bipartite_learn.tree import BipartiteExtraTreeRegressor
+from bipartite_learn.ensemble import BipartiteExtraTreesRegressor
+import bipartite_learn.ensemble
 
-from test_utils import stopwatch, parse_args
-from make_examples import make_interaction_regression
+from .utils.test_utils import stopwatch, parse_args
+from .utils.make_examples import make_interaction_regression
 
 
 # Default test params
@@ -86,7 +86,7 @@ def _test_cv(estimator, random_state=None, cv_params=None, **PARAMS):
         y = y > y.mean()
     
     # TODO: random_state
-    cv_res = cross_validate_nd(estimator, X=X, y=y, **cv_params)
+    cv_res = multipartite_cross_validate(estimator, X=X, y=y, **cv_params)
     pprint(cv_res)
 
     for estimator in cv_res["estimator"]:
@@ -118,6 +118,7 @@ def test_cv_ensemble(msl, random_state, **PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
     return _test_cv(
         estimator=BipartiteExtraTreesRegressor(
+            n_estimators=10,
             min_samples_leaf=msl,
             random_state=random_state,
         ),
@@ -129,7 +130,8 @@ def test_cv_ensemble(msl, random_state, **PARAMS):
 def test_cv_semisupervised_ensemble(msl, random_state, **PARAMS):
     PARAMS = DEF_PARAMS | PARAMS
     return _test_cv(
-        estimator=hypertrees.ensemble.BipartiteExtraTreesRegressorSS(
+        estimator=bipartite_learn.ensemble.BipartiteExtraTreesRegressorSS(
+            n_estimators=10,
             min_samples_leaf=msl,
             random_state=random_state,
             bipartite_adapter='gmosa',
@@ -185,4 +187,3 @@ def test_cv_pairwise_parameter(msl, random_state, **PARAMS):
 
     assert not _safe_tags(estimator, "pairwise")
     return cv_res
-

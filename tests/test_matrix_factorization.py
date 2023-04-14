@@ -6,14 +6,14 @@ from sklearn.utils._testing import assert_allclose
 from sklearn.utils.validation import check_symmetric
 from imblearn.pipeline import make_pipeline
 
-from hypertrees.matrix_factorization._nrlmf import NRLMF
-from hypertrees.matrix_factorization._dnilmf import DNILMF
-from hypertrees.preprocessing.multipartite import DTHybridSampler
-from hypertrees.preprocessing.monopartite import TargetKernelLinearCombiner
-from hypertrees.wrappers import (
+from bipartite_learn.matrix_factorization._nrlmf import NRLMF
+from bipartite_learn.matrix_factorization._dnilmf import DNILMF
+from bipartite_learn.preprocessing.multipartite import DTHybridSampler
+from bipartite_learn.preprocessing.monopartite import TargetKernelLinearCombiner
+from bipartite_learn.wrappers import (
     BipartiteLocalWrapper, MultipartiteSamplerWrapper,
 )
-from test_utils import gen_mock_data, DEF_PARAMS, parse_args
+from .utils.test_utils import gen_mock_data, DEF_PARAMS, parse_args
 
 
 def test_nrlmf(**params):

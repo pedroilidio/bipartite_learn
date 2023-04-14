@@ -1,7 +1,7 @@
-from hypertrees import BipartiteDecisionTreeRegressor
-from make_examples import make_interaction_blobs
-from test_utils import stopwatch
-from test_nd_classes import assert_equal_leaves
+from bipartite_learn import BipartiteDecisionTreeRegressor
+from .utils.make_examples import make_interaction_blobs
+from .utils.test_utils import stopwatch
+from .test_bipartite_trees import assert_equal_leaves
 from time import perf_counter
 
 

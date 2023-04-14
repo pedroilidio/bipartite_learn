@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.datasets import make_regression
 from sklearn.utils._testing import assert_allclose
-from hypertrees.neighbors import WeightedNeighborsRegressor
+from bipartite_learn.neighbors import WeightedNeighborsRegressor
 
 
 def test_weighted_neighbors_euclidean():

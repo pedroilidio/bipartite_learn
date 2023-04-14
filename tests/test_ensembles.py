@@ -11,26 +11,26 @@ from sklearn.dummy import DummyRegressor, DummyClassifier
 from sklearn.utils._testing import assert_allclose
 from sklearn.base import is_classifier
 
-from hypertrees.tree import (
+from bipartite_learn.tree import (
     BipartiteDecisionTreeRegressor,
     BipartiteExtraTreeRegressor,
 )
 
-from hypertrees.ensemble import (
+from bipartite_learn.ensemble import (
     BipartiteExtraTreesRegressor,
     BipartiteRandomForestRegressor,
 )
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 
-from hypertrees.tree._semisupervised_classes import (
+from bipartite_learn.tree._semisupervised_classes import (
     DecisionTreeRegressorSS,
     BipartiteExtraTreeRegressorSS,
 )
 
-from hypertrees.melter import (
+from bipartite_learn.melter import (
     row_cartesian_product,
 )
-from hypertrees.ensemble._semisupervised_forest import (
+from bipartite_learn.ensemble._semisupervised_forest import (
     RandomForestRegressorSS,
     ExtraTreesRegressorSS,
     BipartiteRandomForestRegressorSS,
@@ -38,10 +38,10 @@ from hypertrees.ensemble._semisupervised_forest import (
     # BipartiteRandomForestClassifierSS,
 )
 
-from test_utils import (
+from .utils.test_utils import (
     gen_mock_data, stopwatch, DEF_PARAMS, parse_args,
 )
-from make_examples import (
+from .utils.make_examples import (
     make_interaction_blobs,
     make_interaction_regression,
 )

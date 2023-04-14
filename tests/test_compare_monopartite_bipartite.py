@@ -13,17 +13,17 @@ from sklearn.ensemble import (
     RandomForestRegressor,
     ExtraTreesRegressor,
 )
-from hypertrees.ensemble._gb import (
+from bipartite_learn.ensemble._gb import (
     BipartiteGradientBoostingClassifier,
     BipartiteGradientBoostingRegressor,
 )
-from hypertrees.ensemble._forest import (
+from bipartite_learn.ensemble._forest import (
     BipartiteRandomForestRegressor,
     BipartiteExtraTreesRegressor,
 )
-from hypertrees.wrappers import GlobalSingleOutputWrapper
-from make_examples import make_interaction_regression
-from test_utils import assert_equal_dicts, stopwatch
+from bipartite_learn.wrappers import GlobalSingleOutputWrapper
+from .utils.make_examples import make_interaction_regression
+from .utils.test_utils import assert_equal_dicts, stopwatch
 from sklearn import metrics
 
 

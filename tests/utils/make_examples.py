@@ -9,7 +9,7 @@ from sklearn.tree import ExtraTreeRegressor
 from sklearn.utils import check_random_state
 from sklearn.utils._param_validation import validate_params, Interval
 from sklearn.datasets import make_blobs
-from hypertrees.melter import row_cartesian_product
+from bipartite_learn.melter import row_cartesian_product
 
 DIR_HERE = Path(__file__).resolve().parent
 
@@ -176,6 +176,7 @@ def make_interaction_regression(
         min_samples_leaf=1,
         max_features=1,
         max_depth=max_depth,
+        random_state=random_state,
     ).fit(
         row_cartesian_product(X),
         y.reshape(-1),

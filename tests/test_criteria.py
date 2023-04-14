@@ -1,4 +1,3 @@
-# TODO: test Friedman Criterion
 from abc import ABCMeta, abstractmethod
 from typing import Callable, Dict
 import numpy as np
@@ -10,19 +9,19 @@ from numbers import Real, Integral
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.utils.validation import check_random_state
 from sklearn.utils._param_validation import validate_params, Interval
-from hypertrees.tree._splitter_factory import (
+from bipartite_learn.tree._splitter_factory import (
     make_semisupervised_criterion,
     make_bipartite_criterion,
     make_2dss_criterion,
 )
-from hypertrees.tree._axis_criterion import (
+from bipartite_learn.tree._axis_criterion import (
     AxisSquaredError,
     AxisSquaredErrorGSO,
     AxisFriedmanGSO,
     AxisGini,
     AxisEntropy,
 )
-from hypertrees.tree._unsupervised_criterion import (
+from bipartite_learn.tree._unsupervised_criterion import (
     PairwiseFriedman,
     PairwiseSquaredError,
     PairwiseSquaredErrorGSO,
@@ -33,15 +32,15 @@ from hypertrees.tree._unsupervised_criterion import (
     UnsupervisedFriedman,
     MeanDistance,
 )
-from hypertrees.tree._nd_criterion import GMO, GMOSA
-from hypertrees.tree._semisupervised_criterion import (
+from bipartite_learn.tree._bipartite_criterion import GMO, GMOSA
+from bipartite_learn.tree._semisupervised_criterion import (
     SSCompositeCriterion,
 )
 
-from hypertrees.melter import row_cartesian_product
-from test_utils import assert_equal_dicts, comparison_text
-from make_examples import make_interaction_blobs
-from splitter_test import (
+from bipartite_learn.melter import row_cartesian_product
+from .utils.test_utils import assert_equal_dicts, comparison_text
+from .utils.make_examples import make_interaction_blobs
+from .utils.tree_utils import (
     apply_criterion,
     apply_ss_criterion,
     apply_bipartite_criterion,
@@ -58,6 +57,7 @@ CLASSIFICATION_CRITERIA = {
 PAIRWISE_CRITERIA = {
     MeanDistance,
 }
+
 
 # =============================================================================
 # General fixtures
@@ -435,7 +435,6 @@ class ReferenceMeanDistance(BaseReferenceCriterion):
         return split
 
 
-
 class ReferenceCompositeSS(BaseReferenceCriterion):
     def __init__(
         self,
@@ -637,7 +636,7 @@ def semisupervised_criterion(
                 'supervised_criteria': AxisGini,
                 'unsupervised_criteria': UnsupervisedSquaredError,
                 'ss_criteria': SSCompositeCriterion,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
             ReferenceCompositeSS(
                 ReferenceGini(),
@@ -651,7 +650,7 @@ def semisupervised_criterion(
                 'supervised_criteria': AxisEntropy,
                 'unsupervised_criteria': UnsupervisedSquaredError,
                 'ss_criteria': SSCompositeCriterion,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
             ReferenceCompositeSS(
                 ReferenceEntropy(),
@@ -665,7 +664,7 @@ def semisupervised_criterion(
                 'supervised_criteria': AxisSquaredErrorGSO,
                 'unsupervised_criteria': UnsupervisedSquaredError,
                 'ss_criteria': SSCompositeCriterion,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
             ReferenceCompositeSS(
                 ReferenceSquaredErrorGSO(),
@@ -679,7 +678,7 @@ def semisupervised_criterion(
                 'supervised_criteria': AxisSquaredError,
                 'unsupervised_criteria': UnsupervisedSquaredError,
                 'ss_criteria': SSCompositeCriterion,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
             ReferenceCompositeSS(
                 ReferenceSquaredError(),
@@ -693,7 +692,7 @@ def semisupervised_criterion(
                 'supervised_criteria': AxisFriedmanGSO,
                 'unsupervised_criteria': UnsupervisedSquaredError,
                 'ss_criteria': SSCompositeCriterion,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
             ReferenceCompositeSS(
                 ReferenceFriedmanGSO(),
@@ -707,7 +706,7 @@ def semisupervised_criterion(
                 'supervised_criteria': AxisSquaredErrorGSO,
                 'unsupervised_criteria': MeanDistance,
                 'ss_criteria': SSCompositeCriterion,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
             ReferenceCompositeSS(
                 ReferenceSquaredErrorGSO(),
@@ -754,7 +753,7 @@ def ss_bipartite_criterion(
             make_bipartite_criterion,
             {
                 'criteria': AxisGini,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
             ReferenceGini(average_both_axes=True),
         ),
@@ -762,7 +761,7 @@ def ss_bipartite_criterion(
             make_bipartite_criterion,
             {
                 'criteria': AxisEntropy,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
             ReferenceEntropy(average_both_axes=True),
         ),
@@ -770,7 +769,7 @@ def ss_bipartite_criterion(
             make_bipartite_criterion,
             {
                 'criteria': AxisSquaredErrorGSO,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
             ReferenceSquaredErrorGSO(),
         ),
@@ -778,7 +777,7 @@ def ss_bipartite_criterion(
             make_bipartite_criterion,
             {
                 'criteria': AxisSquaredError,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
             ReferenceSquaredError(average_both_axes=True),
         ),
@@ -786,7 +785,7 @@ def ss_bipartite_criterion(
             make_bipartite_criterion,
             {
                 'criteria': AxisFriedmanGSO,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
             ReferenceFriedmanGSO(average_both_axes=True),
         ),

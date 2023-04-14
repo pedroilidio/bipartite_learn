@@ -9,21 +9,21 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.tree._splitter import BestSplitter
 from sklearn.utils import check_random_state
 
-from hypertrees.tree import BipartiteDecisionTreeRegressor
-from hypertrees.tree._splitter_factory import (
+from bipartite_learn.tree import BipartiteDecisionTreeRegressor
+from bipartite_learn.tree._splitter_factory import (
     make_bipartite_ss_splitter,
     make_semisupervised_criterion,
 ) 
-from hypertrees.tree._semisupervised_criterion import (
+from bipartite_learn.tree._semisupervised_criterion import (
     SSCompositeCriterion,
 )
 
-from hypertrees.tree._semisupervised_classes import (
+from bipartite_learn.tree._semisupervised_classes import (
     DecisionTreeRegressorSS, BipartiteDecisionTreeRegressorSS,
 )
 
 from sklearn.tree._criterion import MSE
-from test_nd_classes import compare_trees, parse_args
+from .test_bipartite_trees import compare_trees, parse_args
 
 # from sklearn.tree._tree import DTYPE_t, DOUBLE_t
 DTYPE_t, DOUBLE_t = np.float32, np.float64
@@ -136,13 +136,10 @@ def test_semisupervision_1d2d(
     )
 
 
-# FIXME: supervision=0.0 fails. No idea why, it shoul not even be used.
-# @pytest.mark.skip(
-#     reason="compare_trees still does not work with dynamic supervision")
 @pytest.mark.parametrize('update_supervision', [
-    lambda **kw: 0.7,
-    lambda original_supervision, **kw: original_supervision,
-    lambda weighted_n_node_samples, weighted_n_samples, **kw:
+    lambda **_: 0.7,
+    lambda original_supervision, **_: original_supervision,
+    lambda weighted_n_node_samples, weighted_n_samples, **_:
         1 - 0.3 * weighted_n_node_samples/weighted_n_samples,
 ])
 def test_dynamic_supervision_1d2d(

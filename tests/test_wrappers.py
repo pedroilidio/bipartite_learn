@@ -6,10 +6,10 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.base import clone
 from sklearn.model_selection._validation import _score
 from sklearn.metrics import check_scoring
-from hypertrees.wrappers import GlobalSingleOutputWrapper
-from hypertrees.melter import melt_multipartite_dataset
-from make_examples import make_interaction_regression
-from test_utils import stopwatch
+from bipartite_learn.wrappers import GlobalSingleOutputWrapper
+from bipartite_learn.melter import melt_multipartite_dataset
+from .utils.make_examples import make_interaction_regression
+from .utils.test_utils import stopwatch
 
 with stopwatch('Making dataset'):
     XX, Y, X, y = make_interaction_regression(
@@ -38,7 +38,7 @@ def min_samples_leaf(request):
     return request.param
 
 
-def test_pu_wrapper_nd_no_neg_subsamples(random_state, min_samples_leaf):
+def test_pu_wrapper_bipartite_no_neg_subsamples(random_state, min_samples_leaf):
     Y_ = (Y == 1).astype(int)
     y_ = (y == 1).astype(int)
 
@@ -46,20 +46,20 @@ def test_pu_wrapper_nd_no_neg_subsamples(random_state, min_samples_leaf):
         min_samples_leaf=min_samples_leaf,
         random_state=random_state,
     )
-    tree_nd = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=False)
+    tree_bipartite = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=False)
 
-    tree_nd.fit(XX, Y_)
+    tree_bipartite.fit(XX, Y_)
     tree.fit(X, y_)
 
-    assert export_text(tree_nd.estimator) == export_text(tree)
+    assert export_text(tree_bipartite.estimator) == export_text(tree)
 
 
-def test_pu_wrapper_nd_neg_subsamples(random_state, min_samples_leaf):
+def test_pu_wrapper_bipartite_neg_subsamples(random_state, min_samples_leaf):
     tree = DecisionTreeRegressor(
         min_samples_leaf=min_samples_leaf,
         random_state=random_state,
     )
-    tree_nd = GlobalSingleOutputWrapper(
+    tree_bipartite = GlobalSingleOutputWrapper(
         estimator=clone(tree),
         subsample_negatives=True,
         random_state=random_state,
@@ -78,13 +78,13 @@ def test_pu_wrapper_nd_neg_subsamples(random_state, min_samples_leaf):
     assert ys.shape[0] < y.shape[0]
     assert Xs.shape[0] == ys.shape[0]
 
-    tree_nd.fit(XX, Y)
+    tree_bipartite.fit(XX, Y)
     tree.fit(Xs, ys)
 
-    # print(export_text(tree_nd.estimator))
+    # print(export_text(tree_bipartite.estimator))
     # print(export_text(tree))
 
-    assert export_text(tree_nd.estimator) == export_text(tree)
+    assert export_text(tree_bipartite.estimator) == export_text(tree)
 
 
 def _test_pickling(obj):
@@ -101,10 +101,10 @@ def test_wrapped_tree_pickling():
         min_samples_leaf=30,
         random_state=0,
     )
-    tree_nd = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=True)
+    tree_bipartite = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=True)
 
     _test_pickling(tree)
-    _test_pickling(tree_nd)
+    _test_pickling(tree_bipartite)
 
 
 def test_wrapped_forest_pickling():
@@ -112,11 +112,11 @@ def test_wrapped_forest_pickling():
         min_samples_leaf=30,
         random_state=0,
     )
-    forest_nd = GlobalSingleOutputWrapper(
+    forest_bipartite = GlobalSingleOutputWrapper(
         clone(forest), subsample_negatives=True)
 
     _test_pickling(forest)
-    _test_pickling(forest_nd)
+    _test_pickling(forest_bipartite)
 
 
 def test_score():
@@ -124,16 +124,16 @@ def test_score():
         min_samples_leaf=30,
         random_state=0,
     )
-    forest_nd = GlobalSingleOutputWrapper(
+    forest_bipartite = GlobalSingleOutputWrapper(
         clone(forest),
         subsample_negatives=True,
         random_state=0,
     )
-    forest_nd.fit(XX, Y)
+    forest_bipartite.fit(XX, Y)
 
     score = _score(
-        forest_nd, X, y,
-        check_scoring(forest_nd, "roc_auc"),
+        forest_bipartite, X, y,
+        check_scoring(forest_bipartite, "roc_auc"),
         error_score="raise",
     )
     print("Score:", score)

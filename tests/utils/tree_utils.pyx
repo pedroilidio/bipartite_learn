@@ -3,11 +3,11 @@ from sklearn.tree._criterion cimport Criterion
 from sklearn.tree._splitter cimport Splitter, SplitRecord
 from sklearn.tree._tree cimport SIZE_t, DOUBLE_t, DTYPE_t
 
-from hypertrees.tree._nd_criterion cimport BipartiteCriterion
-from hypertrees.tree._semisupervised_criterion cimport (
+from bipartite_learn.tree._bipartite_criterion cimport BipartiteCriterion
+from bipartite_learn.tree._semisupervised_criterion cimport (
     SSCompositeCriterion, BipartiteSemisupervisedCriterion,
 )
-from hypertrees.tree._nd_splitter cimport (
+from bipartite_learn.tree._bipartite_splitter cimport (
     MultipartiteSplitRecord,
     BipartiteSplitter
 )
@@ -27,7 +27,7 @@ cdef inline void _init_split(SplitRecord* self, SIZE_t start_pos) nogil:
     self.improvement = -INFINITY
 
 
-cpdef test_splitter(
+cpdef apply_monopartite_splitter(
     Splitter splitter,
     object X, cnp.ndarray y,
     SIZE_t start=0,
@@ -80,7 +80,7 @@ cpdef test_splitter(
     )
 
 
-cpdef test_splitter_nd(
+cpdef apply_bipartite_splitter(
     BipartiteSplitter splitter,
     X, y,
     start=[0, 0],
@@ -89,7 +89,7 @@ cpdef test_splitter_nd(
     verbose=False,
 ):
     if verbose:
-        print('[SPLITTER_TEST] starting splitter_nd test')
+        print('[SPLITTER_TEST] starting splitter_bipartite test')
     ndim = ndim or y.ndim
     cdef SIZE_t* end_ = <SIZE_t*> malloc(ndim * sizeof(SIZE_t))
     cdef SIZE_t* start_ = <SIZE_t*> malloc(ndim * sizeof(SIZE_t))

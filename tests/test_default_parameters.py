@@ -12,15 +12,15 @@ from sklearn.ensemble import (
     ExtraTreesClassifier,
     ExtraTreesRegressor,
 )
-from hypertrees.tree import (
+from bipartite_learn.tree import (
     BipartiteDecisionTreeRegressor,
     BipartiteExtraTreeRegressor,
 )
-from hypertrees.ensemble import (
+from bipartite_learn.ensemble import (
     BipartiteRandomForestRegressor,
     BipartiteExtraTreesRegressor,
 )
-from hypertrees.tree._semisupervised_classes import (
+from bipartite_learn.tree._semisupervised_classes import (
     DecisionTreeClassifierSS, 
     DecisionTreeRegressorSS,
     ExtraTreeClassifierSS,
@@ -28,7 +28,7 @@ from hypertrees.tree._semisupervised_classes import (
     BipartiteDecisionTreeRegressorSS,
     BipartiteExtraTreeRegressorSS,
 )
-from hypertrees.ensemble._semisupervised_forest import (
+from bipartite_learn.ensemble._semisupervised_forest import (
     RandomForestClassifierSS, 
     RandomForestRegressorSS,
     ExtraTreesClassifierSS,
@@ -36,7 +36,7 @@ from hypertrees.ensemble._semisupervised_forest import (
     BipartiteRandomForestRegressorSS,
     BipartiteExtraTreesRegressorSS,
 )
-from test_utils import assert_equal_dicts
+from .utils.test_utils import assert_equal_dicts
 
 @pytest.mark.parametrize(
     'estimator1,estimator2,ignore',

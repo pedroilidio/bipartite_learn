@@ -16,36 +16,36 @@ from sklearn.utils.validation import check_random_state
 from sklearn.utils._testing import assert_allclose
 from sklearn.utils._param_validation import Interval, validate_params
 
-from hypertrees.tree._splitter_factory import (
+from bipartite_learn.tree._splitter_factory import (
     make_bipartite_splitter,
     make_bipartite_ss_splitter,
     make_semisupervised_criterion,
 )
-from hypertrees.tree._nd_criterion import (
+from bipartite_learn.tree._bipartite_criterion import (
     GMO,
     GMOSA,
 )
-from hypertrees.tree._axis_criterion import (
+from bipartite_learn.tree._axis_criterion import (
     AxisSquaredError,
     AxisSquaredErrorGSO,
     AxisFriedmanGSO,
     AxisGini,
     AxisEntropy,
 )
-from hypertrees.tree._semisupervised_criterion import (
+from bipartite_learn.tree._semisupervised_criterion import (
     SSCompositeCriterion,
 )
-from hypertrees.tree._unsupervised_criterion import (
+from bipartite_learn.tree._unsupervised_criterion import (
     UnsupervisedSquaredError,
     UnsupervisedFriedman,
 )
-from make_examples import make_interaction_blobs, make_interaction_regression
+from .utils.make_examples import make_interaction_blobs, make_interaction_regression
 
-from splitter_test import test_splitter, test_splitter_nd
-from test_utils import (
+from .utils.tree_utils import apply_monopartite_splitter, apply_bipartite_splitter
+from .utils.test_utils import (
     parse_args, stopwatch, gen_mock_data, melt_2d_data, assert_equal_dicts,
 )
-import test_criteria
+from . import test_criteria
 
 
 # Default test params
@@ -281,7 +281,7 @@ def test_compare_1d_splitters(
     with stopwatch(
         f'Testing first splitter ({splitter1.__class__.__name__})...'
     ):
-        result1 = test_splitter(
+        result1 = apply_monopartite_splitter(
             splitter1, X, Y,
             start=start,
             end=end,
@@ -293,7 +293,7 @@ def test_compare_1d_splitters(
     with stopwatch(
         f'Testing second splitter ({splitter2.__class__.__name__})...'
     ):
-        result2 = test_splitter(
+        result2 = apply_monopartite_splitter(
             splitter2, X, Y,
             start=start,
             end=end,
@@ -318,7 +318,7 @@ def test_compare_1d_splitters(
             bipartite_splitter_factory, {
                 'splitters': BestSplitter,
                 'criteria': AxisSquaredErrorGSO,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
         ),
         # Friedman impurity depends on weighted_n_left/right, predictable
@@ -354,7 +354,7 @@ def test_compare_1d2d_splitters_gso(
     with stopwatch(
         f'Testing monopartite splitter ({mono_splitter.__class__.__name__})...'
     ):
-        result_monopartite = test_splitter(
+        result_monopartite = apply_monopartite_splitter(
             mono_splitter,
             x, y,
             start=start_row * Y.shape[1],
@@ -382,7 +382,7 @@ def test_compare_1d2d_splitters_gso(
     with stopwatch(
         f'Testing bipartite splitter ({bi_splitter.__class__.__name__})...'
     ):
-        result_bipartite = test_splitter_nd(
+        result_bipartite = apply_bipartite_splitter(
             bi_splitter,
             XX, Y,
             start=[start_row, start_col],
@@ -414,7 +414,7 @@ def test_compare_1d2d_splitters_gso(
             bipartite_splitter_factory, {
                 'splitters': BestSplitter,
                 'criteria': AxisSquaredError,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
         ),
         (
@@ -425,7 +425,7 @@ def test_compare_1d2d_splitters_gso(
             bipartite_splitter_factory, {
                 'splitters': BestSplitter,
                 'criteria': AxisFriedmanGSO,
-                'criterion_wrapper_class': GMOSA,
+                'bipartite_criterion_class': GMOSA,
             },
         ),
     ],
@@ -463,7 +463,7 @@ def test_compare_1d2d_splitters_gmo(
     with stopwatch(
         f'Testing 2D splitter ({bi_splitter.__class__.__name__})...'
     ):
-        result_bipartite = test_splitter_nd(
+        result_bipartite = apply_bipartite_splitter(
             bi_splitter,
             XX, Y,
             start=[start_row, start_col],
@@ -476,7 +476,7 @@ def test_compare_1d2d_splitters_gmo(
     with stopwatch(
         f'Testing 1D splitter ({type(mono_splitter_rows).__name__}) on rows...'
     ):
-        result_rows = test_splitter(
+        result_rows = apply_monopartite_splitter(
             mono_splitter_rows,
             XX[0], Y,
             start=start_row,
@@ -490,7 +490,7 @@ def test_compare_1d2d_splitters_gmo(
     with stopwatch(
         f'Testing 1D splitter ({type(mono_splitter_cols).__name__}) on columns...'
     ):
-        result_columns = test_splitter(
+        result_columns = apply_monopartite_splitter(
             mono_splitter_cols,
             XX[1], np.ascontiguousarray(Y.T),
             start=start_col,
@@ -839,7 +839,7 @@ def test_ss_1d2d_blobs(supervision, random_state, **params):
         random_state=check_random_state(random_state),
         axis_decision_only=False,
     )
-    result1 = test_splitter(
+    result1 = apply_monopartite_splitter(
         splitter1,
         x,
         np.hstack((x, y)),
@@ -864,7 +864,7 @@ def test_ss_1d2d_blobs(supervision, random_state, **params):
     result1['old_pos'] = pos
     result1['pos'] = pos // n_rows if axis else pos // n_cols
 
-    result2 = test_splitter_nd(
+    result2 = apply_bipartite_splitter(
         splitter2,
         X,
         Y,
@@ -874,7 +874,7 @@ def test_ss_1d2d_blobs(supervision, random_state, **params):
 
 
 @pytest.mark.skip
-def test_splitter_gmo(**params):
+def apply_monopartite_splitter_gmo(**params):
     params = DEF_PARAMS | params
     BipartiteSplitter = make_bipartite_splitter(
         max_features=params['nattrs'],
@@ -894,10 +894,10 @@ def test_splitter_gmo(**params):
 
 # TODO: compare results
 @pytest.mark.skip
-def test_splitter_gmo_classification(**params):
+def apply_monopartite_splitter_gmo_classification(**params):
     params = DEF_PARAMS | params
     BipartiteSplitter = make_bipartite_splitter(
-        criterion_wrapper_class=GMO,
+        bipartite_criterion_class=GMO,
         is_classification=True,
         splitters=BestSplitter,
         criteria=[AxisGini, AxisGini],
@@ -960,7 +960,7 @@ def test_ss_axis_decision_only(supervision, random_state, **params):
         axis_decision_only=True,
     )
     splitter2.criterion_wrapper.init_X(X[0], X[1])
-    result2 = test_splitter_nd(
+    result2 = apply_bipartite_splitter(
         splitter2,
         X,
         Y,
@@ -979,7 +979,7 @@ def test_ss_axis_decision_only(supervision, random_state, **params):
         min_weight_leaf=0.0,
         random_state=check_random_state(random_state),
     )
-    result1 = test_splitter(
+    result1 = apply_monopartite_splitter(
         splitter1,
         x,
         y,
@@ -1036,7 +1036,7 @@ def test_gini_mse_identity(random_state, **params):
     logging.info(f'parent_impurity: {node_impurity}')
 
     splitter_gini = make_bipartite_splitter(
-        criterion_wrapper_class=GMO,
+        bipartite_criterion_class=GMO,
         splitters=BestSplitter,
         criteria=AxisGini,
         max_features=params['nattrs'],
@@ -1046,7 +1046,7 @@ def test_gini_mse_identity(random_state, **params):
         min_weight_leaf=0.0,
     )
     splitter_mse = make_bipartite_splitter(
-        criterion_wrapper_class=GMO,
+        bipartite_criterion_class=GMO,
         splitters=BestSplitter,
         criteria=AxisSquaredError,
         max_features=params['nattrs'],
@@ -1055,11 +1055,11 @@ def test_gini_mse_identity(random_state, **params):
         min_samples_leaf=params['min_samples_leaf'],
         min_weight_leaf=0.0,
     )
-    result_mse = test_splitter_nd(
+    result_mse = apply_bipartite_splitter(
         splitter_mse, XX, Y,
         verbose=params['verbose'],
     )
-    result_gini = test_splitter_nd(
+    result_gini = apply_bipartite_splitter(
         splitter_gini, XX, Y,
         verbose=params['verbose'],
     )
