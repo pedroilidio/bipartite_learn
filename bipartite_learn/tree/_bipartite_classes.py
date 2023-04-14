@@ -40,7 +40,7 @@ from sklearn.tree._tree import DTYPE, DOUBLE
 
 from sklearn.tree._classes import BaseDecisionTree
 from ..base import BaseMultipartiteEstimator
-from ._bipartite_tree import DepthFirstTreeBuilder2D
+from ._bipartite_tree import BipartiteDepthFirstTreeBuilder
 from ._bipartite_criterion import (
     BipartiteCriterion,
     GMO,
@@ -616,7 +616,7 @@ class BaseBipartiteDecisionTree(
 
         # Use BestFirst if max_leaf_nodes given; use DepthFirst otherwise
         if max_leaf_nodes < 0:
-            builder = DepthFirstTreeBuilder2D(
+            builder = BipartiteDepthFirstTreeBuilder(
                 splitter,
                 min_samples_split=min_samples_split,
                 min_samples_leaf=min_samples_leaf,

@@ -115,7 +115,7 @@ cdef struct StackRecord2D:
     SIZE_t n_constant_col_features
 
 
-cdef class DepthFirstTreeBuilder2D(BipartiteTreeBuilder):
+cdef class BipartiteDepthFirstTreeBuilder(BipartiteTreeBuilder):
     """Build a decision tree in depth-first fashion, from 2D training data.
 
     It adds minor changes to sklearn's DepthfirstTreeBuilder, essentially

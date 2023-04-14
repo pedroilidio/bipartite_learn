@@ -2,8 +2,8 @@
 requires = [
     "setuptools",
     "wheel",
-    "numpy>=1.21.0",
-    "scikit-learn==1.1.1",
-    "cython==0.29.28",
+    "numpy>=1.22.0",
+    "cython>=0.29.33",
+    "scikit-learn @ git+https://github.com/scikit-learn/scikit-learn@893d5accaf9d16f447645e704f85a216187564f7#egg=scikit-learn"
 ]
 build-backend = "setuptools.build_meta"

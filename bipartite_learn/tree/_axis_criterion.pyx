@@ -55,6 +55,7 @@ cdef class AxisCriterion(BaseComposableCriterion):
 
     def __cinit__(self):
         self.y = None
+        self.y_ = None
         self._columns_are_set = False
         self._cached_pos = SIZE_MAX
         self._cached_rows_impurity_left = 0.0
@@ -64,15 +65,12 @@ cdef class AxisCriterion(BaseComposableCriterion):
         # TODO: use cached node impurity
         self._cached_rows_node_impurity = 0.0
         self._cached_cols_node_impurity = 0.0
+
+        self.col_indices = None
         # TODO: Possibly remove if Splitter can find split without reordering
-        # sample_indices. The upside is that we reduce memory usage, the downside is
-        # that we lose C contiguity, which seems important here.
-        
-        # TODO: set a default node_col_indices to use global friedman with
-        # monopartite splitters
-        # self._node_col_indices = np.arange(
-        #     self.n_outputs, dtype='intp', order='C'
-        # )
+        # sample_indices. The upside is that we reduce memory usage, the
+        # downside is that we lose C contiguity, which seems important here.
+        self._node_col_indices = None
 
     cdef int init(
         self,
