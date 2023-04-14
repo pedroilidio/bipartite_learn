@@ -1,8 +1,10 @@
-<div height='100px', width='100%', bg='white', padding='30px'>
-    <img src="https://github.com/pedroilidio/raw/main/docs/logos/bipartite_learn_full_logo.svg" width="300px" />
-</div>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/pedroilidio/bipartite_learn/main/docs/logos/bipartite_learn_full_logo.svg" width="300px" style="padding:30px 200px; background-color:white;">
+</p>
 
-_Machine learning estimators tailored to bipartite datasets._ 
+<p align="center" style="font-style: italic;">
+  Machine learning estimators tailored to bipartite datasets.
+</p>
 
 In a usual machine learning setting, one is interested in predicting a set of
 outputs `y` from a given feature vector `x` representing an input instance.
