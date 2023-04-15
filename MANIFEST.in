@@ -1,9 +1,5 @@
+include README.md
 include requirements.txt
-include hypertrees/tree/_nd_criterion.pxd
-include hypertrees/tree/_nd_splitter.pxd
-include hypertrees/tree/_nd_tree.pxd
-include hypertrees/tree/_semisupervised_criterion.pxd
-include hypertrees/tree/_nd_criterion.pyx
-include hypertrees/tree/_nd_splitter.pyx
-include hypertrees/tree/_nd_tree.pyx
-include hypertrees/tree/_semisupervised_criterion.pyx
+include bipartite_learn/tree/*.pxd
+include bipartite_learn/tree/*.pyx
+include tests/test_utils/*
