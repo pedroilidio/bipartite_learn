@@ -31,9 +31,12 @@ setup(
 
     install_requires=[
         'cython>=0.29.33',
-        'scikit-learn>=1.3.dev0',
+        (
+            'scikit-learn @ git+https://github.com/scikit-learn/scikit-learn'
+            '@893d5accaf9d16f447645e704f85a216187564f7#egg=scikit-learn'
+        ),
         'numpy>=1.22.2',
-        'imbalanced-learn>=0.7.0',
+        'imbalanced-learn==0.9.1',
     ],
     ext_modules=cythonize(
         extensions,
