@@ -1,10 +1,10 @@
-hypertrees.matrix\_factorization package
+bipartite_learn.model\_selection package
 ========================================
 
 Module contents
 ---------------
 
-.. automodule:: hypertrees.matrix_factorization
+.. automodule:: bipartite_learn.model_selection
    :members:
    :undoc-members:
    :show-inheritance:

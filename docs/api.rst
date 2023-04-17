@@ -5,4 +5,4 @@ API
     :toctree: generated
     :recursive:
 
-    hypertrees
+    bipartite_learn

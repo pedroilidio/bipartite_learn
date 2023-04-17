@@ -6,10 +6,24 @@ from ._forest import (
     BipartiteRandomForestRegressor,
     BipartiteExtraTreesRegressor,
 )
-from ._semisupervised_forest import *
-from ._gb import *
+from ._semisupervised_forest import (
+    RandomForestRegressorSS,
+    ExtraTreesRegressorSS,
+    BipartiteRandomForestRegressorSS,
+    BipartiteExtraTreesRegressorSS,
+)
+from ._gb import (
+    BipartiteGradientBoostingRegressor,
+    BipartiteGradientBoostingClassifier,
+)
 
 __all__ = [
-    "BipartiteRandomForestRegressor"
+    "BipartiteRandomForestRegressor",
     "BipartiteExtraTreesRegressor",
+    "BipartiteGradientBoostingRegressor",
+    "BipartiteGradientBoostingClassifier",
+    "RandomForestRegressorSS",
+    "ExtraTreesRegressorSS",
+    "BipartiteRandomForestRegressorSS",
+    "BipartiteExtraTreesRegressorSS",
 ]
