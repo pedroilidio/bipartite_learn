@@ -36,7 +36,7 @@ setup(
         'imbalanced-learn==0.9.1',
     ],
     extras_require={
-        'docs': ['sphix', 'pydata-sphinx-theme'],
+        'docs': ['sphinx', 'pydata-sphinx-theme'],
     },
 
     ext_modules=cythonize(
