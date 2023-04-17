@@ -21,6 +21,5 @@ python:
       path: .
       extra_requirements:
         - docs
-    - method: pip
-      path: "scikit-learn @ git+https://github.com/scikit-learn/scikit-learn@893d5accaf9d16f447645e704f85a216187564f7#egg=scikit-learn"
+    - requirements: docs/requirements.txt
   system_packages: true
