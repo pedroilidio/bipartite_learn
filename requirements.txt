@@ -1,4 +1,4 @@
-cython>=0.29.27
-scikit-learn>=1.1.1
+cython-=0.29.33
+scikit-learn>=1.2.2
 numpy>=1.23.0
-imbalanced-learn>=0.9.1
+imbalanced-learn==0.9.1

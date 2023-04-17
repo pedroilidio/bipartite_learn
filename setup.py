@@ -35,6 +35,10 @@ setup(
         'numpy>=1.22.2',
         'imbalanced-learn==0.9.1',
     ],
+    extras_require={
+        'docs': ['sphix', 'pydata-sphinx-theme'],
+    },
+
     ext_modules=cythonize(
         extensions,
         language_level="3",
