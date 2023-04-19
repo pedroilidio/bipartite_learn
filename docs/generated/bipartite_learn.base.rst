@@ -1,4 +1,4 @@
-bipartite\_learn.base
+﻿bipartite\_learn.base
 =====================
 
 .. automodule:: bipartite_learn.base
@@ -18,15 +18,10 @@ bipartite\_learn.base
    .. autosummary::
    
       BaseBipartiteEstimator
-      BaseData
-      BaseInputData
       BaseMultipartiteEstimator
       BaseMultipartiteSampler
-      InputDataND
       MultipartiteSamplerMixin
       MultipartiteTransformerMixin
-      PairwiseInputData
-      StandardInputData
    
    
 

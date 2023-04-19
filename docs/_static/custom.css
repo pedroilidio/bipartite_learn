@@ -1,3 +1,15 @@
 .navbar-brand {
     max-width: 270px;
 }
+
+html[data-theme="light"] {
+    --pst-color-primary: #29ABE2;
+    --pst-color-secondary: #F7931E;
+    --pst-color-inline-code: var(--pst-color-secondary);
+}
+
+html[data-theme="dark"] {
+    --pst-color-primary: #29ABE2;
+    --pst-color-secondary: #F7931E;
+    --pst-color-inline-code: var(--pst-color-secondary);
+}

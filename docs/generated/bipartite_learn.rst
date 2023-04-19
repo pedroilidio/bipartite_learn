@@ -28,6 +28,7 @@
    :recursive:
 
    bipartite_learn.base
+   bipartite_learn.datasets
    bipartite_learn.ensemble
    bipartite_learn.matrix_factorization
    bipartite_learn.melter

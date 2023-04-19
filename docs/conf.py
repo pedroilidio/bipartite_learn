@@ -60,5 +60,7 @@ html_theme_options = {
     "logo": {
         "image_light": "_static/logos/bipartite_learn_logo.svg",
         "image_dark": "_static/logos/bipartite_learn_logo_dark.svg",
-    }
+    },
+   "pygment_light_style": "tango",
+   "pygment_dark_style": "monokai",
 }

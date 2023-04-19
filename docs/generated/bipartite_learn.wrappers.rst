@@ -17,8 +17,8 @@ bipartite\_learn.wrappers
 
    .. autosummary::
    
-      BipartiteLocalWrapper
       GlobalSingleOutputWrapper
+      LocalMultiOutputWrapper
       MultipartiteSamplerWrapper
       MultipartiteTransformerWrapper
    
