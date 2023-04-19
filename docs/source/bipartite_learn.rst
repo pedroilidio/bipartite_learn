@@ -5,14 +5,15 @@ Subpackages
 -----------
 
 .. toctree::
-   :maxdepth: 4
+   :maxdepth: 2
 
+   bipartite_learn.tree
    bipartite_learn.ensemble
    bipartite_learn.matrix_factorization
-   bipartite_learn.metrics
    bipartite_learn.model_selection
+   bipartite_learn.metrics
    bipartite_learn.preprocessing
-   bipartite_learn.tree
+   bipartite_learn.datasets
    bipartite_learn.utils
 
 Submodules
@@ -54,30 +55,6 @@ bipartite_learn.wrappers module
 -------------------------------
 
 .. automodule:: bipartite_learn.wrappers
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-bipartite_learn.tree module
--------------------------------
-
-.. automodule:: bipartite_learn.tree
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-bipartite_learn.ensemble module
--------------------------------
-
-.. automodule:: bipartite_learn.ensemble
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Module contents
----------------
-
-.. automodule:: bipartite_learn
    :members:
    :undoc-members:
    :show-inheritance:
