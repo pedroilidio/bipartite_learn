@@ -12,8 +12,8 @@ cdef class BaseBipartiteCriterion:
 
 cdef class BipartiteCriterion:
     """Abstract base class."""
-    cdef const DTYPE_t[:, ::1] X_rows
-    cdef const DTYPE_t[:, ::1] X_cols
+    cdef const DTYPE_t[:, :] X_rows
+    cdef const DTYPE_t[:, :] X_cols
     cdef const DOUBLE_t[:, :] y
 
     cdef const DOUBLE_t[:] row_weights
@@ -48,8 +48,8 @@ cdef class BipartiteCriterion:
 
     cdef int init(
         self,
-        const DTYPE_t[:, ::1] X_rows,
-        const DTYPE_t[:, ::1] X_cols,
+        const DTYPE_t[:, :] X_rows,
+        const DTYPE_t[:, :] X_cols,
         const DOUBLE_t[:, :] y,
         const DOUBLE_t[:] row_weights,
         const DOUBLE_t[:] col_weights,

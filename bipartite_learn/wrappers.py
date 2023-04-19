@@ -34,7 +34,7 @@ def _estimator_has(attr):
 def _secondary_estimators_have(attr):
     """Check that primary estimators has `attr`.
 
-    Used together with `avaliable_if` in `BipartiteLocalWrapper`.
+    Used together with `avaliable_if` in `LocalMultiOutputWrapper`.
     """
     def check(self):
         # raise original `AttributeError` if `attr` does not exist
@@ -48,7 +48,7 @@ def _secondary_estimators_have(attr):
 def _primary_estimators_have(attr):
     """Check that secondary estimators have `attr`.
 
-    Used together with `avaliable_if` in `BipartiteLocalWrapper`.
+    Used together with `avaliable_if` in `LocalMultiOutputWrapper`.
     """
     def check(self):
         # raise original `AttributeError` if `attr` does not exist
@@ -209,7 +209,7 @@ class GlobalSingleOutputWrapper(BaseMultipartiteEstimator, MetaEstimatorMixin):
 
 
 # TODO: docs.
-class BipartiteLocalWrapper(BaseMultipartiteEstimator):
+class LocalMultiOutputWrapper(BaseMultipartiteEstimator):
     def __init__(
         self,
         primary_estimator: BaseEstimator | Sequence[BaseEstimator],

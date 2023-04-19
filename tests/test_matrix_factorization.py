@@ -11,7 +11,7 @@ from bipartite_learn.matrix_factorization._dnilmf import DNILMF
 from bipartite_learn.preprocessing.multipartite import DTHybridSampler
 from bipartite_learn.preprocessing.monopartite import TargetKernelLinearCombiner
 from bipartite_learn.wrappers import (
-    BipartiteLocalWrapper, MultipartiteSamplerWrapper,
+    LocalMultiOutputWrapper, MultipartiteSamplerWrapper,
 )
 from .utils.test_utils import gen_mock_data, DEF_PARAMS, parse_args
 
@@ -127,7 +127,7 @@ def test_blmnii(**params):
 
     blmnii = make_pipeline(
         gip_transformer,
-        BipartiteLocalWrapper(
+        LocalMultiOutputWrapper(
             primary_estimator=KNeighborsRegressor(),
             secondary_estimator=Ridge(),
         ),

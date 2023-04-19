@@ -26,8 +26,8 @@ cdef class BipartiteSplitter:
     cdef public SIZE_t n_row_features  # Number of row features (X[0].shape[0]).
     # TODO: X dtype must be DOUBLE_t, not DTYPE_t (float32) to use
     # semisupervision.
-    cdef const DTYPE_t[:, ::1] X_rows
-    cdef const DTYPE_t[:, ::1] X_cols
+    cdef const DTYPE_t[:, :] X_rows
+    cdef const DTYPE_t[:, :] X_cols
     cdef const DOUBLE_t[:, :] y
 
     cdef SIZE_t n_rows

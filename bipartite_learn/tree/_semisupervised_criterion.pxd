@@ -1,4 +1,3 @@
-from sklearn.tree._splitter cimport Splitter
 from sklearn.tree._criterion cimport Criterion, RegressionCriterion
 from sklearn.tree._tree cimport DTYPE_t         # Type of X
 from sklearn.tree._tree cimport DOUBLE_t        # Type of y, sample_weight
@@ -6,10 +5,6 @@ from sklearn.tree._tree cimport SIZE_t          # Type for indices and counters
 from ._bipartite_criterion cimport BipartiteCriterion, GMO
 from ._axis_criterion cimport BaseComposableCriterion, AxisCriterion
 from ._unsupervised_criterion cimport BaseUnsupervisedCriterion
-
-
-cdef class BaseDenseSplitter(Splitter):
-    cdef const DTYPE_t[:, :] X
 
 
 cdef class BaseSemisupervisedAxisCriterion(AxisCriterion):
