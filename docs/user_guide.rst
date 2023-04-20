@@ -58,8 +58,8 @@ nodes.
    :alt: A bipartite dataset
    :class: only-light
 
-   A dataset for a bipartite network is usually represented by two matrices
-   X, one for each sample domain, and an interaction matrix y.
+   A dataset representing a bipartite network is usually composed by two ``X``
+   matrices (one for each sample domain) and an interaction matrix ``y``.
 
 .. figure:: _static/user_guide/bipartite_dataset_dark.svg
    :align: center
@@ -67,8 +67,8 @@ nodes.
    :alt: A bipartite dataset
    :class: only-dark
 
-   A dataset for a bipartite network is usually represented by two matrices
-   X, one for each sample domain, and an interaction matrix y.
+   A dataset representing a bipartite network is usually composed by two ``X``
+   matrices (one for each sample domain) and an interaction matrix ``y``.
 
 Assuming a single edge feature is being predicted, the target values of such
 feature for each interacting pair of samples can be arranged in a bidimensional
@@ -367,7 +367,7 @@ inter-dependencies between its multiple outputs. If each output is treated
 independently in any way, one can confidently use only the predictions of the
 primary estimators to build the secondary models. 
 
-.. figure:: /_static/user_guide/lmo.svg
+.. figure:: _static/user_guide/lmo.svg
    :align: center
    :width: 60%
    :alt: Local multi-output approach
@@ -383,7 +383,7 @@ primary estimators to build the secondary models.
    Finally, the predictions of the secondary estimators are combined with an
    arbitrary function to yield the final predictions.
 
-.. figure:: /_static/user_guide/lmo_dark.svg
+.. figure:: _static/user_guide/lmo_dark.svg
    :align: center
    :width: 60%
    :alt: Local multi-output approach
@@ -561,10 +561,28 @@ of `sklearn.model_selection.cross_validate`. The `cv` parameter of
 same cross-validation splitting for both axes, or a list with a value for each
 axis.  The values, as in :mod:`scikit-learns`'s :func:`cross_validate`, can be
 either an integer to specify a k-fold cross-validation, or an `sklearn`s
-cross-validation iterator (:class:`KFold`, :class:`StratifiedKFold`,
-:class:`LeaveOneOut`, etc. See `Cross-Validation Iterators 
-<https://scikit-learn.org/stable/modules/cross_validation.html#cross-validation-iterators`>_)
+cross-validation iterator such as :class:`KFold`, :class:`StratifiedKFold`,
+:class:`LeaveOneOut`, etc. (See `Cross-Validation Iterators 
+<https://scikit-learn.org/stable/modules/cross_validation.html#cross-validation-iterators>`_).
 
+.. figure:: _static/user_guide/cv.svg
+   :align: center
+   :width: 60%
+   :alt: Bipartite cross-validation
+   :class: only-light
+
+   Illustration of all 9 splits in a 3 by 3 bipartite cross-validation
+   procedure.
+   
+.. figure:: _static/user_guide/cv_dark.svg
+   :align: center
+   :width: 60%
+   :alt: Bipartite cross-validation
+   :class: only-dark
+
+   Illustration of all 9 splits in a 3 by 3 bipartite cross-validation
+   procedure.
+   
 Additionally, the :mod:`bipartite_learn.model_selection` module also provides
 adapted versions of parameter search meta-estimators, :class:`BipartiteGridSearchCV`
 and :class:`BipartiteRandomizedSearchCV`, which also accept a ``cv`` parameter for each
@@ -581,12 +599,30 @@ should be only used in a single test set. This can be visualized by disposing
 the bidimensional folds in a matrix arrangement and choosing only the folds in
 the main diagonal of such matrix as test sets.
 
+.. figure:: _static/user_guide/diagonal_cv.svg
+   :align: center
+   :width: 60%
+   :alt: Diagonal cross-validation
+   :class: only-light
+
+   3-fold diagonal cross-validation, where test sets are ensured to be disjoint.
+
+.. figure:: _static/user_guide/diagonal_cv_dark.svg
+   :align: center
+   :width: 60%
+   :alt: Diagonal cross-validation
+   :class: only-dark
+
+   3-fold diagonal cross-validation, where test sets are ensured to be disjoint.
+
 Pipelines
 ---------
 
-Although bipartite estimators can be seamlessly used with :mod:`scikit-learn`s
-and :mod:`imbalanced-learn`s pipelines, the module
-:mod:`bipartite_learn.pipeline` provides a :func:`make_multipartite_pipeline`
+.. currentmodule:: bipartite_learn.pipeline
+
+Although bipartite estimators can be seamlessly used with :mod:`scikit-learn`'s
+and :mod:`imbalanced-learn`'s pipelines, the module
+:mod:`bipartite_learn.pipeline` provides a :func:`make_multipartite_pipeline` 
 function that automatically wraps monopartite transformers and samplers to be
 applied on both sample domains (see []), so that one can directly pass
 monopartite objects to it.

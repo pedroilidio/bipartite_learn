@@ -13,6 +13,14 @@
   <defs
      id="defs313">
     <linearGradient
+       id="linearGradient212794"
+       gradientTransform="matrix(0.24419055,0,0,0.36933771,-2122.3962,-876.48277)">
+      <stop
+         style="stop-color:#404040;stop-opacity:1;"
+         offset="0"
+         id="stop212792" />
+    </linearGradient>
+    <linearGradient
        id="linearGradient21316"
        gradientTransform="matrix(0.84088771,0,0,0.84088771,87.692265,-30.562541)">
       <stop
@@ -22,7 +30,7 @@
     </linearGradient>
     <linearGradient
        id="linearGradient16001"
-       gradientTransform="matrix(0.26458333,0,0,0.26458333,55.166284,-648.79729)">
+       gradientTransform="matrix(1.4193343e-5,0,0,1.4193343e-5,1628.5674,-1718.2573)">
       <stop
          style="stop-color:#000203;stop-opacity:1;"
          offset="0"
@@ -30,7 +38,7 @@
     </linearGradient>
     <linearGradient
        id="linearGradient3021"
-       gradientTransform="matrix(1.833282,0,0,1,-9721.2854,-5388.1132)">
+       gradientTransform="matrix(1.833282,0,0,1,-12683.017,-8799.793)">
       <stop
          style="stop-color:#9b4600;stop-opacity:1;"
          offset="0"
@@ -38,7 +46,7 @@
     </linearGradient>
     <linearGradient
        id="linearGradient3015"
-       gradientTransform="translate(12532.024,685.53525)">
+       gradientTransform="matrix(0.59089348,0,0,0.59109743,10009.501,1003.7533)">
       <stop
          style="stop-color:#11498d;stop-opacity:1;"
          offset="0"
@@ -46,23 +54,23 @@
     </linearGradient>
     <linearGradient
        id="linearGradient1617"
-       gradientTransform="matrix(0,-0.01090311,0.03510788,0,116.58279,-103.70988)">
+       gradientTransform="matrix(0,-1.4437288e-4,3.6755416e-7,0,581.99267,90.180667)">
       <stop
-         style="stop-color:#ffffff;stop-opacity:0.89999998;"
+         style="stop-color:#ffffff;stop-opacity:1;"
          offset="0"
          id="stop1615" />
     </linearGradient>
     <linearGradient
        id="linearGradient1356"
-       gradientTransform="matrix(0.5312656,0,0,0.51300279,3629.468,1383.3281)">
+       gradientTransform="matrix(2.3811189e-5,0,0,0.0519032,-53.510422,1015.4986)">
       <stop
-         style="stop-color:#848687;stop-opacity:1;"
+         style="stop-color:#7e8081;stop-opacity:1;"
          offset="0"
          id="stop1354" />
     </linearGradient>
     <linearGradient
        id="linearGradient1180"
-       gradientTransform="translate(13.156127,-18.988311)">
+       gradientTransform="matrix(0.76882861,0,0,0.76869668,403.48593,729.27341)">
       <stop
          style="stop-color:#f7931e;stop-opacity:1;"
          offset="0"
@@ -70,7 +78,7 @@
     </linearGradient>
     <linearGradient
        id="linearGradient932"
-       gradientTransform="translate(53.309739,469.38274)">
+       gradientTransform="matrix(1.558261e-4,0,0,1.5590635e-4,-870.42149,599.57012)">
       <stop
          style="stop-color:#29abe2;stop-opacity:1;"
          offset="0"
@@ -1253,7 +1261,7 @@
       </g>
       <path
          style="fill:none;fill-rule:evenodd;stroke:#000000;stroke-width:0.264582px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
-         d="m 116.16688,85.360609 v 0"
+         d="m 219.92376,-20.173397 v 0"
          id="path35117" />
     </g>
     <text

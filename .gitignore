@@ -153,7 +153,6 @@ cython_debug/
 # Cython generated C code and binaries
 *.c
 *.cpp
-*.html
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

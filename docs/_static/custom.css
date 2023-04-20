@@ -2,8 +2,17 @@
     max-width: 270px;
 }
 
+figure {
+    padding: 0;
+    margin: 3em;
+}
+
 figcaption {
     margin-top: 1em;
+}
+
+figcaption > p:last-child {
+    margin-bottom: 0;
 }
 
 .caption-text {
