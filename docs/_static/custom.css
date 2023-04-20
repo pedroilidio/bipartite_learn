@@ -2,6 +2,23 @@
     max-width: 270px;
 }
 
+figcaption {
+    margin-top: 1em;
+}
+
+.caption-text {
+    font-style: italic;
+    font-family: var(--pst-font-family-base);
+    color: var(--pst-color-text-muted);
+}
+
+html {
+    --pst-font-family-base: Roboto, var(--pst-font-family-base-system);
+    --pst-font-family-monospace: Fira Code, var(--pst-font-family-monospace-system);
+    --pst-font-family-heading: Poppins, var(--pst-font-family-base-system);
+    --pst-font-weight-heading: 600; /* 600 = semi-bold */
+}
+
 html[data-theme="light"] {
     --pst-color-primary: #29ABE2;
     --pst-color-secondary: #F7931E;

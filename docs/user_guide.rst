@@ -18,6 +18,22 @@ In a general machine learning setting, the goal is to generate an
 estimator capable of predicting an outcome ``y[k]`` given an input vector
 ``x[k]``.
 
+.. figure:: _static/user_guide/monopartite_dataset.svg
+   :align: center
+   :scale: 50 %
+   :alt: A monopartite dataset
+   :class: only-light
+
+   A general binary classification task is illustrated.
+
+.. figure:: _static/user_guide/monopartite_dataset_dark.svg
+   :align: center
+   :scale: 50 %
+   :alt: A monopartite dataset
+   :class: only-dark
+
+   A general binary classification task is illustrated.
+
 There are tasks, however, that consist of predicting aspects of the interaction
 between two entities of different natures. For instance, drug-target interaction
 prediction tasks are aimed at predicting the affinity of a drug for a given
@@ -32,9 +48,27 @@ that occur only between two instances of different domains.
 
 Since the prediction targets are the inter-domain relationships, these datasets
 are naturally represented as `bipartite networks
-<https://en.wikipedia.org/wiki/Bipartite_graph>_`, and our objective is to
+<https://en.wikipedia.org/wiki/Bipartite_graph>`_, and our objective is to
 predict edge features of such networks given the features of the interacting
 nodes.
+
+.. figure:: _static/user_guide/bipartite_dataset.svg
+   :align: center
+   :scale: 50 %
+   :alt: A bipartite dataset
+   :class: only-light
+
+   A dataset for a bipartite network is usually represented by two matrices
+   X, one for each sample domain, and an interaction matrix y.
+
+.. figure:: _static/user_guide/bipartite_dataset_dark.svg
+   :align: center
+   :scale: 50 %
+   :alt: A bipartite dataset
+   :class: only-dark
+
+   A dataset for a bipartite network is usually represented by two matrices
+   X, one for each sample domain, and an interaction matrix y.
 
 Assuming a single edge feature is being predicted, the target values of such
 feature for each interacting pair of samples can be arranged in a bidimensional
@@ -227,6 +261,30 @@ yielding a unidimensional column vector as expected by single-output
 monopartite models. This procedure is defined by [1]_ as the
 *global single-output* approach.
 
+.. figure:: _static/user_guide/gso.svg
+   :align: center
+   :width: 35%
+   :alt: Global single-output approach
+   :class: only-light
+
+   The global single-output approach. The bipartite dataset is represented as
+   two matrices ``X_0`` and ``X_1``, and a matrix ``y`` of shape
+   ``(X_0.shape[0], X_1.shape[0])``. The global single-output approach
+   concatenates the rows of ``X_0`` and ``X_1`` to form a new ``X`` matrix,
+   and flattens ``y`` to form a unidimensional ``y`` vector.
+
+.. figure:: _static/user_guide/gso_dark.svg
+   :align: center
+   :width: 35%
+   :alt: Global single-output approach
+   :class: only-dark
+
+   The global single-output approach. The bipartite dataset is represented as
+   two matrices ``X_0`` and ``X_1``, and a matrix ``y`` of shape
+   ``(X_0.shape[0], X_1.shape[0])``. The global single-output approach
+   concatenates the rows of ``X_0`` and ``X_1`` to form a new ``X`` matrix,
+   and flattens ``y`` to form a unidimensional ``y`` vector.
+
 A :class:`GlobalSingleOutputWrapper` is provided in this package to facilitate
 this
 procedure.
@@ -252,7 +310,8 @@ ensure that.
 A common remedy to this problem is to subsample ...
 
 The local multi-output approach
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
 The other general approach to adapt traditional models to bipartite data is
 based on the idea of considering each sample domain as a separate task, so that
 a multi-output monopartite estimator is fit to ``X_train_0`` and ``y_train``
@@ -308,6 +367,38 @@ inter-dependencies between its multiple outputs. If each output is treated
 independently in any way, one can confidently use only the predictions of the
 primary estimators to build the secondary models. 
 
+.. figure:: /_static/user_guide/lmo.svg
+   :align: center
+   :width: 60%
+   :alt: Local multi-output approach
+   :class: only-light
+
+   The local multi-output approach. The bipartite dataset is represented as
+   two matrices ``X_0`` and ``X_1``, and a matrix ``y`` of shape
+   ``(X_0.shape[0], X_1.shape[0])``. The local multi-output approach
+   trains a primary rows estimator on ``X_0`` and ``y``, and a primary columns
+   estimator on ``X_1`` and ``y.T``. The predictions of the primary estimators
+   are used to extend the interaction matrix, and the extended matrix is used
+   to train a secondary rows estimator and a secondary columns estimator.
+   Finally, the predictions of the secondary estimators are combined with an
+   arbitrary function to yield the final predictions.
+
+.. figure:: /_static/user_guide/lmo_dark.svg
+   :align: center
+   :width: 60%
+   :alt: Local multi-output approach
+   :class: only-dark
+
+   The local multi-output approach. The bipartite dataset is represented as
+   two matrices ``X_0`` and ``X_1``, and a matrix ``y`` of shape
+   ``(X_0.shape[0], X_1.shape[0])``. The local multi-output approach
+   trains a primary rows estimator on ``X_0`` and ``y``, and a primary columns
+   estimator on ``X_1`` and ``y.T``. The predictions of the primary estimators
+   are used to extend the interaction matrix, and the extended matrix is used
+   to train a secondary rows estimator and a secondary columns estimator.
+   Finally, the predictions of the secondary estimators are combined with an
+   arbitrary function to yield the final predictions.
+
 While no reconstruction of ``X`` is needed in this approach, note that the
 secondary estimators must be refit every time the wrapper's :meth:`predict`
 is called, increasing prediction time depending on the type of secondary
@@ -321,14 +412,14 @@ We provide a :class:`LocalMultiOutputWrapper` class to easily implement this pro
     >>> from bipartite_learn.wrappers import LocalMultiOutputWrapper
     >>> from scikit_learn.tree import DecisionTreeClassifier
     >>> from scikit_learn.neighbors import KNeighborsClassifier
-    >>>
+    >>> 
     >>> X, y = NuclearReceptorsLoader().load()  # X is a list of two matrices
     >>> bipartite_clf = LocalMultiOutputWrapper(
     ...     primary_rows_estimator=DecisionTreeClassifier(),
     ...     primary_cols_estimator=DecisionTreeClassifier(),
     ...     secondary_rows_estimator=KNeighborsClassifier(),
     ...     secondary_cols_estimator=KNeighborsClassifier(),
-    ...)
+    ... )
     >>> bipartite_clf.fit(X, y)
 
 Notice that compositions of single-output estimators can be used
@@ -344,14 +435,14 @@ where the base estimator does not natively support multiple outputs.
     >>> from scikit_learn.svm import SVC
     >>> from scikit_learn.neighbors import KNeighborsClassifier
     >>> from scikit_learn.multioutput import MultiOutputClassifier
-    >>>
+    >>> 
     >>> X, y = NuclearReceptorsLoader().load()  # X is a list of two matrices
     >>> bipartite_clf = LocalMultiOutputWrapper(
     ...     primary_rows_estimator=MultiOutputClassifier(SVC()),
     ...     primary_cols_estimator=MultiOutputClassifier(SVC()),
     ...     secondary_rows_estimator=KNeighborsClassifier(),
     ...     secondary_cols_estimator=KNeighborsClassifier(),
-    ...)
+    ... )
     >>> bipartite_clf.fit(X, y)
 
 .. admonition:: Summary
@@ -438,6 +529,22 @@ samples:
 * LT: the set with learned row samples and test column samples.
 * TL: the set with test row samples and learned column samples.
 * TT: the pure test set, with completely unseen interaction pairs.
+
+.. figure:: _static/user_guide/train_test_split.svg
+   :align: center
+   :width: 30%
+   :alt: Train/test split for bipartite datasets
+   :class: only-light
+
+   The four possible train/test splits for bipartite datasets.
+
+.. figure:: _static/user_guide/train_test_split_dark.svg
+   :align: center
+   :width: 30%
+   :alt: Train/test split for bipartite datasets
+   :class: only-dark
+
+   The four possible train/test splits for bipartite datasets.
 
 These mixed train/test sets, with training samples from one domain but test
 samples from the other, make no sense in the more usual monopartite datasets.

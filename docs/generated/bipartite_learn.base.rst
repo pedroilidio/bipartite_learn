@@ -1,4 +1,4 @@
-﻿bipartite\_learn.base
+bipartite\_learn.base
 =====================
 
 .. automodule:: bipartite_learn.base
