@@ -9,12 +9,6 @@ bipartite\_learn.datasets.base
 
    
    
-   .. rubric:: Functions
-
-   .. autosummary::
-   
-      get_data_home
-   
    
 
    
@@ -23,19 +17,15 @@ bipartite\_learn.datasets.base
 
    .. autosummary::
    
-      BaseFileLoader
-      BaseRemoteFileLoader
-      BipartiteDatasetLoader
+      BaseData
+      BaseDataset
+      BipartiteDataset
+      PairwiseDataset
+      StandardDataset
    
    
 
    
-   
-   .. rubric:: Exceptions
-
-   .. autosummary::
-   
-      InvalidChecksumError
    
    
 

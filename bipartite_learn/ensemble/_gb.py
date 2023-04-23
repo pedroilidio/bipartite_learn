@@ -58,7 +58,7 @@ from ..base import BaseBipartiteEstimator
 from ..melter import melt_multipartite_dataset
 from ..wrappers import GlobalSingleOutputWrapper
 from ..utils import _check_multipartite_sample_weight
-from ..model_selection import train_test_split_nd
+from ..model_selection import multipartite_train_test_split
 
 
 __all__ = [
@@ -416,7 +416,7 @@ class BaseBipartiteGradientBoosting(
                 y_val,
                 sample_weight,
                 sample_weight_val,
-            ) = train_test_split_nd(
+            ) = multipartite_train_test_split(
                 X,
                 y,
                 sample_weight,

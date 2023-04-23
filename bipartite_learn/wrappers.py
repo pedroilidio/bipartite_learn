@@ -6,15 +6,25 @@ TODO: check fit inputs.
 from __future__ import annotations
 from typing import Callable, Sequence
 import numpy as np
-from sklearn.base import BaseEstimator, TransformerMixin, MetaEstimatorMixin, clone
+from sklearn.base import (
+    BaseEstimator,
+    TransformerMixin,
+    MetaEstimatorMixin,
+    clone,
+)
 from sklearn.utils.metaestimators import available_if
 from sklearn.utils._tags import _safe_tags
 from sklearn.utils.validation import check_is_fitted
 from sklearn.exceptions import NotFittedError
 from sklearn.utils import check_random_state
+from imblearn.base import BaseSampler
 from .melter import melt_multipartite_dataset
 from .utils import check_multipartite_params
-from .base import BaseMultipartiteEstimator, BaseMultipartiteSampler
+from .base import (
+    BaseMultipartiteEstimator,
+    BaseBipartiteEstimator,
+    BaseMultipartiteSampler,
+)
 from .utils import _X_is_multipartite
 
 
@@ -64,113 +74,119 @@ class IncompatibleEstimatorsError(ValueError):
 
 
 class GlobalSingleOutputWrapper(BaseMultipartiteEstimator, MetaEstimatorMixin):
+    """Employ the GSO strategy to adapt sstandard estimators to bipartite data.
+
+    In this strategy, the estimator is applied to concatenations of a feature
+    vector from the first sample domain with a feature vector from the second
+    domain, while `y` is considered a unidimensional vector.
+
+    .. image:: _static/user_guide/gso.svg
+        :align: center
+        :width: 50%
+        :class: only-light
+
+    .. image:: _static/user_guide/gso_dark.svg
+        :align: center
+        :width: 50%
+        :class: only-dark
+
+    Read more in the :ref:`User Guide <user_guide:global_single_output>`.
+
+    References
+    ----------
+    .. [1] :doi:`Global Multi-Output Decision Trees for interaction prediction \
+       <doi.org/10.1007/s10994-018-5700-x>`
+       Pliakos, Geurts and Vens, 2018
+    """
     def __init__(
         self,
         estimator: BaseEstimator,
-        random_state: int | np.random.RandomState | None = None,
-        subsample_negatives: bool = False,
+        under_sampler: BaseSampler | None = None,
     ):
-        """Wraps a standard estimator/transformer to work on PU n-partite data.
-
-        With n-partite interaction data, X is actualy a list of sample
-        attribute matrices, one for each group of samples (drugs and targets,
-        for instance). y is then an interaction matrix (or tensor) denoting
-        interaction between the instances of each group.
-
-        We are currently assuming positive-unlabeled data, in which y == 1
-        denotes positive and known interaction and y == 0 denotes unknown
-        (positive or negative).
-
-        This wrapper melts the n-partite X/y data before passing them to the
-        estimator, so that monopartite estimators (standard ones) can be used
-        with n-partite cross-validators and pipelines.
-
-        Since all multipartite sets are considered jointly, not consecutively,
-        and only single output estimators are compatible, this adaptation
-        format is called Global Single Output (GSO) [Pliakos _et al._, 2020].
+        """Initialize the wrapper.
 
         Parameters
         ----------
-
-        estimator : sklearn estimator or transformer
-            Estimator/transformed to receive processed data.
-
-        random_state : int or np.random.RandomState or None
-            Seed or random state object to be used for negative data
-            subsampling. If None, it takes its value from self.estimator.
-            Has no effect if subsample_negatives == False.
-
-        subsample_negatives : boolean
-            Indicates wether to use all unknown data available (False) or to
-            randomly subsample negative pairs (assumed zero-labeled, y == 0)
-            to have a balanced dataset.
+        estimator : BaseEstimator
+            Estimator or transformer to receive the adapted bipartite data.
+        
+        under_sampler : BaseSampler or None, default=None
+            Optional sampler to be applied to the transformed data before
+            fitting the estimator. Useful in cases where using all the possible
+            interactions is not computationally feasible.
         """
         self.estimator = estimator
-        self.random_state = random_state
-        self.subsample_negatives = subsample_negatives
+        self.under_sampler = under_sampler
 
     def _melt_input(self, X, y=None):
         if not _X_is_multipartite(X):
             return X, y
-
-        return melt_multipartite_dataset(
-            X,
-            y,
-            subsample_negatives=self.subsample_negatives,
-            random_state=self.random_state_,
-        )
+        return melt_multipartite_dataset(X, y)
+    
+    def _fit_resample_input(self, X, y):
+        if self.under_sampler is None:
+            return X, y
+        self.under_sampler_ = clone(self.under_sampler)
+        return self.under_sampler_.fit_resample(X, y)
 
     def fit(self, X, y=None, **fit_params):
-        self.random_state_ = check_random_state(self.random_state)
+        X, y = self._validate_data(X, y, reset=False)
         Xt, yt = self._melt_input(X, y=y)
-        self.estimator = clone(self.estimator)
-        self.estimator.fit(X=Xt, y=yt, **fit_params)
+        Xt, yt = self._fit_resample_input(Xt, yt)
+        self.estimator_ = clone(self.estimator)
+        self.estimator_.fit(X=Xt, y=yt, **fit_params)
         return self
 
     @available_if(_estimator_has("predict"))
     def predict(self, X):
         X, _ = self._melt_input(X)
-        return self.estimator.predict(X)
+        return self.estimator_.predict(X)
 
     @available_if(_estimator_has("fit_predict"))
     def fit_predict(self, X, y=None, **fit_params):
+        X, y = self._validate_data(X, y, reset=False)
         Xt, yt = self._melt_input(X, y=y)
-        return self.estimator.fit_predict(Xt, yt, **fit_params)
+        Xt, yt = self._fit_resample_input(Xt, yt)
+        self.estimator_ = clone(self.estimator)
+        return self.estimator_.fit_predict(Xt, yt, **fit_params)
 
     @available_if(_estimator_has("predict_proba"))
     def predict_proba(self, X, **predict_proba_params):
         X, _ = self._melt_input(X)
-        return self.estimator.predict_proba(X, **predict_proba_params)
+        return self.estimator_.predict_proba(X, **predict_proba_params)
 
     @available_if(_estimator_has("decision_function"))
     def decision_function(self, X):
         X, _ = self._melt_input(X)
-        return self.estimator.decision_function(X)
+        return self.estimator_.decision_function(X)
 
     @available_if(_estimator_has("score_samples"))
     def score_samples(self, X):
         X, _ = self._melt_input(X)
-        return self.estimator.score_samples(X)
+        return self.estimator_.score_samples(X)
 
     @available_if(_estimator_has("predict_log_proba"))
     def predict_log_proba(self, X, **predict_log_proba_params):
         X, _ = self._melt_input(X)
-        return self.estimator.predict_log_proba(X, **predict_log_proba_params)
+        return self.estimator_.predict_log_proba(X, **predict_log_proba_params)
 
     @available_if(_estimator_has("transform"))
     def transform(self, X):
         Xt, _ = self._melt_input(X)
-        return self.transform(Xt)
+        return self.estimator_.transform(Xt)
 
     @available_if(_estimator_has("fit_transform"))
     def fit_transform(self, X, y=None, **fit_params):
+        X, y = self._validate_data(X, y, reset=False)
         Xt, yt = self._melt_input(X, y=y)
-        return self.estimator.fit_transform(Xt, yt, **fit_params)
+        Xt, yt = self._fit_resample_input(Xt, yt)
+        self.estimator_ = clone(self.estimator)
+        return self.estimator_.fit_transform(Xt, yt, **fit_params)
         
     @available_if(_estimator_has("inverse_transform"))
     def inverse_transform(self, Xt):
         X, _ = self._melt_input(Xt)
-        return self.estimator.inverse_transform(X)
+        return self.estimator_.inverse_transform(X)
 
     @available_if(_estimator_has("score"))
     def score(self, X, y=None, sample_weight=None):
@@ -178,7 +194,7 @@ class GlobalSingleOutputWrapper(BaseMultipartiteEstimator, MetaEstimatorMixin):
         score_params = {}
         if sample_weight is not None:
             score_params["sample_weight"] = sample_weight
-        return self.estimator.score(X, y, **score_params)
+        return self.estimator_.score(X, y, **score_params)
 
     @property
     def _estimator_type(self):
@@ -187,84 +203,185 @@ class GlobalSingleOutputWrapper(BaseMultipartiteEstimator, MetaEstimatorMixin):
     @property
     def classes_(self):
         """The classes labels. Only exist if the estimator is a classifier."""
-        return self.estimator.classes_
+        return self.estimator_.classes_
 
     @property
     def n_features_in_(self):
         """Number of features seen during `fit`."""
-        return self.estimator.n_features_in_
+        return self.estimator_.n_features_in_
 
     @property
     def feature_names_in_(self):
         """Names of features seen during `fit`."""
-        return self.estimator.feature_names_in_
+        return self.estimator_.feature_names_in_
 
     def __sklearn_is_fitted__(self):
         """Indicate whether the estimator has been fit."""
-        try:
-            check_is_fitted(self.estimator)
-            return True
-        except NotFittedError:
-            return False
+        return hasattr(self, "estimator_")
 
 
-# TODO: docs.
-class LocalMultiOutputWrapper(BaseMultipartiteEstimator):
+class LocalMultiOutputWrapper(BaseBipartiteEstimator):
+    """Implements the Local Multi-Output strategy for adapting estimators.
+    
+    This wrapper facilitates the implementation of the local multi-output
+    approach to adapt monopartite estimators to bipartite scenarios. In this
+    approach, four multi-output estimators are aggregated.
+
+    The training procedure (calling ``fit(X_train, y)``) consists simply of:
+
+    1. Train a primary rows estimator on X_train[0] and y_train.
+    2. Train a primary columns estimator on X_train[1] and y_train.T.
+
+    The prediction procedure then utilities the predictions of the primary
+    estimators in order to be able to make predictions on completely new
+    interactions. ``predict(X_test)`` will perform the following steps:
+
+    1. a. Use ``self.primary_cols_estimator_`` to predict new columns for
+            the interaction matrix, that correspond to the targets of
+            ``X_test[0]``.
+    1. b. Use ``self.primary_rows_estimator_`` to predict new rows for the
+            interaction matrix, that correspond to the targets of X_test[1].
+
+    2. a. Fit the secondary rows estimator on the newly predicted columns
+            and X_test[0].
+    2. a. Fit the secondary columns estimator on the newly predicted rows
+            and X_test[1].
+    
+    3. Combine the predictions of the secondary estimators using
+        ``self.combine_predictions_func(rows_pred, cols_pred)``.
+
+    If ``self.independent_labels`` is ``False``, then the original
+    training data is appended to the training data of the secondary
+    estimators in step 2, allowing the secondary estimators to explore
+    inter-output correlations. 
+
+    See the :ref:`User Guide <user_guide:local_multi_output>` for a diagram and
+    more information.
+
+    Attributes
+    ----------
+    primary_rows_estimator_ : BaseEstimator
+        The fitted primary rows estimator.
+    primary_cols_estimator_ : BaseEstimator
+        The fitted primary columns estimator.
+    secondary_rows_estimator_ : BaseEstimator
+        The fitted secondary rows estimator.
+    secondary_cols_estimator_ : BaseEstimator
+        The fitted secondary columns estimator.
+
+    Notes
+    -----
+    Note that the secondary estimators must be refit every time the
+    wrapper's ``predict()`` method is called, which may increase prediction
+    time depending on the type of secondary estimators chosen by the user.
+    
+    Compositions of single-output estimators can also be used
+    instead of multi-output estimators, which can be implemented with
+    scikit-learn wrappers such as :class:`MultiOutputRegressor` or
+    :class:`MultiOutputClassifier`. This could be an interesting option in
+    cases where the base estimators do not natively support multiple
+    outputs.
+        
+    See Also
+    --------
+    GlobalSingleOutputWrapper : A wrapper that fits a single-output estimator
+        to bipartite datasets.
+    MultiOutputRegressor : A scikit-learn wrapper that fits a separate regressor
+        for each output variable.
+    MultiOutputClassifier : A scikit-learn wrapper that fits a separate
+        classifier for each output variable.
+    
+    Examples
+    --------
+
+    .. code-block:: python
+
+        from bipartite_learn.datasets import NuclearReceptorsLoader
+        from bipartite_learn.wrappers import LocalMultiOutputWrapper
+        from sklearn.svm import SVC
+        from sklearn.neighbors import KNeighborsClassifier
+        from sklearn.multioutput import MultiOutputClassifier
+        
+        X, y = NuclearReceptorsLoader().load()  # X is a list of two matrices
+        bipartite_clf = LocalMultiOutputWrapper(
+            primary_rows_estimator=MultiOutputClassifier(SVC()),
+            primary_cols_estimator=MultiOutputClassifier(SVC()),
+            secondary_rows_estimator=KNeighborsClassifier(),
+            secondary_cols_estimator=KNeighborsClassifier(),
+        )
+        bipartite_clf.fit(X, y)
+    
+    References
+    ----------
+    .. [1] :doi:`Global Multi-Output Decision Trees for interaction prediction \
+       <doi.org/10.1007/s10994-018-5700-x>`
+       Pliakos, Geurts and Vens, 2018
+    
+    .. [2] :doi:`Yamanishi, Y., Araki, M., Gutteridge, A., Honda, W., &
+           Kanehisa, M. (2008). Prediction of drug-target interaction networks
+           from the integration of chemical and genomic spaces. Bioinformatics,
+           24(13), i232–i240. <https://doi.org/10.1093%2Fbioinformatics%2Fbtn162>`
+    """
+
     def __init__(
         self,
-        primary_estimator: BaseEstimator | Sequence[BaseEstimator],
-        secondary_estimator: BaseEstimator | Sequence[BaseEstimator],
-        combine_predictions_func: str | Callable = np.mean,
+        primary_rows_estimator: BaseEstimator,
+        primary_cols_estimator: BaseEstimator,
+        secondary_rows_estimator: BaseEstimator,
+        secondary_cols_estimator: BaseEstimator,
+        combine_predictions_func: Callable = np.mean,
         combine_func_kwargs: dict | None = None,
         independent_labels: bool = True,
     ):
-        """Wraps a standard estimator/transformer to work on PU n-partite data.
+        """Initializes the wrapper.
 
-        With n-partite interaction data, X is actualy a list of sample
-        attribute matrices, one for each group of samples (drugs and targets,
-        for instance). y is then an interaction matrix (or tensor) denoting
-        interaction between the instances of each group.
-
-        We are currently assuming positive-unlabeled data, in which y == 1
-        denotes positive and known interaction and y == 0 denotes unknown
-        (positive or negative).
-
-        This wrapper melts the n-partite X/y data before passing them to the
-        estimator, so that monopartite estimators (standard ones) can be used
-        with n-partite cross-validators and pipelines.
+        This wrapper facilitates the implementation of the local multi-output
+        approach to adapt monopartite estimators to bipartite scenarios. In this
+        approach, four multi-output estimators are aggregated.
 
         Parameters
         ----------
-
-        estimator : sklearn estimator or transformer
-            Estimator/transformed to receive processed data.
-
-        random_state : int or np.random.RandomState or None
-            Seed or random state object to be used for negative data
-            subsampling. If None, it takes its value from self.estimator.
-            Has no effect if subsample_negatives == False.
-
-        subsample_negatives : boolean
-            Indicates wether to use all unknown data available (False) or to
-            randomly subsample negative pairs (assumed zero-labeled, y == 0)
-            to have a balanced dataset.
+        primary_rows_estimator : BaseEstimator
+            The estimator to be used as the primary rows estimator.
+        primary_cols_estimator : BaseEstimator
+            The estimator to be used as the primary columns estimator.
+        secondary_rows_estimator : BaseEstimator
+            The estimator to be used as the secondary rows estimator.
+        secondary_cols_estimator : BaseEstimator
+            The estimator to be used as the secondary columns estimator.
+        combine_predictions_func : Callable, default=np.mean
+            The function used to combine the predictions of the secondary
+            estimators.
+        combine_func_kwargs : dict, default=None
+            A dictionary of keyword arguments to be passed to the
+            ``combine_predictions_func`` function. If None, no keyword arguments
+            are passed.
+        independent_labels : bool, default=True
+            If ``True``, the secondary estimators are trained on only the data
+            predicted by the primary estimators. If ``False``, the original
+            training data is appended to the training data of the secondary
+            estimators, allowing the secondary estimators to explore
+            inter-output correlations.
+            
+        See the :ref:`User Guide <local_multi_output>` for more information on
+        the Local Multi-Output strategy for adapting estimators.
         """
-        self.primary_estimator = primary_estimator
-        self.secondary_estimator = secondary_estimator
+        self.primary_rows_estimator = primary_rows_estimator
+        self.primary_cols_estimator = primary_cols_estimator
+        self.secondary_rows_estimator = secondary_rows_estimator
+        self.secondary_cols_estimator = secondary_cols_estimator
+
         self.independent_labels = independent_labels
         self.combine_predictions_func = combine_predictions_func
         self.combine_func_kwargs = combine_func_kwargs
-
-        # FIXME: no validation in init, but some properties depend on this.
-        # FIXME: messes up check_is_fitted
-        self._check_estimators()  
     
     def _check_estimators(self):
-        primary_estimators, secondary_estimators = check_multipartite_params(
-            self.primary_estimator, self.secondary_estimator
-        )
-
-        for estimator in (*primary_estimators, *secondary_estimators):
+        for estimator in (
+            self.primary_rows_estimator,
+            self.primary_cols_estimator,
+            self.secondary_rows_estimator,
+            self.secondary_cols_estimator,
+        ):
             # TODO: 'multioutput_only' tag should imply 'multioutput' tag
             if not (
                 _safe_tags(estimator, "multioutput") or
@@ -278,14 +395,9 @@ class LocalMultiOutputWrapper(BaseMultipartiteEstimator):
                     "modules/multiclass.html"
                 )
 
-        self.primary_rows_estimator_ = clone(primary_estimators[0])
-        self.primary_cols_estimator_ = clone(primary_estimators[1])
-        self.secondary_rows_estimator_ = clone(secondary_estimators[0])
-        self.secondary_cols_estimator_ = clone(secondary_estimators[1])
-
         if (
-            getattr(self.secondary_rows_estimator_, "_estimator_type") !=
-            getattr(self.secondary_cols_estimator_, "_estimator_type")
+            getattr(self.secondary_rows_estimator, "_estimator_type")
+            != getattr(self.secondary_cols_estimator, "_estimator_type")
         ):
             raise IncompatibleEstimatorsError(
                 "Secondary estimators must be of the same type (regressor"
@@ -294,24 +406,42 @@ class LocalMultiOutputWrapper(BaseMultipartiteEstimator):
             )
 
         if (
-            _safe_tags(self.primary_rows_estimator_, "pairwise") !=
-            _safe_tags(self.primary_cols_estimator_, "pairwise")
+            _safe_tags(self.primary_rows_estimator, "pairwise")
+            != _safe_tags(self.primary_cols_estimator, "pairwise")
         ):
             raise IncompatibleEstimatorsError(
                 "Both or none of the primary estimators must be pairwise."
             )
 
-    # TODO: organize 'fit_params'
-    def fit(self, X, y=None, **fit_params):
-        # TODO: check input
-        # self._check_estimators()  # FIXME: remove from init.
+        self.primary_rows_estimator_ = clone(self.primary_rows_estimator)
+        self.primary_cols_estimator_ = clone(self.primary_cols_estimator)
+        self.secondary_rows_estimator_ = clone(self.secondary_rows_estimator)
+        self.secondary_cols_estimator_ = clone(self.secondary_cols_estimator)
+
+    def fit(self, X, y):
+        """Fits the wrapper to the training data.
+
+        Raises
+        ------
+        IncompatibleEstimatorsError
+            If any of the estimators passed as arguments does not support
+            multi-output functionality.  If the secondary estimators are not of
+            the same type (e.g., regressor, classifier).  If only one of the
+            primary estimators is pairwise.
+        """
+        if not _X_is_multipartite(X):
+            # TODO: specific error and function to check multipartite data
+            # TODO: set estimator tag 'multipartite_only' to True
+            raise ValueError("X must be multipartite.")
+        self._check_estimators()
+        X, y = self._validate_data(X, y, reset=False)
         self.X_fit_ = X
 
         if not self.independent_labels:
             self.y_fit_ = y
 
-        self.primary_rows_estimator_.fit(X=X[0], y=y, **fit_params)
-        self.primary_cols_estimator_.fit(X=X[1], y=y.T, **fit_params)
+        self.primary_rows_estimator_.fit(X[0], y)
+        self.primary_cols_estimator_.fit(X[1], y.T)
 
         return self
 
@@ -358,16 +488,17 @@ class LocalMultiOutputWrapper(BaseMultipartiteEstimator):
 
         return self._combine_predictions(rows_pred, cols_pred)
     
-    @available_if(lambda self: _primary_estimators_have("fit_predict") or
-                               _secondary_estimators_have("fit_predict"))
+    # TODO: any of them individually
+    @available_if(
+        lambda self: (
+            _primary_estimators_have("fit_predict")
+            or _secondary_estimators_have("fit_predict")
+        )
+    )
     def fit_predict(self, X, y=None, **fit_params):
-        # TODO: check input
-        # self._check_estimators()  # FIXME: remove from init.
+        self._check_estimators()
+        X, y = self._validate_data(X, y)
         self.X_fit_ = X
-        self.primary_rows_estimator_ = clone(self.estimator_rows)
-        self.primary_cols_estimator_ = clone(self.estimator_cols)
-        self.secondary_rows_estimator_ = clone(self.secondary_estimator_rows)
-        self.secondary_cols_estimator_ = clone(self.secondary_estimator_cols)
 
         if not self.independent_labels:
             self.y_fit_ = y
@@ -375,9 +506,11 @@ class LocalMultiOutputWrapper(BaseMultipartiteEstimator):
         # Transposed because they will be used as training labels.
         if hasattr(self.primary_rows_estimator_, "fit_predict"):
             new_y_rows = self.primary_rows_estimator_.fit_predict(
-                X[0], y, **fit_params).T
+                X[0], y, **fit_params,
+            ).T
             new_y_cols = self.primary_cols_estimator_.fit_predict(
-                X[1], y.T, **fit_params).T
+                X[1], y.T, **fit_params,
+            ).T
         else:
             self.fit(X, y, **fit_params)
             new_y_rows = self.primary_rows_estimator_.predict(X[0]).T
@@ -392,9 +525,11 @@ class LocalMultiOutputWrapper(BaseMultipartiteEstimator):
 
         if hasattr(self.secondary_rows_estimator_, "fit_predict"):
             rows_pred = self.secondary_rows_estimator_.fit_predict(
-                X[0], new_y_cols, **fit_params)
+                X[0], new_y_cols, **fit_params
+            )
             cols_pred = self.secondary_cols_estimator_.fit_predict(
-                X[1], new_y_rows, **fit_params).T
+                X[1], new_y_rows, **fit_params
+            ).T
         else:
             self.secondary_rows_estimator_.fit(X[0], new_y_cols, **fit_params)
             self.secondary_cols_estimator_.fit(X[1], new_y_rows, **fit_params)
@@ -445,6 +580,12 @@ class LocalMultiOutputWrapper(BaseMultipartiteEstimator):
         # FIXME: Does not work in some cases, such as 'max()'
         return self._combine_predictions(rows_pred, cols_pred)
 
+    @available_if(_secondary_estimators_have("score"))
+    def score(self, X, y=None):
+        return (
+            type(self.secondary_rows_estimator_).score(self, X, y.reshape(-1))
+        )
+
     @property
     def _estimator_type(self):
         return getattr(self.secondary_rows_estimator_, "_estimator_type", None)
@@ -452,15 +593,17 @@ class LocalMultiOutputWrapper(BaseMultipartiteEstimator):
     @property
     def classes_(self):
         """The classes labels. Only exist if the estimator is a classifier."""
-        return self.estimator.classes_
+        # FIXME: The secondary columns estimator generates different classes.
+        return self.secondary_rows_estimator.classes_
 
     def _more_tags(self):
-        # check if the primary estimator expects pairwise input
+        # check if the primary estimator expects pairwise input (the primary
+        # columns is ensured to be pairwise by the _check_estimators method)
         return {"pairwise": _safe_tags(self.primary_rows_estimator_, "pairwise")}
 
     @property
     def n_features_in_(self):
-        """Number of features seen during first step `fit` method."""
+        """Number of features seen during fit."""
         return (
             self.primary_rows_estimator_.n_features_in_ +
             self.primary_cols_estimator_.n_features_in_
@@ -485,9 +628,10 @@ class LocalMultiOutputWrapper(BaseMultipartiteEstimator):
             return False
 
 
-# FIXME: test get_params()
-class MultipartiteTransformerWrapper(BaseMultipartiteEstimator,
-                                     TransformerMixin):
+class MultipartiteTransformerWrapper(
+    BaseMultipartiteEstimator,
+    TransformerMixin,
+):
     """Manages a transformer for each feature space in multipartite datasets.
     """
     def __init__(

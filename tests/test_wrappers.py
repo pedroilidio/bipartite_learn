@@ -1,6 +1,7 @@
 import joblib
 import pytest
 from pathlib import Path
+import numpy as np
 from sklearn.tree import DecisionTreeRegressor, export_text
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.base import clone
@@ -38,7 +39,7 @@ def min_samples_leaf(request):
     return request.param
 
 
-def test_pu_wrapper_bipartite_no_neg_subsamples(random_state, min_samples_leaf):
+def test_gso_wrapper_bipartite_subsampling(random_state, min_samples_leaf):
     Y_ = (Y == 1).astype(int)
     y_ = (y == 1).astype(int)
 
@@ -46,77 +47,43 @@ def test_pu_wrapper_bipartite_no_neg_subsamples(random_state, min_samples_leaf):
         min_samples_leaf=min_samples_leaf,
         random_state=random_state,
     )
-    tree_bipartite = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=False)
+    tree_bipartite = GlobalSingleOutputWrapper(clone(tree))
 
     tree_bipartite.fit(XX, Y_)
     tree.fit(X, y_)
 
-    assert export_text(tree_bipartite.estimator) == export_text(tree)
+    assert export_text(tree_bipartite.estimator_) == export_text(tree)
 
 
-def test_pu_wrapper_bipartite_neg_subsamples(random_state, min_samples_leaf):
-    tree = DecisionTreeRegressor(
-        min_samples_leaf=min_samples_leaf,
-        random_state=random_state,
-    )
-    tree_bipartite = GlobalSingleOutputWrapper(
-        estimator=clone(tree),
-        subsample_negatives=True,
-        random_state=random_state,
-    )
-    Xs, ys = melt_multipartite_dataset(
-        XX, Y,
-        subsample_negatives=True,
-        random_state=random_state,
-    )
-
-    print(f"Keeping {ys.shape[0]} out of {y.shape[0]}. "
-          f"Relative new size: {ys.shape[0]/y.shape[0]}\n")
-
-    assert ys.mean() == .5
-    assert ys.shape[0]/y.shape[0] == 2*y.mean()
-    assert ys.shape[0] < y.shape[0]
-    assert Xs.shape[0] == ys.shape[0]
-
-    tree_bipartite.fit(XX, Y)
-    tree.fit(Xs, ys)
-
-    # print(export_text(tree_bipartite.estimator))
-    # print(export_text(tree))
-
-    assert export_text(tree_bipartite.estimator) == export_text(tree)
-
-
-def _test_pickling(obj):
-    joblib.dump(obj, 'test.pickle')
-    obj_loaded = joblib.load('test.pickle')
-    Path('test.pickle').unlink()
-
+def _test_pickling(obj, tmp_path):
+    joblib.dump(obj, tmp_path/'test.pickle')
+    obj_loaded = joblib.load(tmp_path/'test.pickle')
     obj.get_params()
     obj_loaded.get_params()
 
 
-def test_wrapped_tree_pickling():
+def test_wrapped_tree_pickling(tmp_path):
     tree = DecisionTreeRegressor(
         min_samples_leaf=30,
         random_state=0,
     )
-    tree_bipartite = GlobalSingleOutputWrapper(clone(tree), subsample_negatives=True)
+    tree_bipartite = GlobalSingleOutputWrapper(clone(tree))
 
-    _test_pickling(tree)
-    _test_pickling(tree_bipartite)
+    _test_pickling(tree, tmp_path)
+    _test_pickling(tree_bipartite, tmp_path)
 
 
-def test_wrapped_forest_pickling():
+def test_wrapped_forest_pickling(tmp_path):
     forest = RandomForestRegressor(
         min_samples_leaf=30,
         random_state=0,
     )
     forest_bipartite = GlobalSingleOutputWrapper(
-        clone(forest), subsample_negatives=True)
+        clone(forest)
+    )
 
-    _test_pickling(forest)
-    _test_pickling(forest_bipartite)
+    _test_pickling(forest, tmp_path)
+    _test_pickling(forest_bipartite, tmp_path)
 
 
 def test_score():
@@ -126,8 +93,6 @@ def test_score():
     )
     forest_bipartite = GlobalSingleOutputWrapper(
         clone(forest),
-        subsample_negatives=True,
-        random_state=0,
     )
     forest_bipartite.fit(XX, Y)
 
@@ -137,3 +102,36 @@ def test_score():
         error_score="raise",
     )
     print("Score:", score)
+
+
+def test_gso():
+    from sklearn.ensemble import RandomForestClassifier
+    from imblearn.under_sampling import RandomUnderSampler
+    from bipartite_learn.datasets import NuclearReceptorsLoader
+    X, y = NuclearReceptorsLoader().load()  # X is a list of two matrices
+
+    bipartite_clf = GlobalSingleOutputWrapper(
+        estimator=RandomForestClassifier(),
+        under_sampler=RandomUnderSampler(),
+    )
+    bipartite_clf.fit(X, y)
+    assert bipartite_clf.score(X, y) > 0.5
+
+
+def test_gmo():
+    from bipartite_learn.datasets import NuclearReceptorsLoader
+    from bipartite_learn.wrappers import LocalMultiOutputWrapper
+    from sklearn.svm import SVC
+    from sklearn.neighbors import KNeighborsClassifier
+    from sklearn.multioutput import MultiOutputClassifier
+    
+    X, y = NuclearReceptorsLoader().load()  # X is a list of two matrices
+    bipartite_clf = LocalMultiOutputWrapper(
+        primary_rows_estimator=MultiOutputClassifier(SVC()),
+        primary_cols_estimator=MultiOutputClassifier(SVC()),
+        secondary_rows_estimator=KNeighborsClassifier(),
+        secondary_cols_estimator=KNeighborsClassifier(),
+        combine_predictions_func=np.max,
+    )
+    bipartite_clf.fit(X, y)
+    assert bipartite_clf.score(X, y) > 0.5

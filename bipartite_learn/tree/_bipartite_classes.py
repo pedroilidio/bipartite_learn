@@ -986,7 +986,7 @@ class BipartiteDecisionTreeRegressor(
         the leaf total average in each node, at the cost of loosing the ability
         to specify prediction weights.
 
-        See [1] for more information.
+        See [1]_ for more information.
 
     prediction_weights : {"uniform", "raw", "precomputed", "square", "softmax"\
             }, 1D-array or callable, default="uniform"
@@ -1090,9 +1090,9 @@ class BipartiteDecisionTreeRegressor(
        Pliakos, Geurts and Vens, 2018
 
     .. [2] :doi:`Drug-target interaction prediction with tree-ensemble \
-           learning and output space reconstruction \
-           <doi.org/10.1186/s12859-020-3379-z>`
-           Pliakos and Vens, 2020
+       learning and output space reconstruction \
+       <doi.org/10.1186/s12859-020-3379-z>`
+       Pliakos and Vens, 2020
     """
 
     _parameter_constraints: dict = {

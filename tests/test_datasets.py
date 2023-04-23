@@ -4,7 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 import numpy as np
 from bipartite_learn import datasets
-from bipartite_learn.datasets.base import (
+from bipartite_learn.datasets.loader import (
     BaseFileLoader,
     BaseRemoteFileLoader,
     BipartiteDatasetLoader,

@@ -1,4 +1,4 @@
-bipartite\_learn.datasets
+﻿bipartite\_learn.datasets
 =========================
 
 .. automodule:: bipartite_learn.datasets
@@ -28,4 +28,5 @@ bipartite\_learn.datasets
    :recursive:
 
    bipartite_learn.datasets.base
+   bipartite_learn.datasets.loader
 

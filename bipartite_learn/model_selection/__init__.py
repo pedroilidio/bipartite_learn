@@ -3,10 +3,10 @@ from bipartite_learn.model_selection._validation import (
 )
 from bipartite_learn.model_selection._split import (
     check_multipartite_cv,
-    CrossValidatorNDWrapper,
-    make_train_test_splitter_nd,
-    make_kfold_nd,
-    train_test_split_nd,
+    MultipartiteCrossValidator,
+    make_multipartite_train_test_splitter,
+    make_multipartite_kfold,
+    multipartite_train_test_split,
 )
 from bipartite_learn.model_selection._search import MultipartiteGridSearchCV
 from bipartite_learn.model_selection._search import MultipartiteRandomizedSearchCV
@@ -14,9 +14,9 @@ from bipartite_learn.model_selection._search import MultipartiteRandomizedSearch
 
 __all__ = [
     "split_train_test_nd",
-    "make_train_test_splitter_nd",
+    "make_multipartite_train_test_splitter",
     "multipartite_cross_validate",
-    "CrossValidatorNDWrapper",
+    "MultipartiteCrossValidator",
     "MultipartiteGridSearchCV",
     "MultipartiteRandomizedSearchCV",
 ]

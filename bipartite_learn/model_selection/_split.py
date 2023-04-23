@@ -13,10 +13,10 @@ from sklearn.model_selection._split import (
 )
 from sklearn.utils.validation import _num_samples
 
-from bipartite_learn.base import InputDataND
+from bipartite_learn.base import BipartiteDataset
 
 
-class CrossValidatorNDWrapper(BaseCrossValidator):
+class MultipartiteCrossValidator(BaseCrossValidator):
     def __init__(self, cross_validators, diagonal):
         self.cross_validators = cross_validators
         self.diagonal = diagonal
@@ -199,16 +199,16 @@ def combine_train_test_indices(
     return train_test_index_combinations
 
 
-def make_kfold_nd(
+def make_multipartite_kfold(
         cv=None, shuffle=False,
         stratified=False, random_state=None,
         diagonal=False,
         n_dim=None,
 ):
-    """Build a n_dim-dimensional KFold cross-validator.
+    """Build a n_dim-partite KFold cross-validator.
     
     Wraps n_dim KFold or StratifiedKFold cross-validators with a
-    CrossValidatorNDWrapper, that provides train-test indices for splitting
+    MultipartiteCrossValidator, that provides train-test indices for splitting
     InputDataND objects. The returned wrapper object is compatible with paramet-
     er search objects in bipartite_learn.model_selection, such as MultipartiteGridSearchCV and
     MultipartiteRandomizedSearchCV.
@@ -244,15 +244,15 @@ def make_kfold_nd(
 
     Returns
     -------
-    cross-validation splitter : CrossValidatorNDWrapper
+    cross-validation splitter : MultipartiteCrossValidator
     """
     if n_dim is None:
         if isinstance(cv, (list, tuple)):
             n_dim = len(cv)
         elif isinstance(shuffle, (list, tuple)):
             n_dim = len(shuffle)
-        elif isinstance(stratidfied, (list, tuple)):
-            n_dim = len(stratidfied)
+        elif isinstance(stratified, (list, tuple)):
+            n_dim = len(stratified)
         else:
             raise ValueError("If none of cv, shuffle or stratified is tuple"
                              " or list, n_dim must be provided.")
@@ -275,7 +275,7 @@ def make_kfold_nd(
     return check_multipartite_cv(cv_list, n_dim=n_dim, diagonal=diagonal)
 
 
-def make_train_test_splitter_nd(
+def make_multipartite_train_test_splitter(
         n_dim,
         test_size=None, train_size=None, shuffle=False,
         stratified=False, random_state=None,
@@ -283,7 +283,7 @@ def make_train_test_splitter_nd(
     """Build a len(n_samples)-dimensional train-test splitter.
     
     Wraps len(n_samples) CrossValidator data splitters with a
-    CrossValidatorNDWrapper, that provides train-test indices for splitting
+    MultipartiteCrossValidator, that provides train-test indices for splitting
     InputDataND objects. The returned wrapper object is compatible with paramet-
     er search objects in bipartite_learn.model_selection, such as MultipartiteGridSearchCV and
     MultipartiteRandomizedSearchCV.
@@ -327,7 +327,7 @@ def make_train_test_splitter_nd(
 
     Returns
     -------
-    cross-validation splitter : CrossValidatorNDWrapper
+    cross-validation splitter : MultipartiteCrossValidator
     """
     test_size, train_size, shuffle, stratified, = \
         _repeat_if_single(n_dim, test_size, train_size, shuffle, stratified)
@@ -364,11 +364,11 @@ def make_train_test_splitter_nd(
      
 
 def check_multipartite_cv(cv, y=None, *, n_dim=None, classifier=False, diagonal=False):
-    if isinstance(cv, CrossValidatorNDWrapper):
+    if isinstance(cv, MultipartiteCrossValidator):
         return cv
     if not n_dim and y is None:
         raise ValueError("Either n_dim or y must be given if cv is not a "
-                         "CrossValidatorNDWrapper.")
+                         "MultipartiteCrossValidator.")
     n_dim = n_dim or y.ndim  # FIXME: not valid for multi-output.
 
     if not isinstance(cv, (tuple, list)):
@@ -384,19 +384,19 @@ def check_multipartite_cv(cv, y=None, *, n_dim=None, classifier=False, diagonal=
             classifier=classifier,
         )
 
-    return CrossValidatorNDWrapper(cv, diagonal=diagonal)
+    return MultipartiteCrossValidator(cv, diagonal=diagonal)
 
 
-def train_test_split_nd(
+def multipartite_train_test_split(
     *data,
     test_size=None,
     train_size=None,
     random_state=None,
     shuffle=True,
     stratify=None,
-    input_type=InputDataND,
+    input_type=BipartiteDataset,
 ):
-    """Split InputDataND-like datasets into random train and test subsets.
+    """Split datasets into random train and test subsets.
     Quick utility that wraps input validation and
     ``next(ShuffleSplit().split(X, y))`` and application to input data
     into a single call for splitting (and optionally subsampling) data in a
@@ -442,7 +442,7 @@ def train_test_split_nd(
         Read more in the :ref:`User Guide <stratification>`.
         One can optionally pass arrays for each axis in a list or tuple. If a
         single array is provided, it will be considered for all axes.
-    input_type : type, default=InputDataND
+    input_type : type, default=BipartiteDataset
         The input data format, with n_samples and n_features attributes.
         Read more in the :ref:`User Guide <input_types>` (TODO).
 
@@ -467,7 +467,7 @@ def train_test_split_nd(
         if not isinstance(data[i], input_type):
             data[i] = input_type(*data[i])
 
-    n_dim = data[0].n_dimensions
+    n_dim = data[0].n_parts
     n_samples = data[0].n_samples
 
     # n_train, n_test = _validate_shuffle_split(
@@ -477,7 +477,7 @@ def train_test_split_nd(
     #     default_test_size=0.25
     # )
 
-    cv = make_train_test_splitter_nd(
+    cv = make_multipartite_train_test_splitter(
         n_dim=n_dim,
         test_size=test_size,
         train_size=train_size,

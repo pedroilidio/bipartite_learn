@@ -1,4 +1,4 @@
-bipartite\_learn.pipeline
+﻿bipartite\_learn.pipeline
 =========================
 
 .. automodule:: bipartite_learn.pipeline

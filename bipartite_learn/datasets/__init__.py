@@ -1,4 +1,4 @@
-from .base import (
+from .loader import (
     get_data_home,
     BaseFileLoader,
     BaseRemoteFileLoader,

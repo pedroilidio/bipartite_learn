@@ -1,4 +1,4 @@
-bipartite\_learn.wrappers
+﻿bipartite\_learn.wrappers
 =========================
 
 .. automodule:: bipartite_learn.wrappers

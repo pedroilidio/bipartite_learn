@@ -89,7 +89,8 @@ usual ``X[k] -> y[k]`` format.
 
 The :mod:`bipartite_learn.datasets` module provides tools to download and use
 several public bipartite datasets. As an example, let's load the nuclear
-neceptors dataset from Yamanishi *et al.* (2008) [1]_. This dataset assigns
+neceptors dataset from `Yamanishi et al., 2008
+<https://doi.org/10.1093%2Fbioinformatics%2Fbtn162>`_. This dataset assigns
 binary labels to the interactions between a set of 26 nuclear receptor proteins
 and a set of 54 drug molecules, whith ``y[i, j] == 1`` representing an
 experimentally verified interaction while ``y[i, j] == 0`` denotes an unverified
@@ -246,8 +247,12 @@ interactions between ``X_test_0`` and ``X_test_1``.
 Adapting monopartite estimators to bipartite datasets
 -----------------------------------------------------
 
-Some tools are provided to adapt any :mod:`scikit-learn`-compatible estimator
-or transformer to the bipartite format.
+.. currentmodule:: bipartite_learn.wrappers
+
+Tools are provided to adapt any :mod:`scikit-learn`-compatible estimator,
+transformer or sampler to the bipartite format.
+
+.. _global_single_output:
 
 The global single-output approach
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -293,7 +298,7 @@ procedure.
 
     >>> from bipartite_learn.datasets import NuclearReceptorsLoader
     >>> from bipartite_learn.wrappers import GlobalSingleOutputWrapper
-    >>> from scikit_learn.tree import DecisionTreeClassifier
+    >>> from sklearn.tree import DecisionTreeClassifier
     >>> X, y = NuclearReceptorsLoader().load()  # X is a list of two matrices
     >>> monopartite_clf = DecisionTreeClassifier()
     >>> bipartite_clf = GlobalSingleOutputWrapper(monopartite_clf)
@@ -307,7 +312,28 @@ dataset. For instance, :mod:`scikit-learn`'s tree-based models require the
 training data to be contiguous in memory, and will copy them otherwise to
 ensure that.
 
-A common remedy to this problem is to subsample ...
+A common remedy to this problem is to subsample the combined pairs of samples.
+The ``under_sampler`` parameter of :class:`GlobalSingleOutputWrapper` allows
+for a :mod:`imbalanced-learn` sampler to be provided, which will be applied to
+the converted data before fitting the wrapped estimator:
+
+.. code-block:: python
+
+    >>> from bipartite_learn.datasets import NuclearReceptorsLoader
+    >>> from sklearn.ensemble import RandomForestClassifier
+    >>> from imblearn.under_sampling import RandomUnderSampler
+    >>> X, y = NuclearReceptorsLoader().load()  # X is a list of two matrices
+    >>> bipartite_clf = GlobalSingleOutputWrapper(
+    ...     estimator=RandomForestClassifier(),
+    ...     under_sampler=RandomUnderSampler(),
+    ... )
+    >>> bipartite_clf.fit(X, y)
+   
+See the `imbalanced-learn documentation 
+<https://imbalanced-learn.org/stable/under_sampling.html>`_ for more information
+on samplers.
+
+.. _local_multi_output:
 
 The local multi-output approach
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -373,45 +399,58 @@ primary estimators to build the secondary models.
    :alt: Local multi-output approach
    :class: only-light
 
-   The local multi-output approach. The bipartite dataset is represented as
-   two matrices ``X_0`` and ``X_1``, and a matrix ``y`` of shape
-   ``(X_0.shape[0], X_1.shape[0])``. The local multi-output approach
-   trains a primary rows estimator on ``X_0`` and ``y``, and a primary columns
-   estimator on ``X_1`` and ``y.T``. The predictions of the primary estimators
-   are used to extend the interaction matrix, and the extended matrix is used
-   to train a secondary rows estimator and a secondary columns estimator.
-   Finally, the predictions of the secondary estimators are combined with an
-   arbitrary function to yield the final predictions.
-
+   Illustration of the training procedure under the local multi-output approach
+   for adapting traditional learning algorithms to bipartite data. To be able to
+   predict interactions among completely new sample pairs, this approach
+   aggregates four multi-output monopartite estimators. In a first step, a
+   *primary rows estimator* is trained on ``X_0`` and ``y``, and a *primary
+   columns estimator* on ``X_1`` and ``y.T``. The predictions of the primary
+   estimators are used to extend the interaction matrix, as shown as the step 1
+   in figure (only the columns estimation is shown). The extended matrix then is
+   used to train a *secondary rows estimator* and a *secondary columns
+   estimator*.  Finally, the predictions of both secondary estimators are
+   arbitrarily combined to yield the final predictions (the most common
+   combination method is taking the simple average between both axes). Note
+   that, although not necessary, one may consider using the training set also
+   when training the secondary estimators, if these estimators are able to take
+   advantage of possible cross-output inter-dependencies. 
+   
 .. figure:: _static/user_guide/lmo_dark.svg
    :align: center
    :width: 60%
    :alt: Local multi-output approach
    :class: only-dark
 
-   The local multi-output approach. The bipartite dataset is represented as
-   two matrices ``X_0`` and ``X_1``, and a matrix ``y`` of shape
-   ``(X_0.shape[0], X_1.shape[0])``. The local multi-output approach
-   trains a primary rows estimator on ``X_0`` and ``y``, and a primary columns
-   estimator on ``X_1`` and ``y.T``. The predictions of the primary estimators
-   are used to extend the interaction matrix, and the extended matrix is used
-   to train a secondary rows estimator and a secondary columns estimator.
-   Finally, the predictions of the secondary estimators are combined with an
-   arbitrary function to yield the final predictions.
+   Illustration of the training procedure under the local multi-output approach
+   for adapting traditional learning algorithms to bipartite data. To be able to
+   predict interactions among completely new sample pairs, this approach
+   aggregates four multi-output monopartite estimators. In a first step, a
+   *primary rows estimator* is trained on ``X_0`` and ``y``, and a *primary
+   columns estimator* on ``X_1`` and ``y.T``. The predictions of the primary
+   estimators are used to extend the interaction matrix, as shown as the step 1
+   in figure (only the columns estimation is shown). The extended matrix then is
+   used to train a *secondary rows estimator* and a *secondary columns
+   estimator*.  Finally, the predictions of both secondary estimators are
+   arbitrarily combined to yield the final predictions (the most common
+   combination method is taking the simple average between both axes). Note
+   that, although not necessary, one may consider using the training set also
+   when training the secondary estimators, if these estimators are able to take
+   advantage of possible cross-output inter-dependencies. 
 
 While no reconstruction of ``X`` is needed in this approach, note that the
 secondary estimators must be refit every time the wrapper's :meth:`predict`
 is called, increasing prediction time depending on the type of secondary
 estimators chosen by the user.
 
-We provide a :class:`LocalMultiOutputWrapper` class to easily implement this procedure.
+We provide a :class:`LocalMultiOutputWrapper` class to easily implement this
+procedure.
 
 .. code-block:: python
 
     >>> from bipartite_learn.datasets import NuclearReceptorsLoader
     >>> from bipartite_learn.wrappers import LocalMultiOutputWrapper
-    >>> from scikit_learn.tree import DecisionTreeClassifier
-    >>> from scikit_learn.neighbors import KNeighborsClassifier
+    >>> from sklearn.tree import DecisionTreeClassifier
+    >>> from sklearn.neighbors import KNeighborsClassifier
     >>> 
     >>> X, y = NuclearReceptorsLoader().load()  # X is a list of two matrices
     >>> bipartite_clf = LocalMultiOutputWrapper(
@@ -432,9 +471,9 @@ where the base estimator does not natively support multiple outputs.
 
     >>> from bipartite_learn.datasets import NuclearReceptorsLoader
     >>> from bipartite_learn.wrappers import LocalMultiOutputWrapper
-    >>> from scikit_learn.svm import SVC
-    >>> from scikit_learn.neighbors import KNeighborsClassifier
-    >>> from scikit_learn.multioutput import MultiOutputClassifier
+    >>> from sklearn.svm import SVC
+    >>> from sklearn.neighbors import KNeighborsClassifier
+    >>> from sklearn.multioutput import MultiOutputClassifier
     >>> 
     >>> X, y = NuclearReceptorsLoader().load()  # X is a list of two matrices
     >>> bipartite_clf = LocalMultiOutputWrapper(
@@ -456,13 +495,12 @@ where the base estimator does not natively support multiple outputs.
        to ``X_train_0`` or to ``X_train_1``,
        not being aware of the sample features on the other axis.
 
+.. _transformers:
+
 Transformers and samplers
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The :mod:`bipartite_learn.wrappers` module also provides a
-
-.. currentmodule:: bipartite_learn.wrappers
-
 :class:`MultipartiteTransformerWrapper` and a
 :class:`MultipartiteSamplerWrapper`
 to easily apply a pair of :mod:`scikit-learn` transformers or
@@ -497,17 +535,21 @@ in a drastically faster and more memory efficient way.
 The other criterion options consider a multi-output impurity function when
 evaluating splits on each axis, similarly to what is done in the first step of
 the local multi-output adaptation procedure. This setting corresponds to the
-first ideas for a bipartite decision tree algorithm as proposed by [2]_ under
-the name of Predictive Bi-Clustering Trees.
+first ideas for a bipartite decision tree algorithm as proposed by `Pliakos et
+al., 2018 <https://doi.org/10.1007/s10994-018-5700-x>`_, under the name of
+Predictive Bi-Clustering Trees.
  
 Since bipartite data is often sparse and positive-unlabeled, several
 semi-supervised versions of these tree algorithms are also provided.
 These versions explicitly include in their node impurity calculation the
 distance between the samples at each partition, enabling splitting even if the
-training label are not completely representative. See [] for more information.
+training labels are not completely representative. See [] for
+more information.
 
 Model validation
 ================
+
+.. currentmodule:: bipartite_learn.model_selection
 
 Given we are dealing with two sets of samples, validation procedures pose some
 novel details to be taken into account.
@@ -554,13 +596,13 @@ performed in bipartite scenarios.
 Cross-validation and hyperparameter search
 ------------------------------------------
 
-We provide a `multipartite_cross_validate`
-function in the `bipartite_learn.model_selection` module as a bipartite version
-of `sklearn.model_selection.cross_validate`. The `cv` parameter of
-`multipartite_cross_validate` can receive either a single value, to specify the
+We provide a :func:`multipartite_cross_validate`
+function in the :mod:`bipartite_learn.model_selection` module as a bipartite version
+of :func:`sklearn.model_selection.cross_validate`. The ``cv`` parameter of
+:func:`multipartite_cross_validate` can receive either a single value, to specify the
 same cross-validation splitting for both axes, or a list with a value for each
 axis.  The values, as in :mod:`scikit-learns`'s :func:`cross_validate`, can be
-either an integer to specify a k-fold cross-validation, or an `sklearn`s
+either an integer to specify a k-fold cross-validation, or an `sklearn`'s
 cross-validation iterator such as :class:`KFold`, :class:`StratifiedKFold`,
 :class:`LeaveOneOut`, etc. (See `Cross-Validation Iterators 
 <https://scikit-learn.org/stable/modules/cross_validation.html#cross-validation-iterators>`_).
@@ -624,5 +666,5 @@ Although bipartite estimators can be seamlessly used with :mod:`scikit-learn`'s
 and :mod:`imbalanced-learn`'s pipelines, the module
 :mod:`bipartite_learn.pipeline` provides a :func:`make_multipartite_pipeline` 
 function that automatically wraps monopartite transformers and samplers to be
-applied on both sample domains (see []), so that one can directly pass
-monopartite objects to it.
+applied on both sample domains (see :ref:`transformers`), so that one can
+directly pass monopartite objects to it.

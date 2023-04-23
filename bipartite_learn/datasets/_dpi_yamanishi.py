@@ -28,7 +28,7 @@ July 2008, Pages i232–i240, https://doi.org/10.1093/bioinformatics/btn162
 
 from pathlib import Path
 from sklearn.utils import check_pandas_support, check_symmetric
-from .base import get_data_home, BaseRemoteFileLoader, BipartiteDatasetLoader
+from .loader import get_data_home, BaseRemoteFileLoader, BipartiteDatasetLoader
 
 __all__ = [
     "EnzymesLoader",
