@@ -1,6 +1,6 @@
 """
-The :mod:`sklearn.model_selection._validation` module includes classes and
-functions to validate the model.
+The :mod:`bipartite_learn.model_selection._validation` module includes classes
+and functions to validate the model.
 """
 # Author: Pedro Ilídio <ilidio@alumni.usp.br>
 # Modified from scikit-learn.
@@ -14,7 +14,6 @@ from traceback import format_exc
 import numpy as np
 from joblib import logger
 
-# New imports:
 import sklearn.utils
 from sklearn.model_selection._validation import (
     _score,
@@ -54,11 +53,12 @@ def multipartite_cross_validate(
     return_train_score=False,
     return_estimator=False,
     error_score=np.nan,
-
-    # ND specific:
+    # bipartite_learn-exclusive params:
     diagonal=False,
     train_test_combinations=None,
     pairwise=False,  # possibility to override estimator._more_tags['pairwise']
+    shuffle=False,
+    random_state=None,
 ):
     # TODO: ND adapt docs.
     """Evaluate metric(s) by cross-validation and also record fit/score times.
@@ -269,15 +269,26 @@ def multipartite_cross_validate(
     # Check dimension consistency
     if not (ndim == len(X) == len(groups)):
         # FIXME: multi-output: y would have an extra dimension.
-        raise ValueError("Incompatible dimensions. One must ensure "
-                         "y.ndim == len(X) == len(groups)")
+        raise ValueError(
+            "Incompatible dimensions. One must ensure "
+            "y.ndim == len(X) == len(groups)"
+        )
 
     cv = check_multipartite_cv(
-        cv, y, classifier=is_classifier(estimator), diagonal=diagonal)
+        cv,
+        y,
+        classifier=is_classifier(estimator),
+        diagonal=diagonal,
+        shuffle=shuffle,
+        random_state=random_state,
+    )
 
-    train_test_combinations, train_test_names = _check_train_test_combinations(
+    (
+        train_test_combinations,
+        train_test_names,
+    ) = _check_train_test_combinations(
         ttc=train_test_combinations,
-        n_dim=len(X),
+        n_parts=len(X),
         include_train=return_train_score,
     )
 
@@ -321,7 +332,7 @@ def multipartite_cross_validate(
     # For callabe scoring, the return type is only know after calling. If the
     # return type is a dictionary, the error scores can now be inserted with
     # the correct key.
-    # 
+    #
     # if callable(scoring):  # TODO
     #     _insert_error_scores(results, error_score)
 
@@ -335,8 +346,7 @@ def multipartite_cross_validate(
         ret["estimator"] = results["estimator"]
 
     for ttc_name in train_test_names:
-        test_scores_dict = _normalize_score_results(
-                                results[f"{ttc_name}_scores"])
+        test_scores_dict = _normalize_score_results(results[f"{ttc_name}_scores"])
 
         for name in test_scores_dict:
             ret[f"{ttc_name}_{name}"] = test_scores_dict[name]
@@ -361,13 +371,11 @@ def _bipartite_fit_and_score(
     split_progress=None,
     candidate_progress=None,
     error_score=np.nan,
-
-    # ND specific:
+    # bipartite_learn-specific parameters:
     train_test_combinations=None,
     train_test_names=None,
-    pairwise=False,  # possibility to override estimator._more_tags['pairwise']
+    pairwise=False,  # Overrides estimator._more_tags['pairwise']
 ):
-
     """Fit estimator and compute scores for a given dataset split.
 
     Parameters
@@ -503,13 +511,17 @@ def _bipartite_fit_and_score(
     # NOTE: ttc stands for train-test combinations
     for is_test_tuple, ttc_name in zip(train_test_combinations, train_test_names):
         # is_test_tuple ~= (0, 1, 1, 0)
-        test_indices = [ax_train_test[is_test] for is_test, ax_train_test in
-                        zip(is_test_tuple, train_test)]
+        test_indices = [
+            ax_train_test[is_test]
+            for is_test, ax_train_test in zip(is_test_tuple, train_test)
+        ]
         test_splits[ttc_name] = _multipartite_safe_split(
-            estimator, X, y, test_indices, train_indices, pairwise=pairwise)
+            estimator, X, y, test_indices, train_indices, pairwise=pairwise
+        )
 
-    X_train, y_train = _multipartite_safe_split(estimator, X, y, train_indices,
-                                      pairwise=pairwise)
+    X_train, y_train = _multipartite_safe_split(
+        estimator, X, y, train_indices, pairwise=pairwise
+    )
     result = {}
     try:
         if y_train is None:
@@ -526,15 +538,14 @@ def _bipartite_fit_and_score(
         elif isinstance(error_score, numbers.Number):
             if isinstance(scorer, dict):
                 test_scores = {
-                    ttc_name+'_scores': {name: error_score for name in scorer}
+                    ttc_name + "_scores": {name: error_score for name in scorer}
                     for ttc_name in test_splits.keys()
                 }
                 # NOTE: train_score is automatically included by
                 # _check_train_test_combinations, if requested.
             else:
                 test_scores = {
-                    ttc_name+'_scores': error_score
-                    for ttc_name in test_splits.keys()
+                    ttc_name + "_scores": error_score for ttc_name in test_splits.keys()
                 }
         result["fit_error"] = format_exc()
     else:
@@ -543,8 +554,9 @@ def _bipartite_fit_and_score(
         fit_time = time.time() - start_time
         test_scores = {}
         for ttc_name, (X_test, y_test) in test_splits.items():
-            test_scores[ttc_name+'_scores'] = _score(estimator, X_test, y_test.reshape(-1),
-                                                     scorer, error_score)
+            test_scores[ttc_name + "_scores"] = _score(
+                estimator, X_test, y_test.reshape(-1), scorer, error_score
+            )
         score_time = time.time() - start_time - fit_time
 
     if verbose > 1:
@@ -552,7 +564,7 @@ def _bipartite_fit_and_score(
         end_msg = f"[CV{progress_msg}] END "
         result_msg = params_msg + (";" if params_msg else "")
         if verbose > 2:
-            #if isinstance(test_scores, dict):
+            # if isinstance(test_scores, dict):
             for scorer_name in sorted(test_scores):
                 result_msg += f" {scorer_name}: ("
                 result_msg += f"test={test_scores})"  # FIXME
@@ -585,7 +597,7 @@ def _multipartite_safe_split(
     y,
     indices,
     train_indices=None,
-    pairwise=False, # possibility to override estimator._more_tags['pairwise']
+    pairwise=False,  # possibility to override estimator._more_tags['pairwise']
 ):
     """Create subset of n-dimensional dataset.
 
@@ -618,12 +630,15 @@ def _multipartite_safe_split(
     # TODO: further checking in another function may be adeuqate.
     # X_subset = _safe_indexing(X, indices)
     if not (len(X) == len(indices) == n_dim):
-        raise ValueError("Incompatible dimensions. One must ensure "
-                         "len(X) == len(indices) == y.ndim")
+        raise ValueError(
+            "Incompatible dimensions. One must ensure "
+            "len(X) == len(indices) == y.ndim"
+        )
 
     if pairwise and not _safe_tags(estimator, key="pairwise"):
-        warnings.warn("Setting pairwise=True, overriding estimator's "
-                      "pairwise=False tag.")
+        warnings.warn(
+            "Setting pairwise=True, overriding estimator's " "pairwise=False tag."
+        )
 
     if pairwise or _safe_tags(estimator, key="pairwise"):
         X_subset = []

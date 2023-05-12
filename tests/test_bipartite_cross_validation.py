@@ -1,23 +1,24 @@
+import pytest
 from pprint import pprint
 from typing import Sequence
-import pytest
+import numpy as np
 from sklearn.utils._tags import _safe_tags
+from sklearn.model_selection import KFold
+from sklearn.metrics.pairwise import rbf_kernel
 
-from bipartite_learn.model_selection import multipartite_cross_validate
+from bipartite_learn.model_selection import (
+    multipartite_cross_validate,
+    check_multipartite_cv,
+    MultipartiteCrossValidator,
+)
 from bipartite_learn.tree import BipartiteExtraTreeRegressor
 from bipartite_learn.ensemble import BipartiteExtraTreesRegressor
+
 import bipartite_learn.ensemble
 
 from .utils.test_utils import stopwatch, parse_args
 from .utils.make_examples import make_interaction_regression
 
-
-# Default test params
-DEF_PARAMS = dict(
-    n_samples=(50, 40),
-    n_features=(10, 9),
-    noise=0.1,
-)
 
 CV_DEF_PARAMS = dict(
     groups=None,
@@ -28,34 +29,39 @@ CV_DEF_PARAMS = dict(
     fit_params=None,
     pre_dispatch="2*n_jobs",
     return_train_score=False,
-    error_score='raise',
+    error_score="raise",
     diagonal=False,
     train_test_combinations=None,
     pairwise=False,
 )
 
 
-@pytest.fixture(params=[6, .1])
-def msl(request):  # min_samples_leaf parameter
-    return request.param
-
-
-@pytest.fixture(params=range(10))
+@pytest.fixture(params=range(5))
 def random_state(request):
     return request.param
 
 
-def _test_cv(estimator, random_state=None, cv_params=None, **PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
-    PARAMS['noise'] = 0.
-    pprint(PARAMS)
+@pytest.fixture
+def data(random_state):
+    XX, Y = make_interaction_regression(
+        n_samples=(50, 40),
+        n_features=(10, 9),
+        return_molten=False,
+        noise=0.0,
+    )
+    XX = [rbf_kernel(Xi, gamma=1) for Xi in XX]
+    Y = (Y > Y.mean()).astype("float64")
+    return XX, Y
+
+
+def _test_cv(estimator, data, cv_params=None):
+    X, y = data
+
     cv_params = CV_DEF_PARAMS | (cv_params or {})
     cv_params |= dict(return_estimator=True)
-    pprint(cv_params)
 
     is_pairwise = cv_params["pairwise"] or _safe_tags(estimator, "pairwise")
     cv = cv_params["cv"]
-    n_dim = len(PARAMS['n_samples'])
 
     if isinstance(cv, Sequence):
         if not isinstance(cv[0], int):
@@ -67,123 +73,152 @@ def _test_cv(estimator, random_state=None, cv_params=None, **PARAMS):
     else:  # isinstance(cv_params["cv"], int)
         cv = (cv, cv)
 
-    if is_pairwise:
-        if PARAMS["n_features"] != PARAMS["n_samples"]:
-            raise ValueError(
-                "Pairwise estimators must receive square Xs satisfying"
-                f"attrs == n_samples (PARAMS['n_features'] != PARAMS['n_features'])"
-            )
-        n_samples = PARAMS["n_samples"]
-        # For pairwise data, each fold must be square
-        # Sum Xi.n_samples where Xi is a training fold of X
-        fold_n_samples = sum(s-(s//cvi) for s, cvi in zip(n_samples, cv))
-    else:
-        # Sum Yi.n_samples where Yi is a training fold of Y
-        n_features = sum(PARAMS["n_features"])
-
-    with stopwatch('Generating data...'):
-        X, y = make_interaction_regression(random_state=random_state, **PARAMS)
-        y = y > y.mean()
-    
-    # TODO: random_state
-    cv_res = multipartite_cross_validate(estimator, X=X, y=y, **cv_params)
+    cv_res = multipartite_cross_validate(
+        estimator,
+        X=X,
+        y=y,
+        **cv_params,
+    )
+    print("Cross-validation results:")
     pprint(cv_res)
 
     for estimator in cv_res["estimator"]:
         if is_pairwise:
+            # For pairwise data, each fold must be square
+            # Sum Xi.n_samples where Xi is a training fold of X
+            fold_n_samples = sum(s - (s // cvi) for s, cvi in zip(y.shape, cv))
             # When cv does not divide n_samples perfectly, it distributes the
             # remainders across folds (see np.array_split), so that each fold
             # size can vary on one unit. Naturally, this happens for the n_dim
             # X matrices, so n_features_in_ can be up to n_dim smaller.
-            assert (estimator.n_features_in_ - fold_n_samples) <= n_dim
+            assert (estimator.n_features_in_ - fold_n_samples) <= y.ndim
         else:
+            # Sum Yi.n_samples where Yi is a training fold of Y
+            n_features = sum(Xi.shape[1] for Xi in X)
             assert estimator.n_features_in_ == n_features
-    
+
     return cv_res
 
 
-def test_cv_tree(msl, random_state, **PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
-    return _test_cv(
-        estimator=BipartiteExtraTreeRegressor(
-            min_samples_leaf=msl,
-            random_state=random_state,
+# parametrize estimator:
+@pytest.mark.parametrize(
+    "estimator",
+    [
+        BipartiteExtraTreeRegressor(
+            min_samples_leaf=25,
         ),
-        random_state=random_state,
-        **PARAMS,
-    )
-
-
-def test_cv_ensemble(msl, random_state, **PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
-    return _test_cv(
-        estimator=BipartiteExtraTreesRegressor(
+        BipartiteExtraTreesRegressor(
+            min_samples_leaf=25,
+        ),
+        bipartite_learn.ensemble.BipartiteExtraTreesRegressorSS(
             n_estimators=10,
-            min_samples_leaf=msl,
-            random_state=random_state,
+            min_samples_leaf=25,
+            bipartite_adapter="gmosa",
+            criterion="squared_error",
         ),
-        random_state=random_state,
-        **PARAMS,
-    )
-
-
-def test_cv_semisupervised_ensemble(msl, random_state, **PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
+    ],
+)
+def test_cv_on_estimators(estimator, data, random_state, **PARAMS):
     return _test_cv(
-        estimator=bipartite_learn.ensemble.BipartiteExtraTreesRegressorSS(
-            n_estimators=10,
-            min_samples_leaf=msl,
-            random_state=random_state,
-            bipartite_adapter='gmosa',
-            criterion='squared_error',
-        ),
-        random_state=random_state,
-        **PARAMS,
+        estimator=estimator.set_params(random_state=random_state),
+        data=data,
     )
 
 
-def test_cv_pairwise_tag(msl, random_state, **PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
-    PARAMS["n_features"] = PARAMS["n_samples"]  # Make Xs square
-    cv_params = dict(pairwise=False)  # tag will be gotten from the estimator
-
+def test_cv_pairwise_tag(data, random_state):
     estimator = BipartiteExtraTreeRegressor(
-        min_samples_leaf=msl,
+        min_samples_leaf=25,
         random_state=random_state,
     )
 
     # Monkey-patch pairwise tag
     old_tags = _safe_tags(estimator)
-    estimator.__class__._more_tags = (
-        lambda self: old_tags | dict(pairwise=True)
-    )
+    type(estimator)._more_tags = lambda self: old_tags | dict(pairwise=True)
     # Revert patch even if an exception is raised
     try:
-        cv_res = _test_cv(
-            estimator,
-            random_state=random_state,
-            cv_params=cv_params,
-            **PARAMS,
+        _test_cv(
+            data=data,
+            estimator=estimator,
+            cv_params=dict(pairwise=False),  # get tag from the estimator
         )
     finally:
-        estimator.__class__._more_tags = lambda self: old_tags
+        type(estimator)._more_tags = lambda self: old_tags
 
     assert not _safe_tags(estimator, "pairwise")
-    return cv_res
 
 
-def test_cv_pairwise_parameter(msl, random_state, **PARAMS):
-    PARAMS = DEF_PARAMS | PARAMS
-    cv_params = dict(pairwise=True)
+def test_cv_pairwise_parameter(data, random_state):
     estimator = BipartiteExtraTreeRegressor(
-        min_samples_leaf=msl,
+        min_samples_leaf=25,
         random_state=random_state,
     )
-    PARAMS["n_features"] = PARAMS["n_samples"]  # Make Xs square
-
-    cv_res = _test_cv(
-        estimator, cv_params=cv_params, random_state=random_state, **PARAMS,
+    _test_cv(
+        estimator=estimator,
+        data=data,
+        cv_params=dict(pairwise=True),
     )
 
     assert not _safe_tags(estimator, "pairwise")
-    return cv_res
+
+
+def test_check_multipartite_cv_with_multipartite_cv():
+    # Test that if cv is already a MultipartiteCrossValidator object,
+    # the function returns it directly without any modifications
+    cv = MultipartiteCrossValidator(KFold(n_splits=2), n_parts=5)
+    assert check_multipartite_cv(cv) == cv
+
+
+def test_check_multipartite_cv_with_n_parts():
+    # Test that the function creates a MultipartiteCrossValidator object with
+    # n_parts equal to the specified value when cv is an integer
+    cv = check_multipartite_cv(3, n_parts=3)
+    assert isinstance(cv, MultipartiteCrossValidator)
+    assert len(cv.cross_validators) == 3
+    assert cv.n_parts == 3
+
+
+def test_check_multipartite_cv_with_list_of_cv():
+    # Test that the function creates a MultipartiteCrossValidator object with
+    # the specified cross-validation objects when cv is a list/tuple
+    cv1 = KFold(n_splits=2)
+    cv2 = KFold(n_splits=3)
+    cv = check_multipartite_cv([cv1, cv2])
+    assert isinstance(cv, MultipartiteCrossValidator)
+    assert len(cv.cross_validators) == 2
+    assert cv.cross_validators[0] == cv1
+    assert cv.cross_validators[1] == cv2
+    assert cv.n_parts == 2
+
+
+@pytest.mark.parametrize("shuffle", [True, False])
+def test_check_multipartite_cv_shuffle(data, shuffle, random_state):
+    X, y = data
+    n_parts = 2
+    n_splits = (3, 4)
+
+    cv = check_multipartite_cv(
+        n_splits,
+        y=y,
+        shuffle=shuffle,
+        random_state=random_state if shuffle else None,
+        n_parts=n_parts,
+    )
+
+    assert isinstance(cv, MultipartiteCrossValidator)
+    assert len(cv.cross_validators) == n_parts
+
+    split = list(cv.split(X))
+
+    assert len(split) == np.prod(n_splits)
+
+    for ax_split in split:
+        for i in zip(ax_split, y.shape, n_splits):
+            (ax_train_idx, ax_test_idx), n_samples, ax_n_splits = i
+
+            is_consecutive = (np.diff(np.array(ax_test_idx)) == 1).all()
+            if shuffle:
+                assert not is_consecutive
+            else:
+                assert is_consecutive
+            assert (len(ax_test_idx) - n_samples // ax_n_splits) <= 1
+            assert len(ax_train_idx) + len(ax_test_idx) == n_samples

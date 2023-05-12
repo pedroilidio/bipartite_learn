@@ -22,14 +22,12 @@ from numpy.ma import MaskedArray
 from scipy.stats import rankdata
 
 from sklearn.base import is_classifier, clone
-from sklearn.base import MetaEstimatorMixin
 from sklearn.model_selection._validation import _aggregate_score_dicts
 from sklearn.model_selection._validation import _insert_error_scores
 from sklearn.model_selection._validation import _normalize_score_results
 from sklearn.model_selection._validation import _warn_or_raise_about_fit_failures
-from joblib import Parallel
-from sklearn.utils.validation import indexable, _check_fit_params
-from sklearn.utils.fixes import delayed
+from sklearn.utils.validation import _check_fit_params
+from sklearn.utils.parallel import Parallel, delayed
 from sklearn.metrics._scorer import _check_multimetric_scoring
 from sklearn.metrics import check_scoring
 

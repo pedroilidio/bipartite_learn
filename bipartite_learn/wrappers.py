@@ -27,6 +27,13 @@ from .base import (
 )
 from .utils import _X_is_multipartite
 
+__all__ = [
+    "GlobalSingleOutputWrapper",
+    "LocalMultiOutputWrapper",
+    "MultipartiteTransformerWrapper",
+    "MultipartiteSamplerWrapper",
+]
+
 
 def _estimator_has(attr):
     """Check that primary estimators has `attr`.
@@ -418,7 +425,7 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
         self.secondary_rows_estimator_ = clone(self.secondary_rows_estimator)
         self.secondary_cols_estimator_ = clone(self.secondary_cols_estimator)
 
-    def fit(self, X, y):
+    def fit(self, X, y, **fit_params):
         """Fits the wrapper to the training data.
 
         Raises
@@ -440,8 +447,8 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
         if not self.independent_labels:
             self.y_fit_ = y
 
-        self.primary_rows_estimator_.fit(X[0], y)
-        self.primary_cols_estimator_.fit(X[1], y.T)
+        self.primary_rows_estimator_.fit(X[0], y, **fit_params)
+        self.primary_cols_estimator_.fit(X[1], y.T, **fit_params)
 
         return self
 
@@ -531,8 +538,8 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
                 X[1], new_y_rows, **fit_params
             ).T
         else:
-            self.secondary_rows_estimator_.fit(X[0], new_y_cols, **fit_params)
-            self.secondary_cols_estimator_.fit(X[1], new_y_rows, **fit_params)
+            self.secondary_rows_estimator_.fit(X[0], new_y_cols)
+            self.secondary_cols_estimator_.fit(X[1], new_y_rows)
             rows_pred = self.secondary_rows_estimator_.predict(X[0])
             cols_pred = self.secondary_cols_estimator_.predict(X[1]).T
 
@@ -599,7 +606,8 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
     def _more_tags(self):
         # check if the primary estimator expects pairwise input (the primary
         # columns is ensured to be pairwise by the _check_estimators method)
-        return {"pairwise": _safe_tags(self.primary_rows_estimator_, "pairwise")}
+        # TODO: separate into pairwise_rows and pairwise_cols.
+        return {"pairwise": _safe_tags(self.primary_rows_estimator, "pairwise")}
 
     @property
     def n_features_in_(self):
