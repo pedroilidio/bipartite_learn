@@ -85,6 +85,7 @@ class NRLMF(
         results across multiple function calls.
         See :term:`Glossary <random_state>`.
     """
+
     # NOTE: We need the next line for other scikit-learn stuff to not look for
     #       predict_proba(). However, NRLMF also implements imblearn's Sampler
     #       interface, to reconstruct y (interaction matrix) in a pipeline.
@@ -159,11 +160,9 @@ class NRLMF(
 
     def predict(self, X):
         if not _X_is_multipartite(X):
-            raise ValueError(
-                f"{type(self).__name__} only accepts bipartite input."
-            )
-        U = self.knn_rows_.predict(1-X[0])
-        V = self.knn_cols_.predict(1-X[1])
+            raise ValueError(f"{type(self).__name__} only accepts bipartite input.")
+        U = self.knn_rows_.predict(1 - X[0])
+        V = self.knn_cols_.predict(1 - X[1])
         yt = self._logistic_output(U, V)
         return yt.reshape(-1)
 
@@ -178,10 +177,8 @@ class NRLMF(
         alpha_rows = self.alpha_rows
         n_components_rows = self.n_components_rows
 
-        alpha_cols = \
-            alpha_rows if self.alpha_cols == "same" else self.alpha_cols
-        lambda_cols = \
-            lambda_rows if self.lambda_cols == "same" else self.lambda_cols
+        alpha_cols = alpha_rows if self.alpha_cols == "same" else self.alpha_cols
+        lambda_cols = lambda_rows if self.lambda_cols == "same" else self.lambda_cols
 
         if self.n_components_cols == "same":
             n_components_cols = n_components_rows
@@ -205,24 +202,30 @@ class NRLMF(
         )
         self.knn_rows_ = KNeighborsRegressor(**knn_params)
         self.knn_cols_ = KNeighborsRegressor(**knn_params)
-        self.knn_rows_.fit(1-X[0], self.U)  # Similarity to distance conversion
-        self.knn_cols_.fit(1-X[1], self.V)
+        self.knn_rows_.fit(1 - X[0], self.U)  # Similarity to distance conversion
+        self.knn_cols_.fit(1 - X[1], self.V)
 
         self.n_features_in_ = X[0].shape[1] + X[1].shape[1]
 
         # Build regularized K Nearest Neighbors similarity matrices.
         L_rows = self._laplacian_matrix(
-            alpha=alpha_rows, knn=self.knn_rows_,
+            alpha=alpha_rows,
+            knn=self.knn_rows_,
             inverse_prior_var=lambda_rows,
         )
         L_cols = self._laplacian_matrix(
-            alpha=alpha_cols, knn=self.knn_cols_,
+            alpha=alpha_cols,
+            knn=self.knn_cols_,
             inverse_prior_var=lambda_cols,
         )
 
         # Optimize U and V latent vectors for X[0] and X[1].
         self._AGD_optimization(
-            U=self.U, V=self.V, L_rows=L_rows, L_cols=L_cols, y=y,
+            U=self.U,
+            V=self.V,
+            L_rows=L_rows,
+            L_cols=L_cols,
+            y=y,
         )
 
         return self
@@ -247,7 +250,7 @@ class NRLMF(
 
         # We take 1-S to convert distances back to similarities, since knn
         # needed to be trained with distances (1-X).
-        S_knn[nonzero_idx] = alpha * (1-S_knn[nonzero_idx])
+        S_knn[nonzero_idx] = alpha * (1 - S_knn[nonzero_idx])
 
         S_knn = S_knn.toarray()  # Sparse slows matrix multiplication.
 
@@ -273,28 +276,30 @@ class NRLMF(
 
         # TODO: eliminate y_scaled to lower memory consumption?
         # y_scaled[i, j] = positive_importance if y[i, j] == 1 else 1
-        y_scaled = 1 + (self.positive_importance-1) * y
+        y_scaled = 1 + (self.positive_importance - 1) * y
 
         last_loss = self._loss_function(y, y_scaled, U, V, L_rows, L_cols)
 
         for i in range(self.max_iter):
             # Update U.
             step_rows = self._gradient_step(y, y_scaled, U, V, L_rows)
-            step_sq_sum_rows += step_rows ** 2
+            step_sq_sum_rows += step_rows**2
             U += self.learning_rate * step_rows / np.sqrt(step_sq_sum_rows)
 
             # Update V.
             step_cols = self._gradient_step(y.T, y_scaled.T, V, U, L_cols)
-            step_sq_sum_cols += step_cols ** 2
+            step_sq_sum_cols += step_cols**2
             V += self.learning_rate * step_cols / np.sqrt(step_sq_sum_cols)
 
             # Calculate loss.
             curr_loss = self._loss_function(y, y_scaled, U, V, L_rows, L_cols)
-            delta_loss = abs(1 - curr_loss/last_loss)
+            delta_loss = abs(1 - curr_loss / last_loss)
 
             if self.verbose:
-                print(f"Step: {i+1} | Current loss: {curr_loss} | "
-                      f"Relative change: {delta_loss}")
+                print(
+                    f"Step: {i+1} | Current loss: {curr_loss} | "
+                    f"Relative change: {delta_loss}"
+                )
 
             if delta_loss < self.tol:
                 break
@@ -326,7 +331,7 @@ class NRLMF(
         # NOTE: the following is the negative gradient, so that it already
         #       climbs down the loss function and must be added to,
         #       not subtracted from W.
-        return (y*self.positive_importance - y_scaled*P) @ otherW - L @ W
+        return (y * self.positive_importance - y_scaled * P) @ otherW - L @ W
 
     def _loss_function(self, y, y_scaled, U, V, L_rows, L_cols):
         """Return the loss, based on the log-likelihood of U an V given y.
@@ -339,7 +344,7 @@ class NRLMF(
         UV = U @ V.T
         return (
             np.sum(
-                y_scaled * np.log(1 + np.exp(UV))
+                y_scaled * np.log(1 + np.exp(UV))  ##
                 - y * UV * self.positive_importance
             )
             + np.sum(U * (L_rows @ U)) / 2

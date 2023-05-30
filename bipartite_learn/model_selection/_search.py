@@ -51,6 +51,12 @@ class BaseMultipartiteSearchCV(
 ):
     """Abstract base class for hyper parameter search with cross-validation."""
 
+    _parameter_constraints = {
+        **BaseSearchCV._parameter_constraints,
+        "diagonal": ["boolean"],
+        "train_test_combinations": [list, None],
+    }
+
     @abstractmethod
     def __init__(
         self,
@@ -64,23 +70,26 @@ class BaseMultipartiteSearchCV(
         pre_dispatch="2*n_jobs",
         error_score=np.nan,
         return_train_score=True,
-        # ND specific:
+        # bipartite_learn-specific params:
         diagonal=False,
         train_test_combinations=None,
+        **kwargs,
     ):
+        self.diagonal = diagonal
+        self.train_test_combinations = train_test_combinations
 
-        self.scoring = scoring
-        self.estimator = estimator
-        self.n_jobs = n_jobs
-        self.refit = refit
-        self.cv = cv
-        self.verbose = verbose
-        self.pre_dispatch = pre_dispatch
-        self.error_score = error_score
-        self.return_train_score = return_train_score
-        # ND specific:
-        self.diagonal=diagonal
-        self.train_test_combinations=train_test_combinations
+        super().__init__(
+            estimator=estimator,
+            scoring=scoring,
+            n_jobs=n_jobs,
+            refit=refit,
+            cv=cv,
+            verbose=verbose,
+            pre_dispatch=pre_dispatch,
+            error_score=error_score,
+            return_train_score=return_train_score,
+            **kwargs,
+        )
 
     def fit(self, X, y=None, *, groups=None, **fit_params):
         """Run fit with all sets of parameters.
@@ -133,10 +142,7 @@ class BaseMultipartiteSearchCV(
 
         fit_params = _check_fit_params(X[0], fit_params)
         cv_orig = check_multipartite_cv(
-            self.cv,
-            y,
-            classifier=is_classifier(estimator),
-            diagonal=self.diagonal
+            self.cv, y, classifier=is_classifier(estimator), diagonal=self.diagonal
         )
 
         train_test_combinations, train_test_names = _check_train_test_combinations(
@@ -156,7 +162,6 @@ class BaseMultipartiteSearchCV(
             return_parameters=False,
             error_score=self.error_score,
             verbose=self.verbose,
-            # ND specific:
             train_test_combinations=train_test_combinations,
             train_test_names=train_test_names,
         )
@@ -186,7 +191,7 @@ class BaseMultipartiteSearchCV(
                     )
 
                 out = parallel(
-                    delayed(_bipartite_fit_and_score)(  ###
+                    delayed(_bipartite_fit_and_score)(
                         clone(base_estimator),
                         X,
                         y,
@@ -241,7 +246,7 @@ class BaseMultipartiteSearchCV(
 
             # multimetric is determined here because in the case of a callable
             # self.scoring the return type is only known after calling
-            first_test_score = all_out[0][train_test_names[-1]+"_scores"]
+            first_test_score = all_out[0][train_test_names[-1] + "_scores"]
             self.multimetric_ = isinstance(first_test_score, dict)
 
             # check refit_metric now for a callabe scorer that is multimetric
@@ -313,9 +318,7 @@ class BaseMultipartiteSearchCV(
             results["mean_%s" % key_name] = array_means
 
             # if key_name.startswith(("train_", "test_")) and np.any(
-            if key_name.endswith("_scores") and np.any(
-                ~np.isfinite(array_means)
-            ):
+            if key_name.endswith("_scores") and np.any(~np.isfinite(array_means)):
                 warnings.warn(
                     f"One or more of the {key_name.split('_')[0]} scores "
                     f"are non-finite: {array_means}",
@@ -361,8 +364,8 @@ class BaseMultipartiteSearchCV(
         # Store a list of param dicts at the key 'params'
         results["params"] = candidate_params
 
-        test_scores_key = self.train_test_names[-1]+'_scores'
-        train_scores_key = self.train_test_names[0]+'_scores'
+        test_scores_key = self.train_test_names[-1] + "_scores"
+        train_scores_key = self.train_test_names[0] + "_scores"
 
         test_scores_dict = _normalize_score_results(out[test_scores_key])
         if self.return_train_score:
@@ -725,12 +728,13 @@ class MultipartiteGridSearchCV(BaseMultipartiteSearchCV, GridSearchCV):
         pre_dispatch="2*n_jobs",
         error_score=np.nan,
         return_train_score=False,
-        # ND specific:
+        # bipartite_learn-specific params:
         diagonal=False,
         train_test_combinations=None,
     ):
         super().__init__(
             estimator=estimator,
+            param_grid=param_grid,
             scoring=scoring,
             n_jobs=n_jobs,
             refit=refit,
@@ -739,14 +743,15 @@ class MultipartiteGridSearchCV(BaseMultipartiteSearchCV, GridSearchCV):
             pre_dispatch=pre_dispatch,
             error_score=error_score,
             return_train_score=return_train_score,
-            # ND specific:
             diagonal=diagonal,
             train_test_combinations=train_test_combinations,
         )
-        self.param_grid = param_grid
 
 
-class MultipartiteRandomizedSearchCV(BaseMultipartiteSearchCV, RandomizedSearchCV):
+class MultipartiteRandomizedSearchCV(
+    BaseMultipartiteSearchCV,
+    RandomizedSearchCV,
+):
     """Randomized search on hyper parameters.
 
     RandomizedSearchCV implements a "fit" and a "score" method.
@@ -1099,24 +1104,23 @@ class MultipartiteRandomizedSearchCV(BaseMultipartiteSearchCV, RandomizedSearchC
         random_state=None,
         error_score=np.nan,
         return_train_score=False,
-        # ND specific:
+        # bipartite_learn-specific params:
         diagonal=False,
         train_test_combinations=None,
     ):
-        self.param_distributions = param_distributions
-        self.n_iter = n_iter
-        self.random_state = random_state
         super().__init__(
             estimator=estimator,
+            param_distributions=param_distributions,
+            n_iter=n_iter,
             scoring=scoring,
             n_jobs=n_jobs,
             refit=refit,
             cv=cv,
             verbose=verbose,
             pre_dispatch=pre_dispatch,
+            random_state=random_state,
             error_score=error_score,
             return_train_score=return_train_score,
-            # ND specific:
             diagonal=diagonal,
             train_test_combinations=train_test_combinations,
         )

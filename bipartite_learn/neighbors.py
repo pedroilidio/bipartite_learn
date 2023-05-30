@@ -17,17 +17,20 @@ from sklearn.utils._param_validation import StrOptions
 
 
 class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase):
-    """Regression based on distance-weighted neighbors.
+    f"""Regression based on distance-weighted neighbors.
     The target is predicted by distance-weighted interpolation of the targets
     associated with the instances in the training set. Corresponds to
     `KneighborsRegressor(n_neighbors=X_train.shape[0])`, but much faster.
     Parameters
     ----------
-    weights : 'distance', callable or None, default='distance'
+    weights : {'distance', 'similarity'}, callable or None, default='distance'
         Weight function used in prediction.  Possible values:
         - 'distance' : weight points by the inverse of their distance.
           in this case, closer neighbors of a query point will have a
           greater influence than neighbors which are further away.
+        - 'similarity' : the same as 'distance', but assumes X or self.metric(X)
+          is a similarity matrix rather than a distance matrix (for self.metric
+          == 'precomputed' and callable self.metric, respectively).
         - [callable] : a user-defined function which accepts an
           array of distances, and returns an array of the same shape
           containing the weights.
@@ -44,8 +47,8 @@ class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase)
         the metrics listed in
         :class:`~sklearn.metrics.pairwise.distance_metrics` for valid metric
         values.
-        If metric is "precomputed", X is assumed to be a distance matrix and
-        must be square during fit. X may be a :term:`sparse graph`, in which
+        If metric is "precomputed", X is assumed to be a kernel/distance matrix
+        and must be square during fit. X may be a :term:`sparse graph`, in which
         case only "nonzero" elements may be considered neighbors.
         If metric is a callable function, it takes two arrays representing 1D
         vectors as inputs and must return one value indicating the distance
@@ -101,7 +104,7 @@ class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase)
 
     _parameter_constraints: dict = {
         **NeighborsBase._parameter_constraints,
-        "weights": [StrOptions({"distance"}), callable, None],
+        "weights": [StrOptions({"distance", "similarity"}), callable, None],
     }
     _parameter_constraints.pop("radius")
     _parameter_constraints.pop("n_neighbors")
@@ -131,6 +134,18 @@ class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase)
     def _more_tags(self):
         # For cross-validation routines to split data correctly
         return {"pairwise": self.metric == "precomputed"}
+
+    def _validate_params(self):
+        if (
+            self.weights == "similarity"
+            and self.metric != "precomputed"
+            and isinstance(self.metric, str)
+        ):
+            raise ValueError(
+                "weights='similarity' is not supported for string-valued"
+                f" metrics other than 'precomputed' ({self.metric=!r})",
+            )
+        super()._validate_params()
 
     def fit(self, X, y):
         """Fit the k-nearest neighbors regressor from the training dataset.
@@ -178,8 +193,13 @@ class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase)
                 **self.effective_metric_params_,
             )
 
-        # Default weights is "distance", no more "uniform"
-        weights = _get_weights(dist, self.weights or "distance")
+        if self.weights == "similarity":
+            weights = dist
+        else:
+            # Default weights is "distance", no more "uniform"
+            weights = _get_weights(dist, self.weights or "distance")
+
+        # Normalize the weights to sum up to 1 on each row
         weights /= np.sum(weights, axis=1, keepdims=True)
 
         _y = self._y
