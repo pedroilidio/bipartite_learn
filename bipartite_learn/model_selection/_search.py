@@ -73,10 +73,12 @@ class BaseMultipartiteSearchCV(
         # bipartite_learn-specific params:
         diagonal=False,
         train_test_combinations=None,
+        pairwise=False,
         **kwargs,
     ):
         self.diagonal = diagonal
         self.train_test_combinations = train_test_combinations
+        self.pairwise = pairwise
 
         super().__init__(
             estimator=estimator,
@@ -164,6 +166,7 @@ class BaseMultipartiteSearchCV(
             verbose=self.verbose,
             train_test_combinations=train_test_combinations,
             train_test_names=train_test_names,
+            pairwise=self.pairwise,
         )
         ##############################
 
@@ -731,6 +734,7 @@ class MultipartiteGridSearchCV(BaseMultipartiteSearchCV, GridSearchCV):
         # bipartite_learn-specific params:
         diagonal=False,
         train_test_combinations=None,
+        pairwise=False,
     ):
         super().__init__(
             estimator=estimator,
@@ -745,6 +749,7 @@ class MultipartiteGridSearchCV(BaseMultipartiteSearchCV, GridSearchCV):
             return_train_score=return_train_score,
             diagonal=diagonal,
             train_test_combinations=train_test_combinations,
+            pairwise=pairwise,
         )
 
 
@@ -1107,6 +1112,7 @@ class MultipartiteRandomizedSearchCV(
         # bipartite_learn-specific params:
         diagonal=False,
         train_test_combinations=None,
+        pairwise=True,
     ):
         super().__init__(
             estimator=estimator,
@@ -1123,4 +1129,5 @@ class MultipartiteRandomizedSearchCV(
             return_train_score=return_train_score,
             diagonal=diagonal,
             train_test_combinations=train_test_combinations,
+            pairwise=pairwise,
         )

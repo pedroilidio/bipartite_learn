@@ -151,7 +151,7 @@ class TargetKernelLinearCombiner(BaseSampler):
         gamma_scale: _GammaScaleOptions = "squares",
         filter_params: bool = False,
         n_jobs: int | None = None,
-        **kwds,
+        **kernel_params,
     ):
         self.alpha = alpha
         self.metric = metric
@@ -159,7 +159,7 @@ class TargetKernelLinearCombiner(BaseSampler):
         self.gamma_scale = gamma_scale
         self.filter_params = filter_params
         self.n_jobs = n_jobs
-        self._kernel_params = kwds
+        self._kernel_params = kernel_params
 
     def _fit_resample(self, X, y, **fit_params):
         self.effective_gamma_ = _scale_gamma(y, self.gamma, self.gamma_scale)

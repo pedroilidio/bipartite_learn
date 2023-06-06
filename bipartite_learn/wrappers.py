@@ -11,6 +11,8 @@ from sklearn.base import (
     TransformerMixin,
     MetaEstimatorMixin,
     clone,
+    is_classifier,
+    is_regressor,
 )
 from sklearn.utils.metaestimators import available_if
 from sklearn.utils._tags import _safe_tags
@@ -40,19 +42,21 @@ def _estimator_has(attr):
 
     Used together with `avaliable_if` in `GlobalSingleOutputWrapper`.
     """
+
     def check(self):
         # raise original `AttributeError` if `attr` does not exist
         getattr(self.estimator, attr)
         return True
 
     return check
-     
+
 
 def _secondary_estimators_have(attr):
     """Check that primary estimators has `attr`.
 
     Used together with `avaliable_if` in `LocalMultiOutputWrapper`.
     """
+
     def check(self):
         # raise original `AttributeError` if `attr` does not exist
         getattr(self.secondary_rows_estimator_, attr)
@@ -67,6 +71,7 @@ def _primary_estimators_have(attr):
 
     Used together with `avaliable_if` in `LocalMultiOutputWrapper`.
     """
+
     def check(self):
         # raise original `AttributeError` if `attr` does not exist
         getattr(self.primary_rows_estimator_, attr)
@@ -105,6 +110,7 @@ class GlobalSingleOutputWrapper(BaseMultipartiteEstimator, MetaEstimatorMixin):
        <doi.org/10.1007/s10994-018-5700-x>`
        Pliakos, Geurts and Vens, 2018
     """
+
     def __init__(
         self,
         estimator: BaseEstimator,
@@ -116,7 +122,7 @@ class GlobalSingleOutputWrapper(BaseMultipartiteEstimator, MetaEstimatorMixin):
         ----------
         estimator : BaseEstimator
             Estimator or transformer to receive the adapted bipartite data.
-        
+
         under_sampler : BaseSampler or None, default=None
             Optional sampler to be applied to the transformed data before
             fitting the estimator. Useful in cases where using all the possible
@@ -129,7 +135,7 @@ class GlobalSingleOutputWrapper(BaseMultipartiteEstimator, MetaEstimatorMixin):
         if not _X_is_multipartite(X):
             return X, y
         return melt_multipartite_dataset(X, y)
-    
+
     def _fit_resample_input(self, X, y):
         if self.under_sampler is None:
             return X, y
@@ -145,9 +151,9 @@ class GlobalSingleOutputWrapper(BaseMultipartiteEstimator, MetaEstimatorMixin):
         return self
 
     @available_if(_estimator_has("predict"))
-    def predict(self, X):
+    def predict(self, X, **predict_params):
         X, _ = self._melt_input(X)
-        return self.estimator_.predict(X)
+        return self.estimator_.predict(X, **predict_params)
 
     @available_if(_estimator_has("fit_predict"))
     def fit_predict(self, X, y=None, **fit_params):
@@ -189,7 +195,7 @@ class GlobalSingleOutputWrapper(BaseMultipartiteEstimator, MetaEstimatorMixin):
         Xt, yt = self._fit_resample_input(Xt, yt)
         self.estimator_ = clone(self.estimator)
         return self.estimator_.fit_transform(Xt, yt, **fit_params)
-        
+
     @available_if(_estimator_has("inverse_transform"))
     def inverse_transform(self, Xt):
         X, _ = self._melt_input(Xt)
@@ -369,7 +375,7 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
             training data is appended to the training data of the secondary
             estimators, allowing the secondary estimators to explore
             inter-output correlations.
-            
+
         See the :ref:`User Guide <local_multi_output>` for more information on
         the Local Multi-Output strategy for adapting estimators.
         """
@@ -381,7 +387,7 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
         self.independent_labels = independent_labels
         self.combine_predictions_func = combine_predictions_func
         self.combine_func_kwargs = combine_func_kwargs
-    
+
     def _check_estimators(self):
         for estimator in (
             self.primary_rows_estimator,
@@ -391,8 +397,8 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
         ):
             # TODO: 'multioutput_only' tag should imply 'multioutput' tag
             if not (
-                _safe_tags(estimator, "multioutput") or
-                _safe_tags(estimator, "multioutput_only")
+                _safe_tags(estimator, "multioutput")
+                or _safe_tags(estimator, "multioutput_only")
             ):
                 raise IncompatibleEstimatorsError(
                     f"All estimators wrapped by {self.__class__.__name__} "
@@ -402,9 +408,8 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
                     "modules/multiclass.html"
                 )
 
-        if (
-            getattr(self.secondary_rows_estimator, "_estimator_type")
-            != getattr(self.secondary_cols_estimator, "_estimator_type")
+        if getattr(self.secondary_rows_estimator, "_estimator_type") != getattr(
+            self.secondary_cols_estimator, "_estimator_type"
         ):
             raise IncompatibleEstimatorsError(
                 "Secondary estimators must be of the same type (regressor"
@@ -412,9 +417,8 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
                 "developers/develop.html#estimator-types"
             )
 
-        if (
-            _safe_tags(self.primary_rows_estimator, "pairwise")
-            != _safe_tags(self.primary_cols_estimator, "pairwise")
+        if _safe_tags(self.primary_rows_estimator, "pairwise") != _safe_tags(
+            self.primary_cols_estimator, "pairwise"
         ):
             raise IncompatibleEstimatorsError(
                 "Both or none of the primary estimators must be pairwise."
@@ -462,7 +466,7 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
 
         # If the secondary estimators are able to take advantage of correlated
         # labels, we train them with all the labels we have, even if most pre-
-        # dicted columns will be discarded. 
+        # dicted columns will be discarded.
         if not self.independent_labels:
             new_y_cols = np.hstack((new_y_cols, self.y_fit_))
             new_y_rows = np.hstack((new_y_rows, self.y_fit_.T))
@@ -471,35 +475,70 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
         self.secondary_cols_estimator_.fit(self.X_fit_[1], new_y_rows)
 
         return self
-    
+
     def _combine_predictions(self, rows_pred, cols_pred):
         return np.apply_along_axis(
             func1d=self.combine_predictions_func,
             axis=0,
             arr=(rows_pred, cols_pred),
             **(self.combine_func_kwargs or {}),
-        ).reshape(-1)
+        )
 
     @available_if(_secondary_estimators_have("predict"))
-    def predict(self, X):
+    def predict(self, X, **predict_params):
+        if is_classifier(self):
+            return self._predict_classification(X, **predict_params)
+        elif is_regressor(self):
+            return self._predict_regression(X, **predict_params)
+        raise ValueError
+
+    def _predict_regression(self, X, **predict_params):
         self._secondary_fit(X)
 
-        rows_pred = self.secondary_rows_estimator_.predict(X[0])
-        cols_pred = self.secondary_cols_estimator_.predict(X[1]).T
+        rows_pred = self.secondary_rows_estimator_.predict(
+            X[0],
+            **predict_params,
+        )
+        cols_pred = self.secondary_cols_estimator_.predict(
+            X[1],
+            **predict_params,
+        ).T
 
         if not self.independent_labels:
             # Get only the predictions corresponding to the instances being
             # predicted.
-            rows_pred = rows_pred[:, :X[1].shape[0]]
-            cols_pred = cols_pred[:X[0].shape[0]]
+            rows_pred = rows_pred[:, : X[1].shape[0]]
+            cols_pred = cols_pred[: X[0].shape[0]]
 
-        return self._combine_predictions(rows_pred, cols_pred)
-    
-    # TODO: any of them individually
+        return self._combine_predictions(rows_pred, cols_pred).reshape(-1)
+
+    def _predict_classification(self, X, **predict_params):
+        check_is_fitted(self)
+
+        if hasattr(self, "predict_proba"):
+            proba = self.predict_proba(X, **predict_params)
+        elif hasattr(self, "predict_log_proba"):
+            proba = self.predict_log_proba(X, **predict_params)
+        elif hasattr(self, "decision_function"):
+            proba = self.decision_function(X, **predict_params)
+        else:
+            raise ValueError(
+                "If a classifier, the estimator must have a predict_proba,"
+                "predict_log_proba or decision_function method."
+            )
+
+        # FIXME: we must ensure that the classes are the same for all rows
+        # and columns of y, and that they are in the same order.
+        return self.classes_[np.argmax(proba, axis=1)]
+
+    # TODO: make also available if only a row or column estimator has
     @available_if(
         lambda self: (
-            _primary_estimators_have("fit_predict")
-            or _secondary_estimators_have("fit_predict")
+            is_classifier(self)
+            and (
+                _primary_estimators_have("fit_predict")
+                or _secondary_estimators_have("fit_predict")
+            )
         )
     )
     def fit_predict(self, X, y=None, **fit_params):
@@ -509,14 +548,18 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
 
         if not self.independent_labels:
             self.y_fit_ = y
-        
+
         # Transposed because they will be used as training labels.
         if hasattr(self.primary_rows_estimator_, "fit_predict"):
             new_y_rows = self.primary_rows_estimator_.fit_predict(
-                X[0], y, **fit_params,
+                X[0],
+                y,
+                **fit_params,
             ).T
             new_y_cols = self.primary_cols_estimator_.fit_predict(
-                X[1], y.T, **fit_params,
+                X[1],
+                y.T,
+                **fit_params,
             ).T
         else:
             self.fit(X, y, **fit_params)
@@ -525,7 +568,7 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
 
         # If the secondary estimators are able to take advantage of correlated
         # labels, we train them with all the labels we have, even if most pre-
-        # dicted columns will be discarded. 
+        # dicted columns will be discarded.
         if not self.independent_labels:
             new_y_cols = np.hstack((new_y_cols, y))
             new_y_rows = np.hstack((new_y_rows, y.T))
@@ -546,52 +589,78 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
         if not self.independent_labels:
             # Get only the predictions corresponding to the instances being
             # predicted.
-            rows_pred = rows_pred[:, :X[1].shape[0]]
-            cols_pred = cols_pred[:X[0].shape[0]]
+            rows_pred = rows_pred[:, : X[1].shape[0]]
+            cols_pred = cols_pred[: X[0].shape[0]]
 
-        return self._combine_predictions(rows_pred, cols_pred)
+        return self._combine_predictions(rows_pred, cols_pred).reshape(-1)
 
     @available_if(_secondary_estimators_have("predict_proba"))
     def predict_proba(self, X, **predict_proba_params):
         self._secondary_fit(X)
 
-        rows_pred = self.secondary_rows_estimator_.predict_proba(
-            X[0], **predict_proba_params)
-        cols_pred = self.secondary_cols_estimator_.predict_proba(
-            X[1], **predict_proba_params).T
+        rows_pred = np.array(
+            self.secondary_rows_estimator_.predict_proba(X[0], **predict_proba_params)
+        )
+        cols_pred = np.array(
+            self.secondary_cols_estimator_.predict_proba(X[1], **predict_proba_params)
+        ).transpose((1, 0, 2))
 
         if not self.independent_labels:
             # Get only the predictions corresponding to the instances being
             # predicted.
-            rows_pred = rows_pred[:, :X[1].shape[0]]
-            cols_pred = cols_pred[:X[0].shape[0]]
+            rows_pred = rows_pred[:, : X[1].shape[0]]
+            cols_pred = cols_pred[: X[0].shape[0]]
 
         # FIXME: Does not work in some cases, such as 'max()'
-        return self._combine_predictions(rows_pred, cols_pred)
+        return self._combine_predictions(rows_pred, cols_pred).reshape(-1, 2)
 
     @available_if(_secondary_estimators_have("predict_log_proba"))
     def predict_log_proba(self, X, **predict_log_proba_params):
         self._secondary_fit(X)
 
-        rows_pred = self.secondary_rows_estimator_.predict_log_proba(
-            X[0], **predict_log_proba_params)
-        cols_pred = self.secondary_cols_estimator_.predict_log_proba(
-            X[1], **predict_log_proba_params).T
+        rows_pred = np.array(
+            self.secondary_rows_estimator_.predict_log_proba(
+                X[0], **predict_log_proba_params
+            )
+        )
+        cols_pred = np.array(
+            self.secondary_cols_estimator_.predict_log_proba(
+                X[1], **predict_log_proba_params
+            )
+        ).transpose((1, 0, 2))
 
         if not self.independent_labels:
             # Get only the predictions corresponding to the instances being
             # predicted.
-            rows_pred = rows_pred[:, :X[1].shape[0]]
-            cols_pred = cols_pred[:X[0].shape[0]]
+            rows_pred = rows_pred[:, : X[1].shape[0]]
+            cols_pred = cols_pred[: X[0].shape[0]]
 
         # FIXME: Does not work in some cases, such as 'max()'
-        return self._combine_predictions(rows_pred, cols_pred)
+        return self._combine_predictions(rows_pred, cols_pred).reshape(-1, 2)
+
+    @available_if(_secondary_estimators_have("decision_function"))
+    def decision_function(self, X, **decision_function_params):
+        self._secondary_fit(X)
+
+        rows_pred = self.secondary_rows_estimator_.decision_function(
+            X[0], **decision_function_params
+        )
+        cols_pred = self.secondary_cols_estimator_.decision_function(
+            X[1], **decision_function_params
+        ).T
+
+        if not self.independent_labels:
+            # Get only the predictions corresponding to the instances being
+            # predicted.
+            rows_pred = rows_pred[:, : X[1].shape[0]]
+            cols_pred = cols_pred[: X[0].shape[0]]
+
+        # FIXME: Does not work in some cases, such as 'max()'
+        return self._combine_predictions(rows_pred, cols_pred).reshape(-1)
 
     @available_if(_secondary_estimators_have("score"))
     def score(self, X, y=None):
-        return (
-            type(self.secondary_rows_estimator_).score(self, X, y.reshape(-1))
-        )
+        return type(self.secondary_rows_estimator_).score(self, X, y.reshape(-1))
 
     @property
     def _estimator_type(self):
@@ -601,7 +670,7 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
     def classes_(self):
         """The classes labels. Only exist if the estimator is a classifier."""
         # FIXME: The secondary columns estimator generates different classes.
-        return self.secondary_rows_estimator.classes_
+        return np.unique(self.secondary_rows_estimator_.classes_)
 
     def _more_tags(self):
         # check if the primary estimator expects pairwise input (the primary
@@ -613,16 +682,16 @@ class LocalMultiOutputWrapper(BaseBipartiteEstimator):
     def n_features_in_(self):
         """Number of features seen during fit."""
         return (
-            self.primary_rows_estimator_.n_features_in_ +
-            self.primary_cols_estimator_.n_features_in_
+            self.primary_rows_estimator_.n_features_in_
+            + self.primary_cols_estimator_.n_features_in_
         )
 
     @property
     def feature_names_in_(self):
         """Names of features seen during first step `fit` method."""
         return (
-            self.primary_rows_estimator_.feature_names_in_ +
-            self.primary_cols_estimator_.feature_names_in_
+            self.primary_rows_estimator_.feature_names_in_
+            + self.primary_cols_estimator_.feature_names_in_
         )
 
     def __sklearn_is_fitted__(self):
@@ -640,8 +709,8 @@ class MultipartiteTransformerWrapper(
     BaseMultipartiteEstimator,
     TransformerMixin,
 ):
-    """Manages a transformer for each feature space in multipartite datasets.
-    """
+    """Manages a transformer for each feature space in multipartite datasets."""
+
     def __init__(
         self,
         transformers: BaseEstimator | Sequence[BaseEstimator],
@@ -658,10 +727,7 @@ class MultipartiteTransformerWrapper(
 
     def transform(self, X, y=None):
         self._validate_data(X, y)
-        return [
-            transformer.transform(Xi)
-            for Xi, _, transformer in self._roll_axes(X)
-        ]
+        return [transformer.transform(Xi) for Xi, _, transformer in self._roll_axes(X)]
 
     def fit_transform(self, X, y=None):
         self._set_transformers()
@@ -672,15 +738,16 @@ class MultipartiteTransformerWrapper(
         ]
 
     def _set_transformers(self):
-        """Sets self.transformers_ and self.ndim_ during fit.
-        """
+        """Sets self.transformers_ and self.ndim_ during fit."""
         if isinstance(self.transformers, Sequence):
             if self.ndim is None:
                 self.ndim_ = len(self.transformers)
 
             elif self.ndim != len(self.transformers):
-                raise ValueError("'self.ndim' must correspond to the number of"
-                                 " transformers in self.transformers")
+                raise ValueError(
+                    "'self.ndim' must correspond to the number of"
+                    " transformers in self.transformers"
+                )
             else:
                 self.ndim_ = self.ndim
 
@@ -688,24 +755,27 @@ class MultipartiteTransformerWrapper(
 
         else:  # If a single transformer provided
             if self.ndim is None:
-                raise ValueError("'ndim' must be provided if 'transformers' is"
-                                 " a single transformer.")
+                raise ValueError(
+                    "'ndim' must be provided if 'transformers' is"
+                    " a single transformer."
+                )
             self.ndim_ = self.ndim
-            self.transformers_ = [
-                clone(self.transformers) for _ in range(self.ndim_)
-            ]
+            self.transformers_ = [clone(self.transformers) for _ in range(self.ndim_)]
 
     def _validate_data(self, X, y):
         if len(X) != self.ndim_:
-            raise ValueError(f"Wrong dimension. X has {len(X)} items, was exp"
-                             "ecting {self.ndim}.")
+            raise ValueError(
+                f"Wrong dimension. X has {len(X)} items, was exp" "ecting {self.ndim}."
+            )
         # FIXME: validate
         # super()._validate_data(X, y, validate_separately=True)
 
     def _roll_axes(self, X, y=None):
         if not hasattr(self, "transformers_"):
-            raise AttributeError("One must call _set_transformers() before"
-                                 "attempting to call _roll_axes()")
+            raise AttributeError(
+                "One must call _set_transformers() before"
+                "attempting to call _roll_axes()"
+            )
 
         for ax in range(self.ndim_):
             yield X[ax], y, self.transformers_[ax]
@@ -726,8 +796,8 @@ class MultipartiteTransformerWrapper(
 
 # TODO: sampler wrapper and transformer wrapper could share code
 class MultipartiteSamplerWrapper(BaseMultipartiteSampler):
-    """Manages a sampler for each feature space in multipartite datasets.
-    """
+    """Manages a sampler for each feature space in multipartite datasets."""
+
     def __init__(
         self,
         samplers: BaseEstimator | Sequence[BaseEstimator],
@@ -751,15 +821,16 @@ class MultipartiteSamplerWrapper(BaseMultipartiteSampler):
         )
 
     def _set_samplers(self):
-        """Sets self.samplers_ and self.ndim_ during fit.
-        """
+        """Sets self.samplers_ and self.ndim_ during fit."""
         if isinstance(self.samplers, Sequence):
             if self.ndim is None:
                 self.ndim_ = len(self.samplers)
 
             elif self.ndim != len(self.samplers):
-                raise ValueError("'self.ndim' must correspond to the number of"
-                                 " samplers in self.samplers")
+                raise ValueError(
+                    "'self.ndim' must correspond to the number of"
+                    " samplers in self.samplers"
+                )
             else:
                 self.ndim_ = self.ndim
 
@@ -767,24 +838,25 @@ class MultipartiteSamplerWrapper(BaseMultipartiteSampler):
 
         else:  # If a single sampler provided
             if self.ndim is None:
-                raise ValueError("'ndim' must be provided if 'samplers' is"
-                                 " a single sampler.")
+                raise ValueError(
+                    "'ndim' must be provided if 'samplers' is" " a single sampler."
+                )
             self.ndim_ = self.ndim
-            self.samplers_ = [
-                clone(self.samplers) for _ in range(self.ndim_)
-            ]
+            self.samplers_ = [clone(self.samplers) for _ in range(self.ndim_)]
 
     def _validate_data(self, X, y):
         if len(X) != self.ndim_:
-            raise ValueError(f"Wrong dimension. X has {len(X)} items, was exp"
-                             "ecting {self.ndim}.")
+            raise ValueError(
+                f"Wrong dimension. X has {len(X)} items, was exp" "ecting {self.ndim}."
+            )
         # FIXME: validate
         # super()._validate_data(X, y, validate_separately=True)
 
     def _roll_axes(self, X, y=None):
         if not hasattr(self, "samplers_"):
-            raise AttributeError("One must call _set_samplers() before"
-                                 "attempting to call _roll_axes()")
+            raise AttributeError(
+                "One must call _set_samplers() before" "attempting to call _roll_axes()"
+            )
 
         for ax in range(self.ndim_):
             yield X[ax], y, self.samplers_[ax]
