@@ -15,6 +15,7 @@ class DTHybridSampler(BaseMultipartiteSampler):
         self.alpha = alpha
 
     def _fit_resample(self, X, y):
+        y = y.astype(float)  # TODO: Use sklearn utilities.
         S_row_net = y @ y.T  # Rows network similarity
         k_row = np.diag(S_row_net).copy()  # Row nodes degree
         # If the row makes no interactions, set the similarity to 0

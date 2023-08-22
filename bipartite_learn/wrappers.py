@@ -59,8 +59,8 @@ def _secondary_estimators_have(attr):
 
     def check(self):
         # raise original `AttributeError` if `attr` does not exist
-        getattr(self.secondary_rows_estimator_, attr)
-        getattr(self.secondary_cols_estimator_, attr)
+        getattr(self.secondary_rows_estimator, attr)
+        getattr(self.secondary_cols_estimator, attr)
         return True
 
     return check
@@ -74,8 +74,8 @@ def _primary_estimators_have(attr):
 
     def check(self):
         # raise original `AttributeError` if `attr` does not exist
-        getattr(self.primary_rows_estimator_, attr)
-        getattr(self.primary_cols_estimator_, attr)
+        getattr(self.primary_rows_estimator, attr)
+        getattr(self.primary_cols_estimator, attr)
         return True
 
     return check

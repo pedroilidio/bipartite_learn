@@ -52,10 +52,13 @@ def check_similarity_matrix(
     **check_array_args,
 ):
     X = check_array(X, **check_array_args)
+    eps = np.finfo(X.dtype).eps
 
-    if (X > 1.).any() or (X < 0.).any():
-        raise ValueError("Similarity values must be between 0 and 1 "
-                         "(inclusive)")
+    if (X > 1. + eps).any() or (X < -eps).any():
+        raise ValueError(
+            "Similarity values must be between 0 and 1 "
+            f"(inclusive). Found {X.min()=} and {X.max()=}.",
+        )
 
     if check_symmetry:
         return check_symmetric(

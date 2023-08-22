@@ -344,7 +344,7 @@ class NRLMF(
         UV = U @ V.T
         return (
             np.sum(
-                y_scaled * np.log(1 + np.exp(UV))  ##
+                y_scaled * np.log(1 + np.exp(UV))
                 - y * UV * self.positive_importance
             )
             + np.sum(U * (L_rows @ U)) / 2
