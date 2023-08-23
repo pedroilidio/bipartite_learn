@@ -22,7 +22,8 @@ class MultipartiteCrossValidator(BaseCrossValidator):
             "cross_validators": [BaseCrossValidator, list, tuple],
             "diagonal": ["boolean"],
             "n_parts": [Interval(Integral, 2, None, closed="left")],
-        }
+        },
+        prefer_skip_nested_validation=True,
     )
     def __init__(self, cross_validators, diagonal=False, n_parts=2):
         if isinstance(cross_validators, BaseCrossValidator):

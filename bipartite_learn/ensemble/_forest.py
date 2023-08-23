@@ -39,36 +39,20 @@ Single and multi-output problems are both handled.
 #
 # License: BSD 3 clause
 
-
-import numbers
 from typing import Iterable
-from warnings import catch_warnings, simplefilter, warn
-import threading
+from warnings import warn
 
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta
 import numpy as np
 from scipy.sparse import issparse
-from scipy.sparse import hstack as sparse_hstack
 
-from sklearn.base import is_classifier
-from sklearn.base import ClassifierMixin, MultiOutputMixin, RegressorMixin, TransformerMixin
-
-from sklearn.metrics import accuracy_score, r2_score
-from sklearn.preprocessing import OneHotEncoder
-
+from sklearn.base import is_classifier, _fit_context
 from sklearn.tree._tree import DTYPE, DOUBLE
-from sklearn.utils import check_random_state, compute_sample_weight, deprecated
+from sklearn.utils import check_random_state, compute_sample_weight
 from sklearn.exceptions import DataConversionWarning
-from sklearn.ensemble._base import BaseEnsemble, _partition_estimators
 from sklearn.utils.parallel import Parallel, delayed
-from sklearn.utils.multiclass import check_classification_targets, type_of_target
-from sklearn.utils.validation import (
-    check_is_fitted,
-    _check_sample_weight,
-    _check_feature_names_in,
-)
-from sklearn.utils.validation import _num_samples
-
+from sklearn.utils.multiclass import type_of_target
+from sklearn.utils.validation import _check_sample_weight
 from sklearn.ensemble._forest import _get_n_samples_bootstrap
 from sklearn.ensemble._forest import _generate_sample_indices
 from sklearn.ensemble._forest import BaseForest, ForestRegressor
@@ -240,6 +224,7 @@ class BaseMultipartiteForest(
         **BaseForest._parameter_constraints,
     }
 
+    @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y, sample_weight=None, tree_fit_params=None):
         """
         Build a forest of trees from the training set (X, y).
@@ -267,8 +252,6 @@ class BaseMultipartiteForest(
         self : object
             Fitted estimator.
         """
-        self._validate_params()
-
         # Validate or convert input data
         if issparse(y):
             raise ValueError("sparse multilabel-indicator for y is not supported.")

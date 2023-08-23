@@ -114,8 +114,9 @@ cdef class BipartiteSplitter:
 
         # splitters do not receive y, the Bipartite criterion is who takes
         # charge of calling Criterion.init() passing y to the criterion.
-        self.splitter_rows.init(X[0], None, self.row_weights)
-        self.splitter_cols.init(X[1], None, self.col_weights)
+        # TODO: missing values is not supported yet (4th parameter=None).
+        self.splitter_rows.init(X[0], None, self.row_weights, None)
+        self.splitter_cols.init(X[1], None, self.col_weights, None)
         self.row_indices = self.splitter_rows.samples
         self.col_indices = self.splitter_cols.samples
 

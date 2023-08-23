@@ -44,8 +44,8 @@ cpdef apply_monopartite_splitter(
     _init_split(<SplitRecord*>&split, 0)
 
     if verbose:
-        print('[SPLITTER_TEST] calling splitter.init(X, y, None)')
-    splitter.init(X, y, None)
+        print('[SPLITTER_TEST] calling splitter.init(X, y, None, None)')
+    splitter.init(X, y, None, None)
     if verbose:
         print(f'[SPLITTER_TEST] calling splitter.node_reset(start={start}, end={end}, &wnns)')
     splitter.node_reset(start, end, &wnns)

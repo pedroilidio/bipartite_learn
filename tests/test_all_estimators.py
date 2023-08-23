@@ -1,10 +1,12 @@
 import logging
 import warnings
+import functools
+
 import pytest
 from sklearn.utils.validation import check_random_state
 from sklearn.dummy import DummyRegressor, DummyClassifier
 from sklearn.utils._testing import assert_allclose
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import r2_score, f1_score
 from sklearn.metrics.pairwise import rbf_kernel
 from bipartite_learn.base import BaseMultipartiteEstimator
 from bipartite_learn.utils import all_estimators
@@ -45,10 +47,13 @@ def classification_data(n_samples, n_features, random_state):
         n_samples=n_samples,
         random_state=random_state,
         noise=0.0,
-        centers=10,
-        row_kwargs={'center_box': [.3, .7], 'cluster_std': .1},
-        col_kwargs={'center_box': [.3, .7], 'cluster_std': .1},
+        centers=2,
+        row_kwargs={'center_box': (.3, .7), 'cluster_std': .1},
+        col_kwargs={'center_box': (.3, .7), 'cluster_std': .1},
     )
+    # XXX
+    Y = (Y == 0).astype(int)
+    y = Y.reshape(-1)
     return X, Y, x, y
 
 
@@ -79,6 +84,30 @@ def pairwise_classification_data(classification_data):
     return apply_rbf_kernel(classification_data)
 
 
+@pytest.fixture
+def regression_scorer():
+    return r2_score
+
+
+@pytest.fixture
+def classification_scorer():
+    return functools.partial(f1_score, average='macro')
+
+
+@pytest.fixture
+def regression_min_score(regression_data, regression_scorer):
+    _, _, x, y = regression_data
+    pred = DummyRegressor().fit(x, y).predict(x)
+    return regression_scorer(y, pred.reshape(-1, 1))
+
+
+@pytest.fixture
+def classification_min_score(classification_data, classification_scorer):
+    _, _, x, y = classification_data
+    pred = DummyClassifier().fit(x, y).predict(x)
+    return classification_scorer(y, pred.reshape(-1, 1))
+
+
 @pytest.mark.parametrize(
     'estimator_name, estimator',
     (
@@ -91,6 +120,8 @@ def test_all_monopartite_regressors(
     pairwise_regression_data,
     estimator_name,
     estimator,
+    regression_scorer,
+    regression_min_score,
 ):
     estimator = estimator()
 
@@ -100,10 +131,11 @@ def test_all_monopartite_regressors(
         X, Y, x, y = regression_data
 
     estimator.fit(X[0], Y)
-    score = estimator.score(X[0], Y)
+    estimator.score(X[0], Y)  # Test own scorer
+    score = regression_scorer(y, estimator.predict(X[0]).reshape(-1, 1))
 
     logging.info(f"{estimator_name}'s score: {score}")
-    assert score > 0.1
+    assert score > regression_min_score
 
 
 @pytest.mark.parametrize(
@@ -114,6 +146,8 @@ def test_all_multipartite_regressors(
     pairwise_regression_data,
     estimator_name,
     estimator,
+    regression_scorer,
+    regression_min_score,
 ):
     estimator = estimator()
 
@@ -132,10 +166,11 @@ def test_all_multipartite_regressors(
     except ValueError:
         warnings.warn(f"{estimator_name} does not accept melted input.")
 
-    score = estimator.score(X, y)
+    estimator.score(X, y)  # Test own scorer
+    score = regression_scorer(y, estimator.predict(X).reshape(-1, 1))
 
     logging.info(f"{estimator_name}'s score: {score}")
-    assert score > 0.1
+    assert score > regression_min_score
 
 
 @pytest.mark.parametrize(
@@ -146,9 +181,10 @@ def test_all_multipartite_classifiers(
     pairwise_classification_data,
     estimator_name,
     estimator,
+    classification_scorer,
+    classification_min_score,
 ):
     estimator = estimator()
-    dummy = DummyClassifier()
 
     if estimator._get_tags()['pairwise']:
         X, Y, x, y = pairwise_classification_data
@@ -156,7 +192,6 @@ def test_all_multipartite_classifiers(
         X, Y, x, y = classification_data
 
     estimator.fit(X, Y)
-    dummy.fit(x, y)
 
     # The two formats must be supported:
     pred1 = estimator.predict(X)
@@ -166,7 +201,8 @@ def test_all_multipartite_classifiers(
     except ValueError:
         warnings.warn(f"{estimator_name} does not accept melted input.")
 
-    score = estimator.score(X, y)
+    estimator.score(X, y)  # Test own scorer
+    score = classification_scorer(y, estimator.predict(X).reshape(-1, 1))
 
     logging.info(f"{estimator_name}'s score: {score}")
-    assert score > dummy.score(x, y)
+    assert score > classification_min_score

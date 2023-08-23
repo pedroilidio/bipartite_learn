@@ -165,7 +165,7 @@ cdef class AxisCriterion(BaseComposableCriterion):
         """
         pass
    
-    cdef double node_impurity(self) nogil:
+    cdef double node_impurity(self) noexcept nogil:
         """Evaluate the impurity of the current node.
         Evaluate the MSE criterion as impurity of the current node,
         i.e. the impurity of sample_indices[start:end]. The smaller the impurity the
@@ -184,7 +184,7 @@ cdef class AxisCriterion(BaseComposableCriterion):
         self,
         double* impurity_left,
         double* impurity_right
-    ) nogil:
+    ) noexcept nogil:
         """Evaluate the impurity in children nodes.
         i.e. the impurity of the left child (sample_indices[start:pos]) and the
         impurity the right child (sample_indices[pos:end]).
@@ -209,7 +209,7 @@ cdef class AxisCriterion(BaseComposableCriterion):
         self,
         double* rows_impurity,
         double* cols_impurity,
-    ) nogil:
+    ) noexcept nogil:
         """Evaluate the impurity of the current node in both directions.
         Evaluate the MSE criterion as impurity of the current node,
         i.e. the impurity of sample_indices[start:end]. The smaller the impurity the
@@ -222,7 +222,7 @@ cdef class AxisCriterion(BaseComposableCriterion):
         double* rows_impurity_right,
         double* cols_impurity_left,
         double* cols_impurity_right,
-    ) nogil:
+    ) noexcept nogil:
         """Evaluate the impurity in children nodes, in both directions.
         i.e. the impurity of the left child (sample_indices[start:pos]) and the
         impurity the right child (sample_indices[pos:end]).
@@ -261,7 +261,7 @@ cdef class AxisCriterion(BaseComposableCriterion):
         double impurity_parent,
         double impurity_left,
         double impurity_right,
-    ) nogil:
+    ) noexcept nogil:
         """Compute the improvement in impurity.
 
         Differently from the usual sklearn objects, the impurity improvement
@@ -288,10 +288,10 @@ cdef class AxisCriterion(BaseComposableCriterion):
             )
         )
 
-    cdef void node_value(self, double* dest) nogil:
+    cdef void node_value(self, double* dest) noexcept nogil:
         pass
 
-    cdef void total_node_value(self, double* dest) nogil:
+    cdef void total_node_value(self, double* dest) noexcept nogil:
         """Compute a single node value for all targets, disregarding y's shape.
 
         This method is used instead of node_value() in cases where the
@@ -438,7 +438,7 @@ cdef class AxisRegressionCriterion(AxisCriterion):
         self.reset()
         return 0
 
-    cdef int reset(self) nogil except -1:
+    cdef int reset(self) except -1 nogil:
         """Reset the criterion at pos=start."""
         cdef SIZE_t n_bytes = self.n_node_cols * sizeof(double)
         memset(&self.sum_left[0], 0, n_bytes)
@@ -449,7 +449,7 @@ cdef class AxisRegressionCriterion(AxisCriterion):
         self.pos = self.start
         return 0
 
-    cdef int reverse_reset(self) nogil except -1:
+    cdef int reverse_reset(self) except -1 nogil:
         """Reset the criterion at pos=end."""
         cdef SIZE_t n_bytes = self.n_node_cols * sizeof(double)
         memset(&self.sum_right[0], 0, n_bytes)
@@ -460,7 +460,7 @@ cdef class AxisRegressionCriterion(AxisCriterion):
         self.pos = self.end
         return 0
 
-    cdef int update(self, SIZE_t new_pos) nogil except -1:
+    cdef int update(self, SIZE_t new_pos) except -1 nogil:
         """Updated statistics by moving sample_indices[pos:new_pos] to the left."""
         cdef:
             const DOUBLE_t[:] sample_weight = self.sample_weight
@@ -514,7 +514,7 @@ cdef class AxisRegressionCriterion(AxisCriterion):
         self.pos = new_pos
         return 0
 
-    cdef void node_value(self, double* dest) nogil:
+    cdef void node_value(self, double* dest) noexcept nogil:
         """Compute the node value of sample_indices[start:end] into dest."""
         cdef SIZE_t j, k
 
@@ -525,7 +525,7 @@ cdef class AxisRegressionCriterion(AxisCriterion):
             j = self._node_col_indices[k]
             dest[j] = self.sum_total[k] / self.weighted_n_node_samples
 
-    cdef void total_node_value(self, double* dest) nogil:
+    cdef void total_node_value(self, double* dest) noexcept nogil:
         """Compute a single node value for all targets, disregarding y's shape.
 
         This method is used instead of node_value() in cases where the
@@ -551,7 +551,7 @@ cdef class AxisSquaredError(AxisRegressionCriterion):
         MSE = var_left + var_right
     """
 
-    cdef double proxy_impurity_improvement(self) nogil:
+    cdef double proxy_impurity_improvement(self) noexcept nogil:
         """Compute a proxy of the impurity reduction.
 
         This method is used to speed up the search for the best split.
@@ -589,7 +589,7 @@ cdef class AxisSquaredError(AxisRegressionCriterion):
         self,
         double* rows_impurity,
         double* cols_impurity,
-    ) nogil:
+    ) noexcept nogil:
         """Evaluate the impurity of the current node in both directions.
         Evaluate the MSE criterion as impurity of the current node,
         i.e. the impurity of sample_indices[start:end]. The smaller the impurity the
@@ -624,7 +624,7 @@ cdef class AxisSquaredError(AxisRegressionCriterion):
         double* rows_impurity_right,
         double* cols_impurity_left,
         double* cols_impurity_right,
-    ) nogil:
+    ) noexcept nogil:
         """Evaluate the impurity in children nodes, in both directions.
         i.e. the impurity of the left child (sample_indices[start:pos]) and the
         impurity the right child (sample_indices[pos:end]).
@@ -896,7 +896,7 @@ cdef class AxisCriterionGSO(AxisCriterion):
         double impurity_parent,
         double impurity_left,
         double impurity_right,
-    ) nogil:
+    ) noexcept nogil:
         return (
             (self.weighted_n_node_samples / self.weighted_n_samples)
             * (self.weighted_n_node_cols / self.weighted_n_cols)
@@ -1362,7 +1362,7 @@ cdef class AxisEntropy(AxisClassificationCriterion):
         self,
         double* rows_impurity,
         double* cols_impurity,
-    ) nogil:
+    ) noexcept nogil:
         """Evaluate the impurity of the current node.
         Evaluate the cross-entropy criterion as impurity of the current node,
         i.e. the impurity of sample_indices[start:end]. The smaller the impurity the
@@ -1545,7 +1545,7 @@ cdef class AxisGini(AxisClassificationCriterion):
         self,
         double* rows_impurity, 
         double* cols_impurity, 
-    ) nogil:
+    ) noexcept nogil:
         """Evaluate the impurity of the current node.
         Evaluate the Gini criterion as impurity of the current node,
         i.e. the impurity of sample_indices[start:end]. The smaller the impurity the

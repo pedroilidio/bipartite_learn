@@ -1,17 +1,22 @@
+from abc import ABCMeta
+from numbers import Real, Integral
+
 import numpy as np
-from sklearn.base import RegressorMixin
+from sklearn.base import (
+    TransformerMixin, ClassifierMixin, _fit_context, check_is_fitted,
+)
 from sklearn.utils import check_random_state
+from sklearn.utils._param_validation import Interval, StrOptions
 from sklearn.neighbors import KNeighborsRegressor
-from ..base import BaseMultipartiteSampler
+
+from ..base import BaseMultipartiteEstimator, BaseMultipartiteSampler
 from ..utils import check_similarity_matrix, _X_is_multipartite
 
-__all__ = ["NRLMF"]
+__all__ = ["NRLMFSampler", "NRLMFClassifier", "NRLMFTransformer"]
 
 
-class NRLMF(
-    BaseMultipartiteSampler,
-    RegressorMixin,
-):
+class BaseNRLMF(BaseMultipartiteEstimator, metaclass=ABCMeta):
+    # TODO: move docs to concrete classes
     """Neighborhood Regularized Logistic Matrix Factorization.
 
     [1] Yong Liu, Min Wu, Chunyan Miao, Peilin Zhao, Xiao-Li Li, "Neighborhood
@@ -20,7 +25,7 @@ class NRLMF(
 
     Parameters
     ----------
-    positive_importance : int, default=5
+    positive_importance : float, default=5.0
         The multiplier factor to apply to positive (known) interactions.
         Each positive interaction (y == 1) will weight `positive_importance`
         times more than a negative, as if we have `positive_importance`
@@ -86,15 +91,36 @@ class NRLMF(
         See :term:`Glossary <random_state>`.
     """
 
-    # NOTE: We need the next line for other scikit-learn stuff to not look for
-    #       predict_proba(). However, NRLMF also implements imblearn's Sampler
-    #       interface, to reconstruct y (interaction matrix) in a pipeline.
-    _estimator_type = "regressor"
     _partiteness = 2
+    _parameter_constraints = {
+        "positive_importance": [Interval(Real, 0, None, closed="neither")],
+        "n_components_rows": [Interval(Integral, 1, None, closed="left")],
+        "n_components_cols": [
+            Interval(Integral, 1, None, closed="left"),
+            StrOptions({"same"}),
+        ],
+        "alpha_rows": [Interval(Real, 0, None, closed="left")],
+        "alpha_cols": [
+            Interval(Real, 0, None, closed="left"),
+            StrOptions({"same"}),
+        ],
+        "lambda_rows": [Interval(Real, 0, None, closed="left")],
+        "lambda_cols": [
+            Interval(Real, 0, None, closed="left"),
+            StrOptions({"same"}),
+        ],
+        "n_neighbors": [Interval(Integral, 1, None, closed="left")],
+        "learning_rate": [Interval(Real, 0, None, closed="neither")],
+        "max_iter": [Interval(Integral, 1, None, closed="left")],
+        "tol": [Interval(Real, 0, None, closed="left")],
+        "verbose": ["boolean"],
+        "random_state": ["random_state"],
+    }
 
     def __init__(
         self,
-        positive_importance=5,
+        *,
+        positive_importance=5.0,
         n_components_rows=10,
         n_components_cols="same",
         alpha_rows=0.1,
@@ -105,8 +131,6 @@ class NRLMF(
         learning_rate=1.0,
         max_iter=100,
         tol=1e-5,
-        keep_positives=False,
-        resample_X=False,
         verbose=False,
         random_state=None,
     ):
@@ -119,10 +143,8 @@ class NRLMF(
         self.alpha_cols = alpha_cols
         self.learning_rate = learning_rate
         self.max_iter = max_iter
-        self.keep_positives = keep_positives
         self.n_neighbors = n_neighbors
         self.tol = tol
-        self.resample_X = resample_X
         self.verbose = verbose
         self.random_state = random_state
 
@@ -139,35 +161,17 @@ class NRLMF(
         P = np.exp(U @ V.T)
         return P / (P + 1)
 
-    def _fit_resample(self, X, y):
-        self.fit(X, y)
-        yt = self._logistic_output(self.U, self.V)
-
-        if self.keep_positives:
-            # Transform y only where it was < 1.
-            # The reason is that we usually assume that 1-valued labels are
-            # verified interactions, while 0 represents unknown interactions.
-            yt[y == 1] = 1
-
-        if self.resample_X:
-            return [self.U, self.V], yt
-
-        return X, yt
-
-    def fit_predict(self, X, y):
-        _, yt = self.fit_resample(X, y)
-        return yt.reshape(-1)
-
-    def predict(self, X):
-        if not _X_is_multipartite(X):
-            raise ValueError(f"{type(self).__name__} only accepts bipartite input.")
-        U = self.knn_rows_.predict(1 - X[0])
-        V = self.knn_cols_.predict(1 - X[1])
-        yt = self._logistic_output(U, V)
-        return yt.reshape(-1)
-
+    @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y):
         X, y = self._validate_data(X, y)
+
+        if set(np.unique(y)) != {0, 1}:
+            raise ValueError(
+                f"{type(self).__name__} only accepts binary labels, "
+                f"but y has the following values: {np.unique(y)}"
+            )
+        
+        self.classes_ = np.array([0.0, 1.0])
 
         # Fit must receive [0, 1]-bounded similarity matrices.
         for ax in range(len(X)):
@@ -350,3 +354,71 @@ class NRLMF(
             + np.sum(U * (L_rows @ U)) / 2
             + np.sum(V * (L_cols @ V)) / 2
         )
+
+
+class NRLMFSampler(BaseMultipartiteSampler, BaseNRLMF):
+
+    _parameter_constraints = {
+        **BaseNRLMF._parameter_constraints,
+        "resample_X": ["boolean"],
+        "keep_positives": ["boolean"],
+    }
+
+    def __init__(self, *, resample_X=False, keep_positives=True, **kwargs):
+        self.resample_X = resample_X
+        self.keep_positives = keep_positives
+        super().__init__(**kwargs)
+
+    def _fit_resample(self, X, y):
+        self.fit(X, y)
+        yt = self._logistic_output(self.U, self.V)
+
+        if self.keep_positives:
+            # Transform y only where it was < 1.
+            # The reason is that we usually assume that 1-valued labels are
+            # verified interactions, while 0 represents unknown interactions.
+            yt[y == 1] = 1
+
+        if self.resample_X:
+            return [self.U, self.V], yt
+
+        return X, yt
+
+
+class NRLMFClassifier(BaseNRLMF, ClassifierMixin):
+
+    def fit_predict_proba(self, X, y):
+        self.fit(X, y)
+        proba1 = self._logistic_output(self.U, self.V).reshape(-1, 1)
+        return np.hstack((1 - proba1, proba1))
+
+    def predict_proba(self, X):
+        check_is_fitted(self)
+        if not _X_is_multipartite(X):
+            raise ValueError(f"{type(self).__name__} only accepts bipartite input.")
+        U = self.knn_rows_.predict(1 - X[0])  # Similarity to distance conversion
+        V = self.knn_cols_.predict(1 - X[1])
+        proba1 = self._logistic_output(U, V).reshape(-1, 1)
+        return np.hstack((1 - proba1, proba1))
+    
+    def fit_predict(self, X, y):
+        return (self.fit_predict_proba(X, y)[:, 1] >= 0.5).astype(int).reshape(-1)
+
+    def predict(self, X):
+        check_is_fitted(self)
+        return (self.predict_proba(X)[:, 1] >= 0.5).astype(int).reshape(-1)
+
+
+class NRLMFTransformer(BaseNRLMF, TransformerMixin):
+
+    def fit_transform(self, X, y):
+        self.fit(X, y)
+        return [self.U, self.V]
+
+    def transform(self, X):
+        check_is_fitted(self)
+        if not _X_is_multipartite(X):
+            raise ValueError(f"{type(self).__name__} only accepts bipartite input.")
+        U = self.knn_rows_.predict(1 - X[0])  # Similarity to distance conversion
+        V = self.knn_cols_.predict(1 - X[1])
+        return [U, V]

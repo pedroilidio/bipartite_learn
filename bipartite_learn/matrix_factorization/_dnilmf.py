@@ -1,11 +1,18 @@
+from abc import ABCMeta
+from numbers import Real, Integral
+
 import numpy as np
-from sklearn.base import RegressorMixin
-from sklearn.utils import check_random_state
+from sklearn.base import (
+    ClassifierMixin, TransformerMixin, check_is_fitted, _fit_context,
+)
 from sklearn.neighbors import KNeighborsRegressor
-from ..base import BaseMultipartiteSampler
+from sklearn.utils import check_random_state
+from sklearn.utils._param_validation import Interval, StrOptions
+
+from ..base import BaseMultipartiteEstimator, BaseMultipartiteSampler
 from ..utils import check_similarity_matrix, _X_is_multipartite
 
-__all__ = ["DNILMF"]
+__all__ = ["DNILMFSampler", "DNILMFClassifier", "DNILMFTransformer"]
 
 
 def _check_coefficients(alpha, beta, gamma):
@@ -40,10 +47,11 @@ def _check_coefficients(alpha, beta, gamma):
     ]
 
 
-class DNILMF(
-    BaseMultipartiteSampler,
-    RegressorMixin,
+class BaseDNILMF(
+    BaseMultipartiteEstimator,
+    metaclass=ABCMeta,
 ):
+    # TODO: move docs to concrete classes
     """Dual-Network Integrated Logistic Matrix Factorization
 
     Note: the kernel fusion pre-processing procedure described by [1] is
@@ -137,15 +145,34 @@ class DNILMF(
     Drug-target Interaction Prediction" <10.1371/journal.pcbi.1004760>`
     Yong Liu, Min Wu, Chunyan Miao, Peilin Zhao, Xiao-Li Li, (2016)
     """
-    # NOTE: We need the next line for other scikit-learn stuff to not look for
-    #       predict_proba(). However, DNILMF also implements imblearn's Sampler
-    #       interface, to reconstruct y (interaction matrix) in a pipeline.
-    _estimator_type = "regressor"
+
     _partiteness = 2
+    _parameter_constraints = {
+        "positive_importance": [Interval(Real, 0, None, closed="neither")],
+        "n_components_rows": [Interval(Integral, 1, None, closed="left")],
+        "n_components_cols": [
+            Interval(Integral, 1, None, closed="left"),
+            StrOptions({"same"}),
+        ],
+        "learning_rate": [Interval(Real, 0, None, closed="left")],
+        "alpha": [Interval(Real, 0, 1, closed="neither"), None],
+        "beta": [Interval(Real, 0, 1, closed="neither"), None],
+        "gamma": [Interval(Real, 0, 1, closed="neither"), None],
+        "lambda_rows": [Interval(Real, 0, None, closed="left")],
+        "lambda_cols": [
+            Interval(Real, 0, None, closed="left"),
+            StrOptions({"same"}),
+        ],
+        "n_neighbors": [Interval(Integral, 1, None, closed="left")],
+        "max_iter": [Interval(Integral, 1, None, closed="left")],
+        "tol": [Interval(Real, 0, None, closed="left")],
+        "verbose": ["boolean"],
+        "random_state": [None, "random_state"],
+    }
 
     def __init__(
         self,
-        positive_importance=6,
+        positive_importance=6.0,
         n_components_rows=90,
         n_components_cols="same",
         learning_rate=1.0,
@@ -157,8 +184,6 @@ class DNILMF(
         n_neighbors=5,
         max_iter=100,
         tol=1e-5,
-        keep_positives=False,
-        resample_X=False,
         verbose=False,
         random_state=None,
     ):
@@ -171,11 +196,9 @@ class DNILMF(
         self.alpha = alpha
         self.beta = beta
         self.gamma = gamma
-        self.keep_positives = keep_positives
         self.n_neighbors = n_neighbors
         self.max_iter = max_iter
         self.tol = tol
-        self.resample_X = resample_X
         self.verbose = verbose
         self.random_state = random_state
 
@@ -202,41 +225,18 @@ class DNILMF(
         P = np.exp(self._merge_similarities(UV, L_rows, L_cols))
         return P / (P + 1)
 
-    # TODO: remove. Use a wrapper metaestimator class if you want to use an
-    # estimator as sampler. return U and V? transform method?
-    def _fit_resample(self, X, y):
-        self.fit(X, y)
-        yt = self._logistic_output(self.U, self.V, *X)
 
-        if self.keep_positives:
-            # Transform y only where it was < 1.
-            # The reason is that we usually assume that 1-valued labels are
-            # verified interactions, while 0 represents unknown interactions.
-            yt[y == 1] = 1
-
-        if self.resample_X:
-            return [self.U, self.V], yt
-
-        return X, yt
-
-    def fit_predict(self, X, y):
-        _, yt = self.fit_resample(X, y)
-        return yt.reshape(-1)
-
-    def predict(self, X):
-        if not _X_is_multipartite(X):
-            raise ValueError(
-                f"{type(self).__name__} only accepts bipartite input."
-            )
-        U = self.knn_rows_.predict(1-X[0])  # Similarity to distance conversion
-        V = self.knn_cols_.predict(1-X[1])
-        P = np.exp(U @ V.T)
-        # FIXME: similarity information is not used, since the matrices are not
-        # squares. (no self._logistic_output)
-        return (P / (1 + P)).reshape(-1)
-
+    @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y):
         X, y = self._validate_data(X, y)
+
+        if set(np.unique(y)) != {0, 1}:
+            raise ValueError(
+                f"{type(self).__name__} only accepts binary labels, "
+                f"but y has the following values: {np.unique(y)}"
+            )
+
+        self.classes_ = np.array([0.0, 1.0])
 
         # Fit must receive [0, 1]-bounded similarity matrices.
         for ax in range(len(X)):
@@ -367,3 +367,79 @@ class DNILMF(
             + lambda_rows/2 * (U**2).sum()
             + lambda_cols/2 * (V**2).sum()
         )
+
+
+class DNILMFSampler(BaseMultipartiteSampler, BaseDNILMF):
+
+    _parameter_constraints = {
+        **BaseDNILMF._parameter_constraints,
+        "resample_X": ["boolean"],
+        "keep_positives": ["boolean"],
+    }
+
+    def __init__(self, *, resample_X=False, keep_positives=True, **kwargs):
+        self.resample_X = resample_X
+        self.keep_positives = keep_positives
+        super().__init__(**kwargs)
+
+
+    def _fit_resample(self, X, y):
+        self.fit(X, y)
+        yt = self._logistic_output(self.U, self.V, *X)
+
+        if self.keep_positives:
+            # Transform y only where it was < 1.
+            # The reason is that we usually assume that 1-valued labels are
+            # verified interactions, while 0 represents unknown interactions.
+            yt[y == 1] = 1
+
+        if self.resample_X:
+            return [self.U, self.V], yt
+
+        return X, yt
+
+class DNILMFClassifier(BaseDNILMF, ClassifierMixin):
+
+    def fit_predict_proba(self, X, y):
+        self.fit(X, y)
+        # FIXME: similarity information is not used, since the matrices are not
+        # squares. (no self._logistic_output)
+        #   proba1 = self._logistic_output(self.U, self.V, *X).reshape(-1)
+        P = np.exp(self.U @ self.V.T)
+        proba1 = (P / (1 + P)).reshape(-1, 1)
+        return np.hstack((1 - proba1, proba1))
+
+    def predict_proba(self, X):
+        if not _X_is_multipartite(X):
+            raise ValueError(
+                f"{type(self).__name__} only accepts bipartite input."
+            )
+        U = self.knn_rows_.predict(1 - X[0])  # Similarity to distance conversion
+        V = self.knn_cols_.predict(1 - X[1])
+        P = np.exp(U @ V.T)
+        # FIXME: similarity information is not used, since the matrices are not
+        # squares. (no self._logistic_output)
+        proba1 = (P / (1 + P)).reshape(-1, 1)
+        return np.hstack((1 - proba1, proba1))
+    
+    def predict(self, X):
+        check_is_fitted(self)
+        return (self.predict_proba(X)[:, 1] >= 0.5).astype(int).reshape(-1)
+    
+    def fit_predict(self, X, y):
+        return (self.fit_predict_proba(X, y)[:, 1] >= 0.5).astype(int).reshape(-1)
+
+
+class DNILMFTransformer(BaseDNILMF, TransformerMixin):
+
+    def fit_transform(self, X, y):
+        self.fit(X, y)
+        return [self.U, self.V]
+
+    def transform(self, X):
+        check_is_fitted(self)
+        if not _X_is_multipartite(X):
+            raise ValueError(f"{type(self).__name__} only accepts bipartite input.")
+        U = self.knn_rows_.predict(1 - X[0])  # Similarity to distance conversion
+        V = self.knn_cols_.predict(1 - X[1])
+        return [U, V]

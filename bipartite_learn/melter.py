@@ -46,7 +46,10 @@ def row_cartesian_product(X):
     ])
 
 
-@validate_params({'X': [list, tuple], 'y': ['array-like', None]})
+@validate_params(
+    {'X': [list, tuple], 'y': ['array-like', None]},
+    prefer_skip_nested_validation=True,
+)
 def melt_multipartite_dataset(X, y=None):
     """Melt bipartite input.
     

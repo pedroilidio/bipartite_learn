@@ -131,18 +131,21 @@ def make_dense_interaction_func(
     return interaction_func, intervals
 
 
-@validate_params(dict(
-    n_samples=[list, tuple, Interval(Integral, 1, None, closed="left")],
-    n_features=[list, tuple, Interval(Integral, 1, None, closed="left")],
-    n_targets=[list, tuple, Interval(Integral, 1, None, closed="left"), None],
-    min_target=[list, tuple, Real],
-    max_target=[list, tuple, Real],
-    max_depth=[Interval(Integral, 1, None, closed="left"), None],
-    noise=[Interval(Real, 0.0, None, closed="left")],
-    return_molten=["boolean"],
-    return_tree=["boolean"],
-    random_state=["random_state"],
-))
+@validate_params(
+    dict(
+        n_samples=[list, tuple, Interval(Integral, 1, None, closed="left")],
+        n_features=[list, tuple, Interval(Integral, 1, None, closed="left")],
+        n_targets=[list, tuple, Interval(Integral, 1, None, closed="left"), None],
+        min_target=[list, tuple, Real],
+        max_target=[list, tuple, Real],
+        max_depth=[Interval(Integral, 1, None, closed="left"), None],
+        noise=[Interval(Real, 0.0, None, closed="left")],
+        return_molten=["boolean"],
+        return_tree=["boolean"],
+        random_state=["random_state"],
+    ),
+    prefer_skip_nested_validation=False,  # Validate ExtraTreeRegressor params
+)
 def make_interaction_regression(
     n_samples=100,
     n_features=50,
@@ -204,14 +207,17 @@ def make_interaction_regression(
     return tuple(ret)
 
 
-@validate_params(dict(
-    n_samples=[list, tuple, Interval(Integral, 1, None, closed="left")],
-    n_features=[list, tuple, Interval(Integral, 1, None, closed="left")],
-    return_molten=["boolean"],
-    random_state=["random_state"],
-    row_kwargs=[dict, None],
-    col_kwargs=[dict, None],
-))
+@validate_params(
+    dict(
+        n_samples=[list, tuple, Interval(Integral, 1, None, closed="left")],
+        n_features=[list, tuple, Interval(Integral, 1, None, closed="left")],
+        return_molten=["boolean"],
+        random_state=["random_state"],
+        row_kwargs=[dict, None],
+        col_kwargs=[dict, None],
+    ),
+    prefer_skip_nested_validation=False,  # make_blobs not validated
+)
 def make_interaction_blobs(
     n_samples=100,
     n_features=50,

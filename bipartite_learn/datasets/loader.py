@@ -155,14 +155,17 @@ class BaseRemoteFileLoader(BaseFileLoader, metaclass=ABCMeta):
         If ``None``, integrity test is not performed after download.
     """
 
-    @validate_params({
-        "url": [str],
-        "filepath": [str, Path, None],
-        "description": [str, BaseFileLoader],
-        "base_dir": [str, Path, None],
-        "checksum": [str, None],
-        "hash_function": [callable, None],
-    })
+    @validate_params(
+        {
+            "url": [str],
+            "filepath": [str, Path, None],
+            "description": [str, BaseFileLoader],
+            "base_dir": [str, Path, None],
+            "checksum": [str, None],
+            "hash_function": [callable, None],
+        },
+        prefer_skip_nested_validation=True,
+    )
     def __init__(
         self,
         *,
@@ -297,13 +300,16 @@ class BipartiteDatasetLoader(BaseRemoteFileLoader):
         String description of the dataset or a file loader that loads it.
     """
 
-    @validate_params({
-        "X_loader": [list],
-        "y_loader": [BaseFileLoader],
-        "filepath": [str, Path],
-        "base_dir": [str, Path, None],
-        "description": [str, BaseFileLoader],
-    })
+    @validate_params(
+        {
+            "X_loader": [list],
+            "y_loader": [BaseFileLoader],
+            "filepath": [str, Path],
+            "base_dir": [str, Path, None],
+            "description": [str, BaseFileLoader],
+        },
+        prefer_skip_nested_validation=True,
+    )
     def __init__(
         self,
         *,

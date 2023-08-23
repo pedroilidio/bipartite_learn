@@ -11,7 +11,7 @@ from joblib import effective_n_jobs
 from sklearn.neighbors._base import (
     _get_weights, _check_precomputed, NeighborsBase, KNeighborsMixin,
 )
-from sklearn.base import RegressorMixin
+from sklearn.base import RegressorMixin, _fit_context
 from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.utils._param_validation import StrOptions
 
@@ -147,6 +147,7 @@ class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase)
             )
         super()._validate_params()
 
+    @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y):
         """Fit the k-nearest neighbors regressor from the training dataset.
         Parameters
@@ -162,7 +163,6 @@ class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase)
         self : KNeighborsRegressor
             The fitted k-nearest neighbors regressor.
         """
-        self._validate_params()
         self.n_neighbors = X.shape[0]  # TODO: optimize other methods that use it
         return self._fit(X, y)
 

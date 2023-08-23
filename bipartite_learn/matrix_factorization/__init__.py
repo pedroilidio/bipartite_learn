@@ -1,4 +1,11 @@
-from ._nrlmf import NRLMF
-from ._dnilmf import DNILMF
+from ._nrlmf import NRLMFSampler, NRLMFClassifier, NRLMFTransformer
+from ._dnilmf import DNILMFClassifier, DNILMFTransformer, DNILMFSampler
 
-__all__ = ["NRLMF", "DNILMF"]
+__all__ = [
+    "NRLMFSampler",
+    "NRLMFClassifier",
+    "NRLMFTransformer",
+    "DNILMFSampler",
+    "DNILMFClassifier",
+    "DNILMFTransformer",
+]

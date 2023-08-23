@@ -39,12 +39,14 @@ on how to use this package.
 
 ## Installation
 `bipartite_learn` is available on PyPI, and thus can be installed with `pip`:
-```
+
+```bash
 $ pip install bipartite_learn
 ```
 Installation from source can be done by cloning this repository and calling
-`pip install` on the downloaded folder.
-```
+`pip install` in the root folder.
+
+```bash
 $ git clone https://github.com/pedroilidio/bipartite_learn
 $ cd bipartite_learn
 $ pip install --editable .
@@ -52,10 +54,3 @@ $ pip install --editable .
 The optional `--editable` (or `-e`) flag links the installed package to the
 local cloned repository, so that local changes in it will immediatly be active
 without the need for reinstallation.
-
-Currently, `bipartite_learn` uses the 1.3 version of `scikit-learn`, not yet
-released. As such, after installing with `pip` one may have to mannually download this version from github:
-
-```
-$ pip install git+https://github.com/scikit-learn/scikit-learn@893d5accaf9d16f447645e704f85a216187564f7#egg=scikit-learn
-```

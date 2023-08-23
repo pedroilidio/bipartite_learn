@@ -1,6 +1,5 @@
-# TODO: rename
-import numpy as np
 import pytest
+import numpy as np
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.linear_model import Ridge
 from sklearn.utils._testing import assert_allclose
@@ -8,8 +7,12 @@ from sklearn.utils.validation import check_symmetric
 from sklearn.metrics.pairwise import rbf_kernel
 from imblearn.pipeline import make_pipeline
 
-from bipartite_learn.matrix_factorization._nrlmf import NRLMF
-from bipartite_learn.matrix_factorization._dnilmf import DNILMF
+from bipartite_learn.matrix_factorization._nrlmf import (
+    NRLMFSampler, NRLMFClassifier, NRLMFTransformer,
+)
+from bipartite_learn.matrix_factorization._dnilmf import (
+    DNILMFSampler, DNILMFClassifier, DNILMFTransformer,
+)
 from bipartite_learn.preprocessing.multipartite import DTHybridSampler
 from bipartite_learn.preprocessing.monopartite import TargetKernelLinearCombiner
 from bipartite_learn.wrappers import (
@@ -28,60 +31,62 @@ def data():
     return XX, Y
 
 
-def test_nrlmf(data):
+@pytest.mark.parametrize(
+    'estimator', [
+        NRLMFSampler(verbose=True, random_state=0),
+        DNILMFSampler(verbose=True, random_state=0),
+    ],
+    ids=['nrlmf', 'dnilmf'],
+)
+def test_mf_sampler(data, estimator):
     XX, Y = data
-    nrlmf = NRLMF(verbose=True)
-    XXt, Yt = nrlmf.fit_resample(XX, Y)
-    nrlmf.predict([XX[0][:5], XX[1][:3]])
+    XXt, Yt = estimator.fit_resample(XX, Y)
     Y_positive = Y.astype(bool)
-
     assert Yt[Y_positive].mean() > Yt[~Y_positive].mean()
 
-    return XXt
 
-
-def test_nrlmf_fit_predict(data):
+@pytest.mark.parametrize(
+    'estimator', [
+        NRLMFClassifier(verbose=True, random_state=0),
+        DNILMFClassifier(verbose=True, random_state=0),
+    ],
+    ids=['nrlmf', 'dnilmf'],
+)
+def test_mf_classifier(data, estimator):
     XX, Y = data
 
-    nrlmf = NRLMF(verbose=True, random_state=0)
+    pred1 = estimator.fit(XX, Y).predict_proba(XX)
+    U1, V1 = estimator.U, estimator.V
 
-    pred1 = nrlmf.fit(XX, Y).predict(XX)
-    U1, V1 = nrlmf.U, nrlmf.V
-
-    pred2 = nrlmf.fit_predict(XX, Y)
-    U2, V2 = nrlmf.U, nrlmf.V
+    pred2 = estimator.fit_predict_proba(XX, Y)
+    U2, V2 = estimator.U, estimator.V
 
     assert_allclose(U1, U2)
     assert_allclose(V1, V2)
     assert_allclose(pred1, pred2)
 
+    estimator.predict(XX).shape == (Y.size,)
+    estimator.fit_predict(XX, Y).shape == (Y.size,)
 
-def test_dnilmf_fit_predict(data):
+
+
+@pytest.mark.parametrize(
+    'estimator', [
+        NRLMFTransformer(verbose=True, random_state=0),
+        DNILMFTransformer(verbose=True, random_state=0),
+    ],
+    ids=['nrlmf', 'dnilmf'],
+)
+def test_mf_transformer(data, estimator):
     XX, Y = data
+    estimator.fit(XX, Y)
+    XXt = estimator.transform(XX)
+    XXt2 = estimator.fit_transform(XX, Y)
 
-    dnilmf = DNILMF(verbose=True, random_state=0)
-    pred1 = dnilmf.fit(XX, Y).predict(XX)
-    U1, V1 = dnilmf.U, dnilmf.V
-
-    pred2 = dnilmf.fit_predict(XX, Y)
-    U2, V2 = dnilmf.U, dnilmf.V
-
-    assert_allclose(U1, U2)
-    assert_allclose(V1, V2)
-    assert_allclose(pred1, pred2)
-
-
-def test_dnilmf(data):
-    XX, Y = data
-
-    dnilmf = DNILMF(verbose=True)
-    XXt, Yt = dnilmf.fit_resample(XX, Y)
-    dnilmf.predict([XX[0][:5], XX[1][:3]])
-    Y_positive = Y.astype(bool)
-
-    assert Yt[Y_positive].mean() > Yt[~Y_positive].mean()
-
-    return XXt
+    assert np.allclose(estimator.U, XXt[0])
+    assert np.allclose(estimator.V, XXt[1])
+    assert np.allclose(estimator.U, XXt2[0])
+    assert np.allclose(estimator.V, XXt2[1])
 
 
 def test_dthybrid(data):

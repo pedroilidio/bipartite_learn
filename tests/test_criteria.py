@@ -147,11 +147,14 @@ class BaseReferenceCriterion(metaclass=ABCMeta):
             self.impurity(y_region[rel_pos:]),
         )
 
-    @validate_params({
-        'start': [Integral],
-        'end': [Integral],
-        'feature': [Interval(Integral, 0, None, closed='left'), None],
-    })
+    @validate_params(
+        {
+            'start': [Integral],
+            'end': [Integral],
+            'feature': [Interval(Integral, 0, None, closed='left'), None],
+        },
+        prefer_skip_nested_validation=False,  # Preferable for testing
+    )
     def evaluate_split(
         self,
         pos: int,

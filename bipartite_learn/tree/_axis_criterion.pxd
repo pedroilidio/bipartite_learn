@@ -103,14 +103,14 @@ cdef class AxisCriterion(BaseComposableCriterion):
         self,
         double* rows_impurity,
         double* cols_impurity,
-    ) nogil
+    ) noexcept nogil
     cdef void children_axes_impurities(
         self,
         double* rows_impurity_left,
         double* rows_impurity_right,
         double* cols_impurity_left,
         double* cols_impurity_right,
-    ) nogil
+    ) noexcept nogil
     cdef int axis_init(
         self,
         const DOUBLE_t[:, :] y,
@@ -125,7 +125,7 @@ cdef class AxisCriterion(BaseComposableCriterion):
         SIZE_t start_col,
         SIZE_t end_col,
     ) except -1 nogil
-    cdef void total_node_value(self, double* dest) nogil
+    cdef void total_node_value(self, double* dest) noexcept nogil
     cdef double _proxy_improvement_factor(self) noexcept nogil
 
 

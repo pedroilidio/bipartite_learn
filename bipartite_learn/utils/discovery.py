@@ -16,24 +16,27 @@ _MODULE_TO_IGNORE = {
 }
 
 
-@validate_params({
-    'type_filter': [
-        StrOptions({
-            "classifier",
-            "regressor",
-            "cluster",
-            "transformer",
-            "sampler",
-        }),
-        list,
-        None,
-    ],
-    'base_estimator': [
-        StrOptions({"multipartite", "bipartite"}),
-        type,
-        None,
-    ],
-})
+@validate_params(
+    {
+        'type_filter': [
+            StrOptions({
+                "classifier",
+                "regressor",
+                "cluster",
+                "transformer",
+                "sampler",
+            }),
+            list,
+            None,
+        ],
+        'base_estimator': [
+            StrOptions({"multipartite", "bipartite"}),
+            type,
+            None,
+        ],
+    },
+    prefer_skip_nested_validation=False,
+)
 def all_estimators(type_filter=None, base_estimator=None):
     """Get a list of all estimators from `bipartite_learn`.
 

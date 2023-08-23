@@ -56,25 +56,17 @@ cdef class SSCompositeCriterion(AxisCriterion):
     cdef bint _supervised_is_axis_criterion
 
     cpdef void set_X(self, const DOUBLE_t[:, ::1] X)
-    cdef void set_root_impurities(self) nogil
+    cdef void set_root_impurities(self) noexcept nogil
     cdef void ss_children_impurities(
         self,
         double* u_impurity_left,
         double* u_impurity_right,
         double* s_impurity_left,
         double* s_impurity_right,
-    ) nogil
+    ) noexcept nogil
     cdef inline void _copy_position_wise_attributes(self) noexcept nogil
     cdef int _update_supervision(self) except -1 nogil
     cdef int _set_proxy_supervision(self) except -1 nogil
-
-
-# FIXME
-cdef class SingleFeatureSSCompositeCriterion(SSCompositeCriterion):
-    """Uses only the current feature as unsupervised data.
-    """
-    cdef SIZE_t current_feature
-    cdef const DOUBLE_t[:, ::1] _full_X
 
 
 cdef class BipartiteSemisupervisedCriterion(GMO):

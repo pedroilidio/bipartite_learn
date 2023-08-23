@@ -7,7 +7,7 @@ from sklearn.tree._criterion import Criterion, ClassificationCriterion
 from sklearn.tree._splitter import Splitter
 from sklearn.utils.validation import check_random_state
 from sklearn.utils._param_validation import (
-    validate_params, Interval, HasMethods
+    validate_params, Interval,
 )
 from ._bipartite_splitter import BipartiteSplitter
 from ._bipartite_criterion import GMOSA
@@ -134,19 +134,22 @@ def check_criterion(
 
 
 # TODO:
-# @validate_params(dict(
-#     splitters=[list, tuple, Splitter],
-#     criteria=[list, tuple, Criterion],
-#     n_samples=[None, list, tuple, ],
-#     max_features=None,
-#     n_outputs=1,
-#     min_samples_leaf=1,
-#     min_weight_leaf=0.0,
-#     ax_min_samples_leaf=1,
-#     ax_min_weight_leaf=0.0,
-#     random_state=None,
-#     bipartite_criterion_class=GMOSA,
-# ))
+# @validate_params(
+#     dict(
+#         splitters=[list, tuple, Splitter],
+#         criteria=[list, tuple, Criterion],
+#         n_samples=[None, list, tuple, ],
+#         max_features=None,
+#         n_outputs=1,
+#         min_samples_leaf=1,
+#         min_weight_leaf=0.0,
+#         ax_min_samples_leaf=1,
+#         ax_min_weight_leaf=0.0,
+#         random_state=None,
+#         bipartite_criterion_class=GMOSA,
+#     ),
+#     prefer_skip_nested_validation=True,
+# )
 def make_bipartite_splitter(
     splitters,
     criteria,
@@ -374,18 +377,21 @@ def make_bipartite_ss_splitter(
     )
 
 
-@validate_params(dict(
-    supervision=[Interval(Real, 0.0, 1.0, closed="both")],
-    supervised_criterion=[Criterion, type(Criterion)],
-    unsupervised_criterion=[Criterion, type(Criterion)],
-    is_classification=["boolean", None],
-    n_outputs=[Interval(Integral, 1, None, closed="left"), None],
-    n_features=[Interval(Integral, 1, None, closed="left"), None],
-    n_samples=[Interval(Integral, 1, None, closed="left"), None],
-    n_classes=[np.ndarray, None],
-    update_supervision=[callable, None],
-    ss_class=[type(SSCompositeCriterion), None],
-))
+@validate_params(
+    dict(
+        supervision=[Interval(Real, 0.0, 1.0, closed="both")],
+        supervised_criterion=[Criterion, type(Criterion)],
+        unsupervised_criterion=[Criterion, type(Criterion)],
+        is_classification=["boolean", None],
+        n_outputs=[Interval(Integral, 1, None, closed="left"), None],
+        n_features=[Interval(Integral, 1, None, closed="left"), None],
+        n_samples=[Interval(Integral, 1, None, closed="left"), None],
+        n_classes=[np.ndarray, None],
+        update_supervision=[callable, None],
+        ss_class=[type(SSCompositeCriterion), None],
+    ),
+    prefer_skip_nested_validation=True,
+)
 def make_semisupervised_criterion(
     *,
     supervision,

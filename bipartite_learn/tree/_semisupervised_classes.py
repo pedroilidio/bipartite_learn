@@ -18,7 +18,7 @@ from numbers import Integral, Real
 import numpy as np
 from scipy.sparse import issparse
 
-from sklearn.base import is_classifier
+from sklearn.base import is_classifier, _fit_context
 from sklearn.utils import check_random_state
 from sklearn.utils.validation import _check_sample_weight
 from sklearn.utils import compute_sample_weight
@@ -52,7 +52,6 @@ from ._bipartite_classes import (
     _get_criterion_classes,
 )
 from . import (
-    _semisupervised_splitter,
     _semisupervised_criterion,
     _unsupervised_criterion,
     _splitter_factory,
@@ -76,10 +75,12 @@ __all__ = [
 DTYPE = _tree.DTYPE
 DOUBLE = _tree.DOUBLE
 
-SINGLE_FEATURE_SPLITTERS = {
-    "best": _semisupervised_splitter.BestSplitterSFSS,
-    "random": _semisupervised_splitter.RandomSplitterSFSS,
-}
+# TODO: unsupervised splitters that consider the current feature column only.
+# SINGLE_FEATURE_SPLITTERS = {
+#     "best": _semisupervised_splitter.BestSplitterSFSS,
+#     "random": _semisupervised_splitter.RandomSplitterSFSS,
+# }
+
 SS_CRITERIA = {
     "default": _semisupervised_criterion.SSCompositeCriterion,
 }
@@ -132,9 +133,12 @@ def _encode_classes(y, class_weight=None):
     return y_encoded, classes, n_classes, expanded_class_weight
 
 
-@validate_params({
-    "criterion": [str, Criterion, type(Criterion)]
-})
+@validate_params(
+    {
+        "criterion": [str, Criterion, type(Criterion)]
+    },
+    prefer_skip_nested_validation=True,
+)
 def _is_categoric_criterion(criterion: str | Criterion | Type[Criterion]):
     # TODO: different base classes for categoric (classification) and
     # regression (numeric) unsupervised criteria.
@@ -291,8 +295,8 @@ class BaseDecisionTreeSS(BaseDecisionTree, metaclass=ABCMeta):
 
     # FIXME: Avoid copying the whole BaseDecisionTree.fit(). We currently do it
     # just so we can build the Splitter object our own way.
+    @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y, sample_weight=None, check_input=True, _X_targets=None):
-        self._validate_params()
         random_state = check_random_state(self.random_state)
 
         if check_input:
@@ -1723,6 +1727,7 @@ class BaseBipartiteDecisionTreeSS(
         tags["pairwise"] = tags["pairwise_rows"] and tags["pairwise_cols"]
         return tags
 
+    @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y, sample_weight=None, check_input=True, _X_targets=None):
         if check_input:
             _X_targets = self._check_X_targets(X, _X_targets)

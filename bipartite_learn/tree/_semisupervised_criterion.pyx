@@ -1,23 +1,11 @@
-## cython: boundscheck=False
-from libc.stdlib cimport malloc, free
-from libc.string cimport memset
+# cython: boundscheck=False
 from libc.stdint cimport SIZE_MAX
 
 import numpy as np
-cimport numpy as cnp
-
-import warnings
-from sklearn.tree._splitter cimport Splitter
-from sklearn.tree._criterion cimport Criterion, RegressionCriterion
-
+from sklearn.tree._criterion cimport Criterion
 from sklearn.tree._tree cimport SIZE_t
-from sklearn.utils._param_validation import (
-    validate_params,
-    Interval,
-)
-from ._unsupervised_criterion cimport PairwiseCriterion
-from ._bipartite_criterion import InvalidAxisError
 
+from ._bipartite_criterion import InvalidAxisError
 
 cdef DOUBLE_t NAN = np.nan
 
@@ -121,7 +109,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
                 original_supervision=self.supervision,
             )
 
-    cdef void set_root_impurities(self) nogil:
+    cdef void set_root_impurities(self) noexcept nogil:
         self._root_supervised_impurity = (
             self.supervised_criterion.node_impurity()
         )
@@ -136,7 +124,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         SIZE_t[:] sample_indices,
         SIZE_t start,
         SIZE_t end,
-    ) nogil except -1:
+    ) except -1 nogil:
         if self.X is None:
             with gil:
                 raise RuntimeError("You must set_X() before init()")
@@ -268,21 +256,21 @@ cdef class SSCompositeCriterion(AxisCriterion):
 
         return 0
 
-    cdef int reset(self) nogil except -1:
+    cdef int reset(self) except -1 nogil:
         """Reset the criteria at pos=start."""
         self.supervised_criterion.reset()
         self.unsupervised_criterion.reset()
         self._copy_position_wise_attributes()
         return 0
 
-    cdef int reverse_reset(self) nogil except -1:
+    cdef int reverse_reset(self) except -1 nogil:
         """Reset the criteria at pos=end."""
         self.supervised_criterion.reverse_reset()
         self.unsupervised_criterion.reverse_reset()
         self._copy_position_wise_attributes()
         return 0
 
-    cdef int update(self, SIZE_t new_pos) nogil except -1:
+    cdef int update(self, SIZE_t new_pos) except -1 nogil:
         """Updated statistics by moving sample_indices[pos:new_pos] to the left child.
         This updates the collected statistics by moving sample_indices[pos:new_pos]
         from the right child to the left child.
@@ -296,7 +284,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         self._copy_position_wise_attributes()
         return 0
 
-    cdef double node_impurity(self) nogil:
+    cdef double node_impurity(self) noexcept nogil:
         """Calculate the impurity of the node.
         Impurity of the current node, i.e. the impurity of sample_indices[start:end].
         This is the primary function of the criterion class. The smaller the
@@ -325,7 +313,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         double* u_impurity_right,
         double* s_impurity_left,
         double* s_impurity_right,
-    ) nogil:
+    ) noexcept nogil:
         if self.pos == self._cached_pos:
             u_impurity_left[0] = self._cached_u_impurity_left 
             u_impurity_right[0] = self._cached_u_impurity_right
@@ -349,7 +337,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         self,
         double* impurity_left,
         double* impurity_right,
-    ) nogil:
+    ) noexcept nogil:
         """Calculate the impurity of children.
         Evaluate the impurity in children nodes, i.e. the impurity of
         sample_indices[start:pos] + the impurity of sample_indices[pos:end].
@@ -384,7 +372,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
             + (1.0 - sup) * u_impurity_right / self._root_unsupervised_impurity
         )
 
-    cdef void node_value(self, double* dest) nogil:
+    cdef void node_value(self, double* dest) noexcept nogil:
         """Store the node value.
         Compute the node value of sample_indices[start:end] and save the value into
         dest.
@@ -396,7 +384,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         """
         self.supervised_criterion.node_value(dest)
 
-    cdef void total_node_value(self, double* dest) nogil:
+    cdef void total_node_value(self, double* dest) noexcept nogil:
         """Compute a single node value for all targets, disregarding y's shape.
 
         This method is used instead of node_value() in cases where the
@@ -423,7 +411,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         double impurity_parent,
         double impurity_left,
         double impurity_right,
-    ) nogil:
+    ) noexcept nogil:
         """Compute the improvement in impurity.
 
         impurity_improvement = (
@@ -479,7 +467,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
 
         return sup * s_improvement + (1.0 - sup) * u_improvement
 
-    cdef double proxy_impurity_improvement(self) nogil:
+    cdef double proxy_impurity_improvement(self) noexcept nogil:
         """Compute a proxy of the impurity reduction.
 
         This method is used to speed up the search for the best split.
@@ -562,7 +550,7 @@ cdef class BipartiteSemisupervisedCriterion(GMO):
         const SIZE_t[:] col_indices,
         SIZE_t[2] start,
         SIZE_t[2] end,
-    ) nogil except -1:
+    ) except -1 nogil:
 
         # Initialize fields
         self.X_rows = X_rows
@@ -630,10 +618,10 @@ cdef class BipartiteSemisupervisedCriterion(GMO):
         (<SSCompositeCriterion>self.criterion_rows)._set_proxy_supervision()
         (<SSCompositeCriterion>self.criterion_cols)._set_proxy_supervision()
 
-    cdef void node_value(self, double* dest) nogil:
+    cdef void node_value(self, double* dest) noexcept nogil:
         self.bipartite_criterion.node_value(dest)
 
-    cdef double node_impurity(self) nogil:
+    cdef double node_impurity(self) noexcept nogil:
         return 0.5 * (
             self.criterion_rows.node_impurity()
             + self.criterion_cols.node_impurity()
@@ -644,7 +632,7 @@ cdef class BipartiteSemisupervisedCriterion(GMO):
             double* impurity_left,
             double* impurity_right,
             SIZE_t axis,
-    ) nogil:
+    ) noexcept nogil:
         cdef:
             void* ss_criterion_ptr = self._get_criterion(axis)
             void* other_ss_criterion_ptr = self._get_criterion(1 - axis)
@@ -705,7 +693,7 @@ cdef class BipartiteSemisupervisedCriterion(GMO):
         double impurity_left,
         double impurity_right,
         SIZE_t axis,
-    ) nogil:
+    ) noexcept nogil:
         cdef void* criterion_ptr = self._get_criterion(axis)
         cdef double other_sup
 

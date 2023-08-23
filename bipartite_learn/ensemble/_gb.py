@@ -24,34 +24,23 @@ from abc import abstractmethod
 from numbers import Integral, Real
 import warnings
 
-from sklearn.ensemble._base import BaseEnsemble
-from sklearn.base import ClassifierMixin, RegressorMixin
-from sklearn.base import is_classifier
-from sklearn.utils import deprecated
-
-from sklearn.ensemble._gradient_boosting import predict_stages
-from sklearn.ensemble._gradient_boosting import predict_stage
-from sklearn.ensemble._gradient_boosting import _random_sample_mask
-
 import numpy as np
-
 from scipy.sparse import csc_matrix
 from scipy.sparse import csr_matrix
 from scipy.sparse import issparse
 
-from time import time
-from sklearn.tree import DecisionTreeRegressor
-from sklearn.tree._tree import DTYPE, DOUBLE
+from sklearn.ensemble._base import BaseEnsemble
+from sklearn.base import ClassifierMixin, RegressorMixin, is_classifier, _fit_context
+from sklearn.ensemble._gradient_boosting import _random_sample_mask
 from sklearn.ensemble import _gb_losses
-
-from sklearn.utils import check_array, check_random_state, column_or_1d
+from sklearn.utils import check_array, check_random_state
 from sklearn.utils._tags import _safe_tags
 from sklearn.utils._param_validation import HasMethods, Interval, StrOptions
-from sklearn.utils.validation import check_is_fitted
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.exceptions import NotFittedError
 from sklearn.ensemble._gb import VerboseReporter
 from sklearn.ensemble._gb import BaseGradientBoosting
+from sklearn.tree._tree import DTYPE, DOUBLE
 
 from ..tree import BipartiteDecisionTreeRegressor
 from ..base import BaseBipartiteEstimator
@@ -222,7 +211,11 @@ class BaseBipartiteGradientBoosting(
 
         assert sample_mask.dtype == bool
         loss = self._loss
+
+        # FIXME: avoid melting here, once for each tree
         X_molten, y_molten = melt_multipartite_dataset(X, y)
+        y_molten = y_molten.reshape(-1)
+
         n_rows = X[0].shape[0]
         # FIXME: avoid calling _expand_sample_weight here, once for each tree
         expanded_sample_weight = _expand_sample_weight(sample_weight, n_rows)
@@ -337,6 +330,7 @@ class BaseBipartiteGradientBoosting(
 
         self.max_features_ = max_features
 
+    @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y, sample_weight=None, monitor=None):
         """Fit the gradient boosting model.
 
@@ -373,7 +367,6 @@ class BaseBipartiteGradientBoosting(
         self : object
             Fitted estimator.
         """
-        self._validate_params()
         self._validate_estimator()
 
         if not self.warm_start:

@@ -291,12 +291,17 @@ cdef class BipartiteDepthFirstTreeBuilder(BipartiteTreeBuilder):
                         )
                     )
 
-                node_id = tree._add_node(parent, is_left, is_leaf,
-                                         split.split_record.feature,
-                                         split.split_record.threshold,
-                                         impurity,
-                                         n_node_samples,
-                                         weighted_n_node_samples[0])
+                node_id = tree._add_node(
+                    parent,
+                    is_left,
+                    is_leaf,
+                    split.split_record.feature,
+                    split.split_record.threshold,
+                    impurity,
+                    n_node_samples,
+                    weighted_n_node_samples[0],
+                    False,  # TODO: missing values support
+                )
 
                 if node_id == INTPTR_MAX:
                     rc = -1

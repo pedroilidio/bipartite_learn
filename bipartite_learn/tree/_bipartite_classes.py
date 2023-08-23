@@ -18,7 +18,7 @@ from typing import Type
 import numpy as np
 from scipy.sparse import issparse
 
-from sklearn.base import is_classifier
+from sklearn.base import is_classifier, _fit_context
 from sklearn.utils import check_random_state
 from sklearn.utils.validation import (
     _check_sample_weight,
@@ -295,8 +295,8 @@ class BaseBipartiteDecisionTree(
         self.bipartite_adapter = bipartite_adapter
         self.prediction_weights = prediction_weights
 
+    @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y, sample_weight=None, check_input=True):
-        self._validate_params()
         random_state = check_random_state(self.random_state)
 
         if check_input:
