@@ -88,8 +88,8 @@ def classification_data(n_samples, n_features, random_state):
         random_state=random_state,
         noise=0.0,
         centers=10,
-        row_kwargs={'center_box': [.3, .7], 'cluster_std': .1},
-        col_kwargs={'center_box': [.3, .7], 'cluster_std': .1},
+        row_kwargs={'center_box': (.3, .7), 'cluster_std': .1},
+        col_kwargs={'center_box': (.3, .7), 'cluster_std': .1},
     )
     return X, Y, x, y
 

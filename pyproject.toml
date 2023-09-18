@@ -3,7 +3,7 @@ requires = [
     "setuptools",
     "wheel",
     "numpy>=1.22.0",
-    "cython>=0.29.33",
+    "cython==0.29.33",
     "scikit-learn==1.3.0"
 ]
 build-backend = "setuptools.build_meta"
