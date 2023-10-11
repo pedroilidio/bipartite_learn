@@ -724,11 +724,31 @@ class BaseBipartiteDecisionTree(
     def predict(self, X, check_input=True):
         check_is_fitted(self)
         X = self._validate_X_predict(X, check_input)
-        proba = self.tree_.predict(X)
         n_samples = X.shape[0]
 
         if self.bipartite_adapter == "gmo":
-            proba = self._weight_raw_predictions(X, proba)
+            # proba = self._weight_raw_predictions(X, proba)  # Too memory-intensive
+            # TODO: explore and adjust the chunk size
+            # We currently use a chunk size of 2 ** 26 = 64 MiB.
+            # 8 is the size of a predicted proba value (float64).
+            denom = self._n_raw_outputs * np.dtype(DOUBLE).itemsize
+            if is_classifier(self):
+                denom *= self.n_classes_
+            chunk_size = 2 ** 26 // denom
+
+            n_classes = self.n_classes_ if is_classifier(self) else 1
+            if self.n_outputs_ == 1:
+                proba = np.empty((n_samples, n_classes), dtype=DOUBLE)
+            else:
+                proba = np.empty((n_samples, self.n_outputs_, n_classes), dtype=DOUBLE)
+
+            for i in range(0, n_samples, chunk_size):
+                X_chunk = X[i:i + chunk_size]
+                proba[i: i+ chunk_size, ...] = (
+                    self._weight_raw_predictions(X_chunk, self.tree_.predict(X_chunk))
+                )
+        else:
+            proba = self.tree_.predict(X)
 
         # Classification
         if is_classifier(self):

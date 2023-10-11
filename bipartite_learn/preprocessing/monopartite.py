@@ -280,6 +280,7 @@ class TargetKernelDiffuser(BaseSampler):
         S_net_local = self._local_graph(S_net, self.n_neighbors)
 
         for _ in range(self.n_iter):
+            breakpoint()
             S = S_local @ S_net @ S_local.T
             S_net = S_net_local @ S @ S_net_local.T
             self._symmetrize(S)
