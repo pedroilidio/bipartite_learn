@@ -299,9 +299,16 @@ cdef class SSCompositeCriterion(AxisCriterion):
             return 1.0
 
         cdef double sup = self._curr_supervision
+        cdef double s_impurity = self.supervised_criterion.node_impurity()
 
+        # If the node's Y partition is homogeneous (all values are equal), we
+        # set the impurity to 0.0, disregarding the unsupervised criterion, to
+        # avoid further redundant splitting (all descendant nodes would have the
+        # same output value).
+        if s_impurity == 0.0:
+            return 0.0
         return (
-            sup * self.supervised_criterion.node_impurity()
+            sup * s_impurity
             / self._root_supervised_impurity
             + (1.0-sup) * self.unsupervised_criterion.node_impurity()
             / self._root_unsupervised_impurity
@@ -363,14 +370,24 @@ cdef class SSCompositeCriterion(AxisCriterion):
             &s_impurity_right,
         )
 
-        impurity_left[0] = (
-            sup * s_impurity_left / self._root_supervised_impurity
-            + (1.0 - sup) * u_impurity_left / self._root_unsupervised_impurity
-        )
-        impurity_right[0] = (
-            sup * s_impurity_right / self._root_supervised_impurity
-            + (1.0 - sup) * u_impurity_right / self._root_unsupervised_impurity
-        )
+        # If the node's Y partition is homogeneous (all values are equal), we
+        # set the impurity to 0.0, disregarding the unsupervised criterion, to
+        # avoid further redundant splitting (all descendant nodes would have the
+        # same output value).
+        if s_impurity_left == 0.0:
+            impurity_left[0] = 0.0
+        else:
+            impurity_left[0] = (
+                sup * s_impurity_left / self._root_supervised_impurity
+                + (1.0 - sup) * u_impurity_left / self._root_unsupervised_impurity
+            )
+        if s_impurity_right == 0.0:
+            impurity_right[0] = 0.0
+        else:
+            impurity_right[0] = (
+                sup * s_impurity_right / self._root_supervised_impurity
+                + (1.0 - sup) * u_impurity_right / self._root_unsupervised_impurity
+            )
 
     cdef void node_value(self, double* dest) noexcept nogil:
         """Store the node value.
@@ -457,6 +474,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         u_impurity_parent = self.unsupervised_criterion.node_impurity()
         s_impurity_parent = self.supervised_criterion.node_impurity()
 
+        # TODO: set impurity to 0.0 if s_impurity == 0.0? (See children_impurity)
         u_improvement = self.unsupervised_criterion.impurity_improvement(
             u_impurity_parent, u_impurity_left, u_impurity_right,
         ) / self._root_unsupervised_impurity

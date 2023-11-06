@@ -729,12 +729,14 @@ class BaseBipartiteDecisionTree(
         if self.bipartite_adapter == "gmo":
             # proba = self._weight_raw_predictions(X, proba)  # Too memory-intensive
             # TODO: explore and adjust the chunk size
-            # We currently use a chunk size of 2 ** 26 = 64 MiB.
+            # We currently use a chunk size of 2 ** 26 == 64 MiB.
             # 8 is the size of a predicted proba value (float64).
-            denom = self._n_raw_outputs * np.dtype(DOUBLE).itemsize
+            nbytes_proba_row = self._n_raw_outputs * np.dtype(DOUBLE).itemsize
             if is_classifier(self):
-                denom *= self.n_classes_
-            chunk_size = 2 ** 26 // denom
+                nbytes_proba_row *= self.n_classes_
+
+            # Number of lines predicted per iteration
+            chunk_size = int(np.ceil(2 ** 26 / nbytes_proba_row))
 
             n_classes = self.n_classes_ if is_classifier(self) else 1
             if self.n_outputs_ == 1:

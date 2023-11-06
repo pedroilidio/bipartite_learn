@@ -497,6 +497,12 @@ class ReferenceCompositeSS(BaseReferenceCriterion):
         return result
 
     def combine_impurities(self, sup_impurity, unsup_impurity):
+        # If the node's Y partition is homogeneous (all values are equal), we
+        # disregard the unsupervised criterion to avoid further redundant
+        # splitting (all descendant nodes would have the same output value).
+        if sup_impurity == 0:
+            unsup_impurity = 0
+
         if self.average_both_axes:
             # unsupervised impurity of the other axis is 1.0, since it does
             # not change.

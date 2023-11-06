@@ -119,7 +119,7 @@ def _test_cv(estimator, data, cv_params=None):
     ],
 )
 def test_cv_on_estimators(estimator, data, random_state, **PARAMS):
-    return _test_cv(
+    _test_cv(
         estimator=estimator.set_params(random_state=random_state),
         data=data,
     )

@@ -400,19 +400,22 @@ def test_random_state(splitter, n_samples, random_state):
 
 @pytest.mark.parametrize("splitter", ["random", "best"])
 def test_gini_mse_identity(splitter, n_samples, random_state):
-    random_state = check_random_state(random_state)
+    random_state_ = check_random_state(random_state)
 
-    XX = [random_state.uniform(size=(n, n)) for n in n_samples]
+    XX = [random_state_.uniform(size=(n, n)) for n in n_samples]
     XX = [check_symmetric(X, raise_warning=False) for X in XX]
-    Y = random_state.choice((0., 1.), size=n_samples)
+    Y = random_state_.choice((0., 1.), size=n_samples)
 
+    # NOTE on random_state: passing the integer itself to the trees was the only
+    # option to yield consistent results. Even deepcopying the random_state
+    # object seems to induce some differences.
     tree_reg = BipartiteDecisionTreeRegressor(
         min_rows_leaf=10,
         min_cols_leaf=10,
         bipartite_adapter="gmosa",
         splitter=splitter,
         criterion="squared_error",
-        random_state=copy.deepcopy(random_state),
+        random_state=random_state,
     ).fit(XX, Y)
 
     tree_clf = BipartiteDecisionTreeClassifier(
@@ -421,7 +424,7 @@ def test_gini_mse_identity(splitter, n_samples, random_state):
         bipartite_adapter="gmosa",
         splitter=splitter,
         criterion="gini",
-        random_state=copy.deepcopy(random_state),
+        random_state=random_state,
     ).fit(XX, Y)
 
     leaves_reg = get_leaves(tree_reg.tree_)
