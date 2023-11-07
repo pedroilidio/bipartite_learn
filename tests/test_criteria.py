@@ -38,7 +38,7 @@ from bipartite_learn.tree._semisupervised_criterion import (
 )
 
 from bipartite_learn.melter import row_cartesian_product
-from .utils.test_utils import assert_equal_dicts, comparison_text
+from .utils.test_utils import assert_equal_dicts
 from .utils.make_examples import make_interaction_blobs
 from .utils.tree_utils import (
     apply_criterion,
@@ -46,6 +46,8 @@ from .utils.tree_utils import (
     apply_bipartite_criterion,
     apply_bipartite_ss_criterion,
 )
+
+EPSILON = np.finfo("float64").eps
 
 CLASSIFICATION_CRITERIA = {
     AxisGini,
@@ -500,12 +502,12 @@ class ReferenceCompositeSS(BaseReferenceCriterion):
         # If the node's Y partition is homogeneous (all values are equal), we
         # disregard the unsupervised criterion to avoid further redundant
         # splitting (all descendant nodes would have the same output value).
-        if sup_impurity == 0:
-            unsup_impurity = 0
+        if sup_impurity <= EPSILON:
+            return 0
 
         if self.average_both_axes:
             # unsupervised impurity of the other axis is 1.0, since it does
-            # not change.
+            # not change (we are simulating a single root node).
             #  imp = imp + imp_other_axis
             unsup_impurity += 1
             unsup_impurity /= 2

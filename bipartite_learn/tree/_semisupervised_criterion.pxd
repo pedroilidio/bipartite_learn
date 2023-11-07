@@ -65,7 +65,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         double* s_impurity_right,
     ) noexcept nogil
     cdef inline void _copy_position_wise_attributes(self) noexcept nogil
-    cdef int _update_supervision(self) except -1 nogil
+    cdef inline int _update_supervision(self) except -1 nogil
     cdef int _set_proxy_supervision(self) except -1 nogil
 
 

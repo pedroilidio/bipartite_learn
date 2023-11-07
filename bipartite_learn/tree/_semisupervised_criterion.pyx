@@ -8,6 +8,7 @@ from sklearn.tree._tree cimport SIZE_t
 from ._bipartite_criterion import InvalidAxisError
 
 cdef DOUBLE_t NAN = np.nan
+cdef double EPSILON = np.finfo('double').eps
 
 
 cdef class SSCompositeCriterion(AxisCriterion):
@@ -90,24 +91,25 @@ cdef class SSCompositeCriterion(AxisCriterion):
         self.weighted_n_left = self.supervised_criterion.weighted_n_left
         self.weighted_n_right = self.supervised_criterion.weighted_n_right   
 
-    cdef int _update_supervision(self) except -1 nogil:
+    cdef inline int _update_supervision(self) except -1 nogil:
         # nogil to allow children classes to override it
-        with gil:
-            self._curr_supervision = self.update_supervision(
-                y=self.y_,
-                sample_indices=self.sample_indices,
-                col_indices=self.col_indices,
-                start=self.start,
-                end=self.end,
-                start_col=self.start_col,
-                end_col=self.end_col,
-                weighted_n_samples=self.weighted_n_samples,
-                weighted_n_node_samples=self.weighted_n_node_samples,
-                weighted_n_cols=self.weighted_n_cols,
-                weighted_n_node_cols=self.weighted_n_node_cols,
-                current_supervision=self._curr_supervision,
-                original_supervision=self.supervision,
-            )
+        if self.update_supervision is not None:
+            with gil:
+                self._curr_supervision = self.update_supervision(
+                    y=self.y_,
+                    sample_indices=self.sample_indices,
+                    col_indices=self.col_indices,
+                    start=self.start,
+                    end=self.end,
+                    start_col=self.start_col,
+                    end_col=self.end_col,
+                    weighted_n_samples=self.weighted_n_samples,
+                    weighted_n_node_samples=self.weighted_n_node_samples,
+                    weighted_n_cols=self.weighted_n_cols,
+                    weighted_n_node_cols=self.weighted_n_node_cols,
+                    current_supervision=self._curr_supervision,
+                    original_supervision=self.supervision,
+                )
 
     cdef void set_root_impurities(self) noexcept nogil:
         self._root_supervised_impurity = (
@@ -158,8 +160,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         self.weighted_n_node_samples = \
             self.supervised_criterion.weighted_n_node_samples
 
-        if self.update_supervision is not None:
-            self._update_supervision()
+        self._update_supervision()
 
         if self._root_supervised_impurity == 0.0:
             # Root unupervised impurities == 0.0 as well
@@ -244,8 +245,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         self.weighted_n_node_samples = \
             self.supervised_criterion.weighted_n_node_samples
 
-        if self.update_supervision is not None:
-            self._update_supervision()
+        self._update_supervision()
 
         if self._root_supervised_impurity == 0.0:
             # Root unupervised impurities == 0.0 as well
@@ -305,7 +305,7 @@ cdef class SSCompositeCriterion(AxisCriterion):
         # set the impurity to 0.0, disregarding the unsupervised criterion, to
         # avoid further redundant splitting (all descendant nodes would have the
         # same output value).
-        if s_impurity == 0.0:
+        if s_impurity <= EPSILON:
             return 0.0
         return (
             sup * s_impurity
@@ -374,14 +374,14 @@ cdef class SSCompositeCriterion(AxisCriterion):
         # set the impurity to 0.0, disregarding the unsupervised criterion, to
         # avoid further redundant splitting (all descendant nodes would have the
         # same output value).
-        if s_impurity_left == 0.0:
+        if s_impurity_left <= EPSILON:
             impurity_left[0] = 0.0
         else:
             impurity_left[0] = (
                 sup * s_impurity_left / self._root_supervised_impurity
                 + (1.0 - sup) * u_impurity_left / self._root_unsupervised_impurity
             )
-        if s_impurity_right == 0.0:
+        if s_impurity_right <= EPSILON:
             impurity_right[0] = 0.0
         else:
             impurity_right[0] = (
@@ -655,9 +655,11 @@ cdef class BipartiteSemisupervisedCriterion(GMO):
             void* ss_criterion_ptr = self._get_criterion(axis)
             void* other_ss_criterion_ptr = self._get_criterion(1 - axis)
             void* u_other_criterion_ptr
-            double other_sup
+            double sup, other_sup
             double scaled_u_other_imp
             double u_other_root_imp
+            double s_impurity_left, s_impurity_right
+            double u_impurity_left, u_impurity_right  # Discarded
 
         u_other_criterion_ptr = <void*>(
             (<SSCompositeCriterion>other_ss_criterion_ptr)
@@ -668,42 +670,73 @@ cdef class BipartiteSemisupervisedCriterion(GMO):
             ._root_unsupervised_impurity
         )
         if axis == 1:
+            sup = self._curr_supervision_cols
             other_sup = self._curr_supervision_rows
         elif axis == 0:
+            sup = self._curr_supervision_rows
             other_sup = self._curr_supervision_cols
         else:
             with gil:
                 raise InvalidAxisError(axis)
-
-        # There is no guarantee that the splitters are using the
-        # unsupervised criteria, it is a valid option to use it only for
-        # choosing an axis, calculating the unsupervised impurity only
-        # here. Therefore, we must ensure the unsupervised criterion is in
-        # the right position.
-        # TODO: remove this dependency on the way we do axis_supervision_only.
-        (<SSCompositeCriterion>ss_criterion_ptr).update(
-            (<SSCompositeCriterion>ss_criterion_ptr).supervised_criterion.pos
-        )
-
-        scaled_u_other_imp = (
-            (<Criterion>u_other_criterion_ptr).node_impurity()
-            * (0.5 - 0.5 * other_sup)
-            / u_other_root_imp
-        )
 
         (<SSCompositeCriterion>ss_criterion_ptr).children_impurity(
             impurity_left,
             impurity_right,
         )
 
-        impurity_left[0] = (
-            (0.5 + 0.5 * other_sup) * impurity_left[0]
-            + scaled_u_other_imp
-        )
-        impurity_right[0] = (
-            (0.5 + 0.5 * other_sup) * impurity_right[0]
-            + scaled_u_other_imp
-        )
+        # NOTE 0: We need to know if the children's supervised impurities are 0,
+        # in which case we set the overall impurity to 0 to avoid redundant
+        # splitting (see NOTE 2 below). If supervision is not 0, we can just
+        # check the semi-supervised impurities we got right above, since they
+        # would be 0 iff the supervised impurities by themselves are. Otherwise,
+        # if supervision is 0, we need to obtain the supervised impurities
+        # isolatedly to test them.
+        if sup < EPSILON:
+            (<SSCompositeCriterion>ss_criterion_ptr).ss_children_impurities(
+                &u_impurity_left,
+                &u_impurity_right,
+                &s_impurity_left,
+                &s_impurity_right,
+            )
+        else:
+            s_impurity_left = impurity_left[0]
+            s_impurity_right = impurity_right[0]
+
+        if s_impurity_left > EPSILON or s_impurity_right > EPSILON:
+            # NOTE 1: There is no guarantee that the splitters are using the
+            # unsupervised criteria, it is a valid option to use it only for
+            # choosing an axis, calculating the unsupervised impurity only
+            # here. Therefore, we must ensure the unsupervised criterion is in
+            # the right position.
+            # TODO: remove this dependency on the way we do axis_supervision_only.
+            (<SSCompositeCriterion>ss_criterion_ptr).update(
+                (<SSCompositeCriterion>ss_criterion_ptr).supervised_criterion.pos
+            )
+            scaled_u_other_imp = (
+                (<Criterion>u_other_criterion_ptr).node_impurity()
+                * (0.5 - 0.5 * other_sup)
+                / u_other_root_imp
+            )
+
+        # NOTE 2: If the node's Y partition is homogeneous (all values are equal), we
+        # set the impurity to 0.0, disregarding the unsupervised criterion, to
+        # avoid further redundant splitting (all descendant nodes would have the
+        # same output value).
+        if s_impurity_left <= EPSILON:
+            impurity_left[0] = 0.0
+        else:
+            impurity_left[0] = (
+                (0.5 + 0.5 * other_sup) * impurity_left[0]
+                + scaled_u_other_imp
+            )
+
+        if s_impurity_right <= EPSILON:
+            impurity_right[0] = 0.0
+        else:
+            impurity_right[0] = (
+                (0.5 + 0.5 * other_sup) * impurity_right[0]
+                + scaled_u_other_imp
+            )
 
     cdef double impurity_improvement(
         self,
