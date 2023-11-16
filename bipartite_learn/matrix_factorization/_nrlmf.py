@@ -351,8 +351,8 @@ class BaseNRLMF(BaseMultipartiteEstimator, metaclass=ABCMeta):
                 y_scaled * np.log(1 + np.exp(UV))
                 - y * UV * self.positive_importance
             )
-            + np.sum(U * (L_rows @ U)) / 2
-            + np.sum(V * (L_cols @ V)) / 2
+            + np.sum(L_rows * (U @ U.T)) / 2
+            + np.sum(L_cols * (V @ V.T)) / 2
         )
 
 
