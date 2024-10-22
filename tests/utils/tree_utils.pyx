@@ -272,7 +272,7 @@ cpdef apply_criterion(
     cdef double weighted_n_samples
     cdef double impurity_left, impurity_right
     cdef SIZE_t pos, i
-    cdef SIZE_t[::1] sample_indices = np.arange(y.shape[0])
+    cdef SIZE_t[::1] sample_indices = np.arange(y.shape[0], dtype=np.intp)
 
     # Note, however, that the criterion is able to get to end=y.shape[0], such
     # that n_left=n_samples and n_right=0.
@@ -349,8 +349,8 @@ cpdef apply_bipartite_criterion(
 
         double weighted_n_rows
         double weighted_n_cols
-        SIZE_t[::1] row_indices = np.arange(y.shape[0])
-        SIZE_t[::1] col_indices = np.arange(y.shape[1])
+        SIZE_t[::1] row_indices = np.arange(y.shape[0], dtype=np.intp)
+        SIZE_t[::1] col_indices = np.arange(y.shape[1], dtype=np.intp)
         SIZE_t n_rows = y.shape[0]
         SIZE_t[2] start_
         SIZE_t[2] end_
@@ -440,8 +440,8 @@ cpdef apply_bipartite_ss_criterion(
 
         double weighted_n_rows
         double weighted_n_cols
-        SIZE_t[::1] row_indices = np.arange(y.shape[0])
-        SIZE_t[::1] col_indices = np.arange(y.shape[1])
+        SIZE_t[::1] row_indices = np.arange(y.shape[0], dtype=np.intp)
+        SIZE_t[::1] col_indices = np.arange(y.shape[1], dtype=np.intp)
         SIZE_t n_rows = y.shape[0]
         SIZE_t[2] start_
         SIZE_t[2] end_

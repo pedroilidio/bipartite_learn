@@ -115,6 +115,14 @@ cdef struct StackRecord2D:
     SIZE_t n_constant_col_features
 
 
+cdef struct ApplyStackRecord:
+    SIZE_t start_row
+    SIZE_t start_col
+    SIZE_t end_row
+    SIZE_t end_col
+    Node* node
+
+
 cdef class BipartiteDepthFirstTreeBuilder(BipartiteTreeBuilder):
     """Build a decision tree in depth-first fashion, from 2D training data.
 
@@ -375,3 +383,169 @@ cdef class BipartiteDepthFirstTreeBuilder(BipartiteTreeBuilder):
 
 cdef class BipartiteBestFirstTreeBuilder(BipartiteTreeBuilder):
     ...  # TODO
+
+
+# TODO: Consider standalone function that uses Tree instead of inheritance.
+cdef class BipartiteTree(Tree):
+    cpdef cnp.ndarray predict(self, object X):
+        """Predict target for X."""
+        out = self._get_value_ndarray().take(self.apply(X), axis=0, mode='clip')
+
+        if self.n_outputs == 1:
+            if isinstance(X, list):  # bipartite format
+                n_samples = X[0].shape[0] * X[1].shape[0]
+            else:
+                n_samples = X.shape[0]
+
+            out = out.reshape(n_samples, self.max_n_classes)
+        return out
+
+    cpdef cnp.ndarray apply(self, object X):
+        """Finds the terminal region (=leaf node) for each sample in X."""
+        if isinstance(X, list):  # bipartite format
+            if issparse(X[0]):
+                raise NotImplementedError(
+                    "No support for sparse matrices in the bipartite format."
+                )
+            return self._bipartite_apply_dense(X)
+        if issparse(X):
+            return self._apply_sparse_csr(X)
+        return self._apply_dense(X)
+
+    cdef inline cnp.ndarray _bipartite_apply_dense(self, object X):
+        """Finds the terminal region (=leaf node) for each sample in X."""
+
+        if not isinstance(X, list):
+            raise ValueError(
+                "X should be a list of np.ndarray format, got %s" % type(X)
+            )
+
+        cdef SIZE_t i, j, p, q, tmp
+
+        for i in range(2):
+            # Check input
+            if not isinstance(X[i], np.ndarray):
+                raise ValueError(
+                    "X[%d] should be in np.ndarray format, got %s" % (i, type(X[i]))
+                )
+
+            if X[i].dtype != DTYPE:
+                raise ValueError(
+                    "X[%d].dtype should be np.float32, got %s" % (i, X[i].dtype)
+                )
+
+        # Extract input
+        # We assume fortran-contiguous arrays
+        cdef SIZE_t node_id
+        cdef const DTYPE_t[::1, :] X_rows = X[0]
+        cdef const DTYPE_t[::1, :] X_cols = X[1]
+        cdef const DTYPE_t* X_node_feature = NULL
+
+        cdef SIZE_t n_row_features = X_rows.shape[1]  # TODO: get this from tree?
+        cdef SIZE_t n_rows = X_rows.shape[0]
+        cdef SIZE_t n_cols = X_cols.shape[0]
+        cdef SIZE_t start, end
+
+        cdef SIZE_t[::1] row_indices = np.arange(X_rows.shape[0], dtype=np.intp)
+        cdef SIZE_t[::1] col_indices = np.arange(X_cols.shape[0], dtype=np.intp)
+
+        cdef SIZE_t* indices  # Either row or column indices
+
+        # Initialize output
+        cdef SIZE_t[:, :] out = np.zeros((n_rows, n_cols), dtype=np.intp)
+
+        # Initialize stack
+        cdef stack[ApplyStackRecord] builder_stack
+        cdef ApplyStackRecord stack_record
+
+        # Initialize auxiliary data-structure
+        cdef Node* node = NULL
+
+        builder_stack.push({
+            "start_row": 0,
+            "start_col": 0,
+            "end_row": n_rows,
+            "end_col": n_cols,
+            "node": &self.nodes[0],
+        })
+
+        with nogil:
+            while not builder_stack.empty():
+                stack_record = builder_stack.top()
+                builder_stack.pop()
+                node = stack_record.node
+
+                # If reached a leaf
+                if node.left_child == _TREE_LEAF:
+                    # ... and node.right_child == _TREE_LEAF:
+                    node_id = <SIZE_t>(node - self.nodes)
+                    for p in range(stack_record.start_row, stack_record.end_row):
+                        i = row_indices[p]
+                        for q in range(stack_record.start_col, stack_record.end_col):
+                            j = col_indices[q]
+                            out[i, j] = node_id
+                    continue
+
+                axis = <SIZE_t>(node.feature >= n_row_features)
+
+                if axis == 0:
+                    X_node_feature = &X_rows[0, node.feature]
+                    indices = &row_indices[0]
+                    start = stack_record.start_row
+                    end = stack_record.end_row
+                else:
+                    X_node_feature = &X_cols[0, node.feature - n_row_features]
+                    indices = &col_indices[0]
+                    start = stack_record.start_col
+                    end = stack_record.end_col
+
+                p = start
+                q = end
+                while p < q:
+                    i = indices[p]
+                    if X_node_feature[i] <= node.threshold:
+                        p += 1
+                    else:
+                        q -= 1
+                        tmp = indices[p]
+                        indices[p] = indices[q]
+                        indices[q] = tmp
+                
+                if axis == 0:
+                    # Push right child on stack
+                    builder_stack.push({
+                        "start_row": p,
+                        "start_col": stack_record.start_col,
+                        "end_row": stack_record.end_row,
+                        "end_col": stack_record.end_col,
+                        "node": &self.nodes[node.right_child],
+                    })
+
+                    # Push left child on stack
+                    builder_stack.push({
+                        "start_row": stack_record.start_row,
+                        "start_col": stack_record.start_col,
+                        "end_row": p,
+                        "end_col": stack_record.end_col,
+                        "node": &self.nodes[node.left_child],
+                    })
+                else:
+                    # Push right child on stack
+                    builder_stack.push({
+                        "start_row": stack_record.start_row,
+                        "start_col": p,
+                        "end_row": stack_record.end_row,
+                        "end_col": stack_record.end_col,
+                        "node": &self.nodes[node.right_child],
+                    })
+
+                    # Push left child on stack
+                    builder_stack.push({
+                        "start_row": stack_record.start_row,
+                        "start_col": stack_record.start_col,
+                        "end_row": stack_record.end_row,
+                        "end_col": p,
+                        "node": &self.nodes[node.left_child],
+                    })
+
+        return np.asarray(out).reshape(-1)

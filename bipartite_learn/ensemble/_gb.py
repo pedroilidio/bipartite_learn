@@ -46,7 +46,7 @@ from ..tree import BipartiteDecisionTreeRegressor
 from ..base import BaseBipartiteEstimator
 from ..melter import melt_multipartite_dataset
 from ..wrappers import GlobalSingleOutputWrapper
-from ..utils import _check_multipartite_sample_weight
+from ..utils import _check_multipartite_sample_weight, _X_is_multipartite
 from ..model_selection import multipartite_train_test_split
 
 
@@ -673,6 +673,9 @@ class BaseBipartiteGradientBoosting(
             self.init_ = GlobalSingleOutputWrapper(self.init_)
     
     def _validate_X_predict(self, X, check_input=True):
+        # TODO: Implement multipartite version of predict
+        if _X_is_multipartite(X):
+            X, _ = melt_multipartite_dataset(X)
         return self.estimators_[0, 0]._validate_X_predict(X, check_input)
 
     # def _raw_predict_init(self, X):

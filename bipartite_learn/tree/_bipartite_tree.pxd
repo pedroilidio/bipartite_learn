@@ -4,7 +4,7 @@
 # License: BSD 3 clause
 
 # See _tree.pyx for details.
-from sklearn.tree._tree cimport Tree
+from sklearn.tree._tree cimport Tree, Node
 
 import numpy as np
 cimport numpy as cnp
@@ -63,3 +63,7 @@ cdef class BipartiteTreeBuilder:
         const DOUBLE_t[:, :] y,
         const DOUBLE_t[:] sample_weight,
     )
+
+
+cdef class BipartiteTree(Tree):
+    cdef inline cnp.ndarray _bipartite_apply_dense(self, object X)

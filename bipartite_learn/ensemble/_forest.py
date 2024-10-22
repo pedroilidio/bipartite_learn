@@ -208,6 +208,16 @@ def _parallel_build_trees_nd(
     return tree
 
 
+# HACK: to avoid redefining predict_proba
+class _PseudoMoltenX(list):
+    @property
+    def shape(self):
+        return (
+            np.prod([Xi.shape[0] for Xi in self]),
+            np.sum([Xi.shape[1] for Xi in self]),
+        )
+
+
 class BaseMultipartiteForest(
     BaseForest,
     BaseBipartiteEstimator,
@@ -501,10 +511,10 @@ class BaseMultipartiteForest(
     def _validate_X_predict(self, X):
         """ Validate X whenever one tries to predict, apply, predict_proba.
         """
+        X = self.estimators_[0]._validate_X_predict(X, check_input=True)
         if _X_is_multipartite(X):
-            X = row_cartesian_product(X)
-
-        return super()._validate_X_predict(X)
+            return _PseudoMoltenX(X)
+        return X
 
 
 class BipartiteRandomForestRegressor(

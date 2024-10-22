@@ -31,7 +31,6 @@ from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils._param_validation import Interval, StrOptions, Hidden
 
 from sklearn.tree._criterion import Criterion
-from sklearn.tree._tree import Tree
 from sklearn.tree._classes import (
     DENSE_SPLITTERS, DecisionTreeRegressor,
     DecisionTreeClassifier,
@@ -40,7 +39,7 @@ from sklearn.tree._tree import DTYPE, DOUBLE
 
 from sklearn.tree._classes import BaseDecisionTree
 from ..base import BaseMultipartiteEstimator
-from ._bipartite_tree import BipartiteDepthFirstTreeBuilder
+from ._bipartite_tree import BipartiteDepthFirstTreeBuilder, BipartiteTree
 from ._bipartite_criterion import (
     BipartiteCriterion,
     GMO,
@@ -83,6 +82,7 @@ PREDICTION_WEIGHTS_OPTIONS = {
 AXIS_CRITERIA_REG = {
     "squared_error": AxisSquaredError,
     "friedman_gso": AxisFriedmanGSO,
+    "friedman_mse": AxisFriedmanGSO,
     "squared_error_gso": AxisSquaredErrorGSO,
 }
 AXIS_CRITERIA_CLF = {
@@ -107,6 +107,7 @@ BIPARTITE_CRITERIA = {
     "gmosa": {
         "regression": {
             "squared_error": (GMOSA, AxisSquaredError),
+            "friedman_mse": (GMOSA, AxisFriedmanGSO),
             "friedman_gso": (GMOSA, AxisFriedmanGSO),
             "squared_error_gso": (GMOSA, AxisSquaredErrorGSO),
         },
@@ -392,8 +393,9 @@ class BaseBipartiteDecisionTree(
             self.classes_ = np.tile(classes, (self._n_raw_outputs, 1))
 
             self.n_classes_ = np.repeat(classes.shape[0], self._n_raw_outputs)
-            self.n_row_classes_ = np.repeat(classes.shape[0], n_rows)
-            self.n_col_classes_ = np.repeat(classes.shape[0], n_cols)
+            self.n_classes_ = self.n_classes_.astype(np.intp)
+            self.n_row_classes_ = np.repeat(classes.shape[0], n_rows).astype(np.intp)
+            self.n_col_classes_ = np.repeat(classes.shape[0], n_cols).astype(np.intp)
 
             if self.class_weight is not None:
                 expanded_class_weight_rows = compute_sample_weight(
@@ -588,13 +590,13 @@ class BaseBipartiteDecisionTree(
             raise ValueError(f"Invalid option {self.bipartite_adapter=!r}")
 
         if is_classifier(self):
-            self.tree_ = Tree(
+            self.tree_ = BipartiteTree(
                 self.n_features_in_,
                 self.n_classes_,
                 self._n_raw_outputs,
             )
         else:
-            self.tree_ = Tree(
+            self.tree_ = BipartiteTree(
                 self.n_features_in_,
                 # TODO(sklearn): tree shouldn't need this in this case
                 np.array([1] * self._n_raw_outputs, dtype=np.intp),
@@ -724,9 +726,15 @@ class BaseBipartiteDecisionTree(
     def predict(self, X, check_input=True):
         check_is_fitted(self)
         X = self._validate_X_predict(X, check_input)
-        n_samples = X.shape[0]
+
+        if _X_is_multipartite(X):
+            n_samples = np.prod([Xi.shape[0] for Xi in X])
+        else:
+            n_samples = X.shape[0]
 
         if self.bipartite_adapter == "gmo":
+            if _X_is_multipartite(X):  # TODO: implement multipartite version
+                X = row_cartesian_product(X)
             # proba = self._weight_raw_predictions(X, proba)  # Too memory-intensive
             # TODO: explore and adjust the chunk size
             # We currently use a chunk size of 2 ** 26 == 64 MiB.
@@ -775,13 +783,6 @@ class BaseBipartiteDecisionTree(
             else:
                 return proba[:, :, 0]
 
-    def _validate_X_predict(self, X, check_input):
-        """Validate the training data on predict (probabilities)."""
-        if _X_is_multipartite(X):
-            X = row_cartesian_product(X)
-
-        return super()._validate_X_predict(X, check_input)
-
     def _weight_raw_predictions(self, X, pred):
         # Check prediction weights
         if self.prediction_weights == "raw":
@@ -824,6 +825,21 @@ class BaseBipartiteDecisionTree(
         col_final_pred = np.nansum(col_weights * col_pred, axis=1)
 
         return (row_final_pred + col_final_pred) / 2
+
+    def _validate_X_predict(self, X, check_input):
+        if check_input:
+            X = self._validate_data(
+                X,
+                dtype=DTYPE,
+                # accept_sparse="csr",  # TODO
+                reset=False,
+                order="F",
+                force_all_finite=True,
+            )
+        else:
+            # The number of features is checked regardless of `check_input`
+            self._check_n_features(X, reset=False)
+        return X
 
 
 # =============================================================================

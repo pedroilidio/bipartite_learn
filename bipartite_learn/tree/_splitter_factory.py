@@ -98,7 +98,7 @@ def check_criterion(
                 )
             final_criterion = criterion(
                 n_outputs=n_outputs,
-                n_classes=n_classes,
+                n_classes=n_classes.astype(np.intp),
             )
         else:
             if n_outputs is None or n_samples is None:

@@ -1,3 +1,4 @@
+from timeit import timeit
 import copy
 import logging
 import numpy as np
@@ -600,3 +601,45 @@ def test_leaf_shape_gso(mrl, mcl, random_state, gso_criterion, **params):
     assert_allclose(leaf_values1d, y_values)
 
     assert_equal_leaves(tree1d.tree_, tree.tree_)
+
+
+class TestApplyBipartiteVsMolten:
+    params = DEF_PARAMS
+    XX, Y, x, _ = make_interaction_regression(return_molten=True, **params)
+    tree = BipartiteDecisionTreeRegressor(
+        min_rows_leaf=5,
+        min_cols_leaf=7,
+        bipartite_adapter="gmosa",
+        criterion="squared_error_gso",
+    )
+    tree.fit(XX, Y)
+
+    def test_equal_result(self):
+        leaves_bipartite = self.tree.apply(self.XX)
+        leaves_molten = self.tree.apply(self.x)
+        assert all(leaves_bipartite == leaves_molten)
+
+    def test_time(self):
+        time_molten = timeit(
+            "self.tree.apply(self.x)",
+            globals=locals(),
+            number=1000,
+        )
+        time_bipartite = timeit(
+            "self.tree.apply(self.XX)",
+            globals=locals(),
+            number=1000,
+        )
+        print(f"Time molten: {time_molten}")
+        print(f"Time bipartite: {time_bipartite}")
+
+        expected_improvement = (
+            self.x.shape[0] / (self.XX[0].shape[0] + self.XX[1].shape[0])
+        )
+        improvement = time_molten / time_bipartite
+
+        print(f"Expected improvement: {expected_improvement}")
+        print(f"Improvement: {improvement}")
+
+        # 33% to acknowledge we are not in the asymptotic regime
+        assert improvement > expected_improvement / 3
