@@ -31,15 +31,15 @@ class BasicRemoteTextLoader(BaseRemoteFileLoader):
 @pytest.fixture(scope="module")
 def remote_url():
     return (
-        "https://raw.githubusercontent.com/pedroilidio/bipartite_learn"
-        "/main/README.md"
+        "https://raw.githubusercontent.com/pedroilidio/bipartite_learn/"
+        "b5d46188515ab562e0b978b694b55997aa0829ed/README.md"
     )
 
 
 @pytest.fixture(scope="module")
 def checksum():
     return (
-        "395fcfcdb437a918915f35bb7e6b1f7ef2a4dc10ef980340f1949ebfaac3112b"
+        "523bd95230ed4e6e37df316061c434b72d9abdcd15ed3117c502eeb8f1dfc9b0"
     )
 
 
@@ -74,7 +74,7 @@ class TestLocalFileLoader:
     def test_local_path(self, tmp_path):
         loader = BasicTextLoader(filepath=tmp_path)
         assert loader.local_path == tmp_path.resolve()
-    
+
     def test_set_description_str(self, local_text_loader):
         description = "test description"
         local_text_loader.set_description(description)
@@ -99,7 +99,7 @@ class TestLocalFileLoader:
     def test_set_description_type_error(self, local_text_loader):
         with pytest.raises(TypeError):
             local_text_loader.set_description(123)
-    
+
 
 class TestRemoteFileLoader:
     def test_infer_filepath(self):
@@ -144,7 +144,7 @@ class TestRemoteFileLoader:
 
         assert loader.base_dir == base_dir
         assert loader.local_path == base_dir / filepath
-    
+
     def test_download(self, remote_text_loader):
         remote_text_loader.download()
         assert remote_text_loader.local_path.exists()
@@ -198,7 +198,7 @@ class TestBipartiteDatasetLoader:
         assert not loader.X_loader[1].local_path.exists()
         assert not loader.y_loader.local_path.exists()
         assert not loader.local_path.exists()
-    
+
     def test_load(self, bipartite_dataset_loader):
         loader = bipartite_dataset_loader
         X, y = loader.load()

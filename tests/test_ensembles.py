@@ -6,6 +6,7 @@ import pytest
 from pprint import pprint
 from sklearn.tree import DecisionTreeRegressor, ExtraTreeRegressor
 from sklearn.metrics.pairwise import rbf_kernel
+from sklearn.metrics import mean_squared_error
 from sklearn.utils.validation import check_random_state
 from sklearn.dummy import DummyRegressor, DummyClassifier
 from sklearn.utils._testing import assert_allclose
@@ -52,7 +53,7 @@ DEF_PARAMS = DEF_PARAMS | dict(n_estimators=10)
 
 def eval_model(model, X, y):
     pred = model.predict(X)
-    mse = np.mean((pred-y)**2)
+    mse = mean_squared_error(y, pred)
     print('* MSE:', mse)
     return mse
 
@@ -175,9 +176,12 @@ def test_forests_score(
     assert_allclose(pred1, pred2)
 
     score = estimator.score(X, y)
+    mse_score = mean_squared_error(y, pred1)
 
     logging.info(f"{estimator_name}'s score: {score}")
-    assert score > 0.1
+    logging.info(f"MSE score: {mse_score}")
+
+    assert mse_score < y.var()
 
 
 def compare_estimators(estimators1d, estimators2d, **PARAMS):

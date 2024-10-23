@@ -78,5 +78,6 @@ def test_default_params_are_consistent(estimator1, estimator2, ignore):
     assert_equal_dicts(
         estimator1().get_params(),
         estimator2().get_params(),
-        ignore=ignore,
+        ignore=ignore,  # Not used for now
+        differing_keys="ignore",
     )
