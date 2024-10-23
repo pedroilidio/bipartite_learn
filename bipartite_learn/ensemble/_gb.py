@@ -22,7 +22,6 @@ The module structure is the following:
 from abc import ABCMeta
 from abc import abstractmethod
 from numbers import Integral, Real
-import warnings
 
 import numpy as np
 from scipy.sparse import csc_matrix
@@ -30,17 +29,16 @@ from scipy.sparse import csr_matrix
 from scipy.sparse import issparse
 
 from sklearn.ensemble._base import BaseEnsemble
-from sklearn.base import ClassifierMixin, RegressorMixin, is_classifier, _fit_context
+from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
+from sklearn.base import is_classifier, _fit_context
 from sklearn.ensemble._gradient_boosting import _random_sample_mask
 from sklearn.ensemble import _gb_losses
 from sklearn.utils import check_array, check_random_state
 from sklearn.utils._tags import _safe_tags
 from sklearn.utils._param_validation import HasMethods, Interval, StrOptions
-from sklearn.utils.multiclass import check_classification_targets
-from sklearn.exceptions import NotFittedError
 from sklearn.ensemble._gb import VerboseReporter
 from sklearn.ensemble._gb import BaseGradientBoosting
-from sklearn.tree._tree import DTYPE, DOUBLE
+from sklearn.tree._tree import DTYPE
 
 from ..tree import BipartiteDecisionTreeRegressor
 from ..base import BaseBipartiteEstimator
@@ -281,20 +279,7 @@ class BaseBipartiteGradientBoosting(
 
     # TODO: simplify
     def _check_params(self):
-        # TODO(1.3): Remove
-        if self.loss == "deviance":
-            warnings.warn(
-                "The loss parameter name 'deviance' was deprecated in v1.1 and will be "
-                "removed in version 1.3. Use the new parameter name 'log_loss' which "
-                "is equivalent.",
-                FutureWarning,
-            )
-            loss_class = (
-                _gb_losses.MultinomialDeviance
-                if len(self.classes_) > 2
-                else _gb_losses.BinomialDeviance
-            )
-        elif self.loss == "log_loss":
+        if self.loss == "log_loss":
             loss_class = (
                 _gb_losses.MultinomialDeviance
                 if len(self.classes_) > 2
@@ -671,107 +656,26 @@ class BaseBipartiteGradientBoosting(
         if not _safe_tags(self.init_).get("n_partite"):
             # if self.init_ is a monopartite estimator
             self.init_ = GlobalSingleOutputWrapper(self.init_)
-    
+
     def _validate_X_predict(self, X, check_input=True):
         # TODO: Implement multipartite version of predict
         if _X_is_multipartite(X):
             X, _ = melt_multipartite_dataset(X)
-        return self.estimators_[0, 0]._validate_X_predict(X, check_input)
+        if check_input:
+            X = self._validate_data(X, order="C", reset=False)
+        else:
+            # The number of features is checked regardless of `check_input`
+            self._check_n_features(X, reset=False)
+        return X
 
-    # def _raw_predict_init(self, X):
-    #     """Check input and compute raw predictions of the init estimator."""
-    #     self._check_initialized()
-    #     X = self.estimators_[0, 0]._validate_X_predict(X, check_input=True)
-    #     if self.init_ == "zero":
-    #         raw_predictions = np.zeros(
-    #             shape=(X.shape[0], self._loss.K), dtype=np.float64
-    #         )
-    #     else:
-    #         raw_predictions = self._loss.get_init_raw_predictions(X, self.init_).astype(
-    #             np.float64
-    #         )
-    #     return raw_predictions
-
-    # def _raw_predict(self, X):
-    #     """Return the sum of the trees raw predictions (+ init estimator)."""
-    #     raw_predictions = self._raw_predict_init(X)
-    #     predict_stages(self.estimators_, X, self.learning_rate, raw_predictions)
-    #     return raw_predictions
-
-    # def _staged_raw_predict(self, X, check_input=True):
-    #     """Compute raw predictions of ``X`` for each iteration.
-
-    #     This method allows monitoring (i.e. determine error on testing set)
-    #     after each stage.
-
-    #     Parameters
-    #     ----------
-    #     X : {array-like, sparse matrix} of shape (n_samples, n_features)
-    #         The input samples. Internally, it will be converted to
-    #         ``dtype=np.float32`` and if a sparse matrix is provided
-    #         to a sparse ``csr_matrix``.
-
-    #     check_input : bool, default=True
-    #         If False, the input arrays X will not be checked.
-
-    #     Returns
-    #     -------
-    #     raw_predictions : generator of ndarray of shape (n_samples, k)
-    #         The raw predictions of the input samples. The order of the
-    #         classes corresponds to that in the attribute :term:`classes_`.
-    #         Regression and binary classification are special cases with
-    #         ``k == 1``, otherwise ``k==n_classes``.
-    #     """
-    #     if check_input:
-    #         X = self._validate_data(
-    #             X, dtype=DTYPE, order="C", accept_sparse="csr", reset=False
-    #         )
-    #     raw_predictions = self._raw_predict_init(X)
-    #     for i in range(self.estimators_.shape[0]):
-    #         predict_stage(self.estimators_, i, X, self.learning_rate, raw_predictions)
-    #         yield raw_predictions.copy()
-
-    # def apply(self, X):
-    #     """Apply trees in the ensemble to X, return leaf indices.
-
-    #     .. versionadded:: 0.17
-
-    #     Parameters
-    #     ----------
-    #     X : {array-like, sparse matrix} of shape (n_samples, n_features)
-    #         The input samples. Internally, its dtype will be converted to
-    #         ``dtype=np.float32``. If a sparse matrix is provided, it will
-    #         be converted to a sparse ``csr_matrix``.
-
-    #     Returns
-    #     -------
-    #     X_leaves : array-like of shape (n_samples, n_estimators, n_classes)
-    #         For each datapoint x in X and for each tree in the ensemble,
-    #         return the index of the leaf x ends up in each estimator.
-    #         In the case of binary classification n_classes is 1.
-    #     """
-
-    #     self._check_initialized()
-    #     X = self.estimators_[0, 0]._validate_X_predict(X, check_input=True)
-
-    #     # n_classes will be equal to 1 in the binary classification or the
-    #     # regression case.
-    #     n_estimators, n_classes = self.estimators_.shape
-    #     leaves = np.zeros((X.shape[0], n_estimators, n_classes))
-
-    #     for i in range(n_estimators):
-    #         for j in range(n_classes):
-    #             estimator = self.estimators_[i, j]
-    #             leaves[:, i, j] = estimator.apply(X, check_input=False)
-
-    #     return leaves
+    def _staged_raw_predict(self, X, check_input=True):
+        X = self._validate_X_predict(X, check_input=check_input)
+        yield from super()._staged_raw_predict(X, check_input=False)
 
 
-# XXX
-# TODO: remove extra methods (also from Regressor)
 class BipartiteGradientBoostingClassifier(
-    ClassifierMixin,
     BaseBipartiteGradientBoosting,
+    GradientBoostingClassifier,
 ):
     """Gradient Boosting for classification.
 
@@ -1091,13 +995,9 @@ class BipartiteGradientBoostingClassifier(
     0.913...
     """
 
-    # TODO(sklearn 1.3): remove "deviance"
     _parameter_constraints: dict = {
         **BaseBipartiteGradientBoosting._parameter_constraints,
-        "loss": [
-            StrOptions({"log_loss", "deviance", "exponential"},
-                       deprecated={"deviance"})
-        ],
+        "loss": [StrOptions({"log_loss", "exponential"})],
         "init": [StrOptions({"zero"}), None, HasMethods(["fit", "predict_proba"])],
     }
 
@@ -1171,21 +1071,6 @@ class BipartiteGradientBoostingClassifier(
             prediction_weights=prediction_weights,
         )
 
-    def _validate_y(self, y, sample_weight):
-        check_classification_targets(y)
-        self.classes_, y = np.unique(y, return_inverse=True)
-        n_trim_classes = np.count_nonzero(np.bincount(y, sample_weight))
-        if n_trim_classes < 2:
-            raise ValueError(
-                "y contains %d class after sample_weight "
-                "trimmed classes with zero weights, while a "
-                "minimum of 2 classes are required." % n_trim_classes
-            )
-        self._n_classes = len(self.classes_)
-        # expose n_classes_ attribute
-        self.n_classes_ = self._n_classes
-        return y
-
     def decision_function(self, X):
         """Compute the decision function of ``X``.
 
@@ -1205,173 +1090,13 @@ class BipartiteGradientBoostingClassifier(
             :term:`classes_`. Regression and binary classification produce an
             array of shape (n_samples,).
         """
-        X = self._validate_data(
-            X, dtype=DTYPE, order="C", accept_sparse="csr", reset=False
-        )
-        raw_predictions = self._raw_predict(X)
-        if raw_predictions.shape[1] == 1:
-            return raw_predictions.ravel()
-        return raw_predictions
-
-    def staged_decision_function(self, X):
-        """Compute decision function of ``X`` for each iteration.
-
-        This method allows monitoring (i.e. determine error on testing set)
-        after each stage.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
-
-        Yields
-        ------
-        score : generator of ndarray of shape (n_samples, k)
-            The decision function of the input samples, which corresponds to
-            the raw values predicted from the trees of the ensemble . The
-            classes corresponds to that in the attribute :term:`classes_`.
-            Regression and binary classification are special cases with
-            ``k == 1``, otherwise ``k==n_classes``.
-        """
-        yield from self._staged_raw_predict(X)
-
-    def predict(self, X):
-        """Predict class for X.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
-
-        Returns
-        -------
-        y : ndarray of shape (n_samples,)
-            The predicted values.
-        """
         X = self._validate_X_predict(X)
-        raw_predictions = self.decision_function(X)
-        encoded_labels = self._loss._raw_prediction_to_decision(
-            raw_predictions)
-        return self.classes_.take(encoded_labels, axis=0)
-
-    def staged_predict(self, X):
-        """Predict class at each stage for X.
-
-        This method allows monitoring (i.e. determine error on testing set)
-        after each stage.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
-
-        Yields
-        ------
-        y : generator of ndarray of shape (n_samples,)
-            The predicted value of the input samples.
-        """
-        X = self._validate_X_predict(X)
-        for raw_predictions in self._staged_raw_predict(X):
-            encoded_labels = self._loss._raw_prediction_to_decision(
-                raw_predictions)
-            yield self.classes_.take(encoded_labels, axis=0)
-
-    def predict_proba(self, X):
-        """Predict class probabilities for X.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
-
-        Returns
-        -------
-        p : ndarray of shape (n_samples, n_classes)
-            The class probabilities of the input samples. The order of the
-            classes corresponds to that in the attribute :term:`classes_`.
-
-        Raises
-        ------
-        AttributeError
-            If the ``loss`` does not support probabilities.
-        """
-        X = self._validate_X_predict(X)
-        raw_predictions = self.decision_function(X)
-        try:
-            return self._loss._raw_prediction_to_proba(raw_predictions)
-        except NotFittedError:
-            raise
-        except AttributeError as e:
-            raise AttributeError(
-                "loss=%r does not support predict_proba" % self.loss
-            ) from e
-
-    def predict_log_proba(self, X):
-        """Predict class log-probabilities for X.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
-
-        Returns
-        -------
-        p : ndarray of shape (n_samples, n_classes)
-            The class log-probabilities of the input samples. The order of the
-            classes corresponds to that in the attribute :term:`classes_`.
-
-        Raises
-        ------
-        AttributeError
-            If the ``loss`` does not support probabilities.
-        """
-        proba = self.predict_proba(X)
-        return np.log(proba)
-
-    def staged_predict_proba(self, X):
-        """Predict class probabilities at each stage for X.
-
-        This method allows monitoring (i.e. determine error on testing set)
-        after each stage.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
-
-        Yields
-        ------
-        y : generator of ndarray of shape (n_samples,)
-            The predicted value of the input samples.
-        """
-        X = self._validate_X_predict(X)
-        try:
-            for raw_predictions in self._staged_raw_predict(X):
-                yield self._loss._raw_prediction_to_proba(raw_predictions)
-        except NotFittedError:
-            raise
-        # TODO: use @available_if?
-        except AttributeError as e:
-            raise AttributeError(
-                "loss=%r does not support predict_proba" % self.loss
-            ) from e
+        return super().decision_function(X)
 
 
 class BipartiteGradientBoostingRegressor(
-    RegressorMixin,
     BaseBipartiteGradientBoosting,
+    GradientBoostingRegressor,
 ):
     """Gradient Boosting for regression.
 
@@ -1753,73 +1478,6 @@ class BipartiteGradientBoostingRegressor(
             bipartite_adapter=bipartite_adapter,
         )
 
-    def _validate_y(self, y, sample_weight=None):
-        if y.dtype.kind == "O":
-            y = y.astype(DOUBLE)
-        return y
-
     def predict(self, X):
-        """Predict regression target for X.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
-
-        Returns
-        -------
-        y : ndarray of shape (n_samples,)
-            The predicted values.
-        """
         X = self._validate_X_predict(X)
-        X = self._validate_data(
-            X, dtype=DTYPE, order="C", accept_sparse="csr", reset=False
-        )
-        # In regression we can directly return the raw value from the trees.
         return self._raw_predict(X).ravel()
-
-    def staged_predict(self, X):
-        """Predict regression target at each stage for X.
-
-        This method allows monitoring (i.e. determine error on testing set)
-        after each stage.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples. Internally, it will be converted to
-            ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
-
-        Yields
-        ------
-        y : generator of ndarray of shape (n_samples,)
-            The predicted value of the input samples.
-        """
-        X = self._validate_X_predict(X)
-        for raw_predictions in self._staged_raw_predict(X):
-            yield raw_predictions.ravel()
-
-    def apply(self, X):
-        """Apply trees in the ensemble to X, return leaf indices.
-
-        .. versionadded:: 0.17
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples. Internally, its dtype will be converted to
-            ``dtype=np.float32``. If a sparse matrix is provided, it will
-            be converted to a sparse ``csr_matrix``.
-
-        Returns
-        -------
-        X_leaves : array-like of shape (n_samples, n_estimators)
-            For each datapoint x in X and for each tree in the ensemble,
-            return the index of the leaf x ends up in each estimator.
-        """
-        leaves = super().apply(X)
-        leaves = leaves.reshape(X.shape[0], self.estimators_.shape[0])
-        return leaves
