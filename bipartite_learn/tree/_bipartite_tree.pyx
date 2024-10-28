@@ -446,13 +446,13 @@ cdef class BipartiteTree(Tree):
         cdef SIZE_t n_cols = X_cols.shape[0]
         cdef SIZE_t start, end
 
-        cdef SIZE_t[::1] row_indices = np.arange(X_rows.shape[0], dtype=np.intp)
-        cdef SIZE_t[::1] col_indices = np.arange(X_cols.shape[0], dtype=np.intp)
+        cdef SIZE_t[::1] row_indices = np.arange(n_rows, dtype=np.intp)
+        cdef SIZE_t[::1] col_indices = np.arange(n_cols, dtype=np.intp)
 
         cdef SIZE_t* indices  # Either row or column indices
 
         # Initialize output
-        cdef SIZE_t[:, :] out = np.zeros((n_rows, n_cols), dtype=np.intp)
+        cdef SIZE_t[::1] out = np.empty((n_rows * n_cols), dtype=np.intp)
 
         # Initialize stack
         cdef stack[ApplyStackRecord] builder_stack
@@ -483,7 +483,7 @@ cdef class BipartiteTree(Tree):
                         i = row_indices[p]
                         for q in range(stack_record.start_col, stack_record.end_col):
                             j = col_indices[q]
-                            out[i, j] = node_id
+                            out[i * n_cols + j] = node_id
                     continue
 
                 axis = <SIZE_t>(node.feature >= n_row_features)
@@ -499,6 +499,7 @@ cdef class BipartiteTree(Tree):
                     start = stack_record.start_col
                     end = stack_record.end_col
 
+                # Move samples that go to the left child to the left
                 p = start
                 q = end
                 while p < q:
@@ -548,4 +549,4 @@ cdef class BipartiteTree(Tree):
                         "node": &self.nodes[node.left_child],
                     })
 
-        return np.asarray(out).reshape(-1)
+        return np.asarray(out)
