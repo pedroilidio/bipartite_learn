@@ -89,12 +89,12 @@ class BaseMultipartiteEstimator(BaseEstimator):
                     check_y_params = {**default_check_params, **check_y_params}
                 y = check_array(y, input_name="y", **check_y_params)
             else:
-                X[0], y = check_X_y(X[0], y, multi_output=True, **check_params)
+                check_params["multi_output"] = True
+                X[0], y = check_X_y(X[0], y, **check_params)
                 _y = y
                 for ax in range(1, len(X)):
                     _y = np.moveaxis(_y, 0, -1)
-                    X[ax], _ = check_X_y(X[ax], _y, multi_output=True,
-                                         **check_params)
+                    X[ax], _ = check_X_y(X[ax], _y, **check_params)
             out = X, y
 
         if not no_val_X and check_params.get("ensure_2d", True):
