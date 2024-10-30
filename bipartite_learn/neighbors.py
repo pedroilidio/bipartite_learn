@@ -200,7 +200,15 @@ class WeightedNeighborsRegressor(KNeighborsMixin, RegressorMixin, NeighborsBase)
             weights = _get_weights(dist, self.weights or "distance")
 
         # Normalize the weights to sum up to 1 on each row
-        weights /= np.sum(weights, axis=1, keepdims=True)
+        weights = weights.copy()  # TODO: check if copy is necessary
+        denom = np.sum(weights, axis=1, keepdims=True)
+
+        # If row is zero-only, then fallback to uniform weights
+        mask = (denom == 0).reshape(-1)
+        weights[mask] = 1
+        denom[mask] = weights.shape[1]
+
+        weights /= denom
 
         _y = self._y
         if _y.ndim == 1:
