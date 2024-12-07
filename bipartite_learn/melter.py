@@ -65,7 +65,7 @@ def melt_multipartite_dataset(X, y=None):
     if y is None:
         return X, y
 
-    return X, y.reshape(-1, 1)
+    return X, y.reshape(-1)
 
 
 class BipartiteMelter(BaseMultipartiteSampler, BaseBipartiteEstimator):
@@ -85,7 +85,7 @@ class BipartiteMelter(BaseMultipartiteSampler, BaseBipartiteEstimator):
             np.repeat(X1, X2.shape[0], axis=0),
             np.tile(X2, (X1.shape[0], 1))
         ])
-        return melted_X, y.reshape(-1, 1)
+        return melted_X, y.reshape(-1)
 
 
 class MultipartiteMelter(BaseMultipartiteSampler):
@@ -94,3 +94,4 @@ class MultipartiteMelter(BaseMultipartiteSampler):
 
     def _fit_resample(self, X, y):
         return melt_multipartite_dataset(X, y)
+
